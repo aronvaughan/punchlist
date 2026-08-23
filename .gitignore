@@ -1,0 +1,13 @@
+# Whitelist-first: ignore everything at the top level, then re-allow tracked paths.
+/*
+!/.gitignore
+!/package.json
+!/package-lock.json
+!/README.md
+!/src/
+!/migrations/
+!/test/
+!/docs/
+!/public/
+!/scripts/
+# data/ (live db, tokens) and node_modules stay ignored by /*
