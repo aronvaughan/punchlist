@@ -14,7 +14,9 @@ UI and agents' skills. Boring on purpose.
 - **HTTP:** Hono (one small dep) serving both `/api/v1/*` and static UI.
 - **Storage:** `node:sqlite` (built-in, zero native deps — same engine the
   hermes sweep reads), WAL mode, one file `data/av-tasks.db`.
-- **Frontend:** vanilla ES modules + SortableJS (vendored file, no CDN,
+- **Frontend:** vanilla ES modules + **Web Awesome** free core (the
+  Shoelace successor — Shoelace archived 2026-05; wa- components, vendored
+  ESM, no build) for inputs/drawer/toasts, + SortableJS (vendored, no CDN,
   no bundler). One HTML page, hash-routed views.
 - **Tests:** `node:test` against the API over an in-memory/db-file.
 
