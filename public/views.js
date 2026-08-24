@@ -1,7 +1,7 @@
 // views.js — list rendering + drag & drop. All user content goes through
 // textContent (titles/tags/names) — never innerHTML.
 import Sortable from '/vendor/sortable.core.esm.js';
-import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen } from '/app.js';
+import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow } from '/app.js';
 import { openDetail } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 
@@ -60,9 +60,20 @@ export function renderRail() {
     a.classList.toggle('active',
       state.route.view === a.dataset.view && state.route.projectId === null);
   }
+  // nav counts (muted, right-aligned; zero renders nothing)
+  const counts = state.counts ?? {};
+  for (const a of document.querySelectorAll('#rail-views a')) {
+    a.querySelector('.nav-count')?.remove();
+    if (a.dataset.view === 'logbook') continue;
+    const n = counts[a.dataset.view] ?? 0;
+    if (n > 0) a.append(el('span', 'nav-count', String(n)));
+  }
   const collapsed = loadCollapsed();
   const live = state.projects.filter(p => !p.archived);
   const children = childrenMap(live);
+  const projCounts = counts.projects ?? {};
+  const subtreeCount = id => (projCounts[id] ?? 0) +
+    (children.get(id) ?? []).reduce((sum, ch) => sum + subtreeCount(ch.id), 0);
   const addRows = (ul, parentKey) => {
     for (const p of children.get(parentKey) ?? []) {
       const li = el('li');
@@ -79,6 +90,9 @@ export function renderRail() {
         row.append(el('span', 'caret-spacer'));
       }
       row.append(el('span', 'rail-name', p.name));
+      // count: own when expanded (children show theirs); own+descendants when collapsed
+      const n = hasKids && collapsed.has(p.id) ? subtreeCount(p.id) : (projCounts[p.id] ?? 0);
+      if (n > 0) row.append(el('span', 'nav-count', String(n)));
       // per-parent shortcut: "+" on hover (desktop pointers only, via CSS)
       const addChild = el('button', 'add-child', '+');
       addChild.setAttribute('aria-label', `New project under ${p.name}`);
@@ -148,7 +162,8 @@ function renderRailTags() {
   for (const t of tags) {
     const li = el('li');
     const row = el('button', 'rail-tag');
-    row.append(el('span', 'rail-name', `#${t.name}`), el('span', 'tag-count', String(t.count)));
+    row.append(el('span', 'rail-name', `#${t.name}`));
+    if (t.count > 0) row.append(el('span', 'tag-count', String(t.count)));
     if (state.route.view === 'tag' && state.route.tag === t.name) row.classList.add('active');
     row.addEventListener('click', () => { location.hash = `#/tag/${encodeURIComponent(t.name)}`; });
     li.append(row);
@@ -203,6 +218,26 @@ async function createProject() {
     err.hidden = false;
   }
 }
+
+// ---- due-soon window dialog ----
+function openWindowDialog() {
+  const input = document.getElementById('window-input');
+  input.value = String(dueWindow());
+  document.getElementById('window-dialog').open = true;
+  setTimeout(() => input.focus(), 50);
+}
+function saveWindow() {
+  const v = Number(document.getElementById('window-input').value);
+  if (!Number.isInteger(v) || v < 1 || v > 365) return;
+  try { localStorage.setItem('av-tasks-due-window', String(v)); } catch { /* private mode */ }
+  document.getElementById('window-dialog').open = false;
+  reload();
+}
+document.getElementById('window-ok').addEventListener('click', saveWindow);
+document.getElementById('window-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveWindow(); });
+document.getElementById('window-cancel').addEventListener('click', () => {
+  document.getElementById('window-dialog').open = false;
+});
 
 document.getElementById('rail-new-project').addEventListener('click', () => openProjectDialog(null));
 document.getElementById('project-cancel').addEventListener('click', () => { pdialog().open = false; });
@@ -368,6 +403,19 @@ export function renderMain() {
     renderProject(listEl, tasks);
   } else if (r.view === 'today') {
     titleEl.textContent = 'Today';
+    // pinned DUE SOON group above the today list; hidden when empty
+    if (state.dueSoon.length) {
+      const block = el('div', 'section-block');
+      const head = el('div', 'section-head');
+      head.append(document.createTextNode('Due soon'));
+      const windowBtn = el('button', 'window-chip', `${dueWindow()}d`);
+      windowBtn.setAttribute('aria-label', 'Change due-soon window');
+      windowBtn.addEventListener('click', openWindowDialog);
+      head.append(windowBtn);
+      block.append(head, taskList(state.dueSoon, { showProject: true }));
+      listEl.append(block);
+      listEl.append(el('div', 'section-head', 'Today'));
+    }
     const ul = taskList(tasks, { showProject: true });
     listEl.append(ul);
     sortableList(ul, { list: 'today' });

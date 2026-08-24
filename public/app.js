@@ -23,8 +23,16 @@ export const state = {
   tasks: [],
   projects: [],
   tags: [],
+  counts: null,
+  dueSoon: [],
   nextCursor: null,
 };
+
+// due-soon window (days ahead), persisted; server validates 1..365
+export function dueWindow() {
+  const v = Number(localStorage.getItem('av-tasks-due-window'));
+  return Number.isInteger(v) && v >= 1 && v <= 365 ? v : 30;
+}
 
 export const todayISO = () => new Date().toLocaleDateString('en-CA');
 
@@ -150,15 +158,20 @@ export async function reload() {
   if (state.q) params.set('q', state.q);
   params.set('limit', '500');
   try {
-    const [tasksRes, projRes, tagsRes] = await Promise.all([
+    const w = dueWindow();
+    const [tasksRes, projRes, tagsRes, countsRes, dueSoonRes] = await Promise.all([
       api('GET', `/tasks?${params}`),
       api('GET', '/projects?limit=500'),
       api('GET', '/tags'),
+      api('GET', `/counts?window=${w}`),
+      r.view === 'today' ? api('GET', `/tasks?view=due_soon&window=${w}&limit=500`) : null,
     ]);
     state.tasks = tasksRes.items;
     state.nextCursor = tasksRes.next_cursor || null;
     state.projects = projRes.items;
     state.tags = tagsRes.items;
+    state.counts = countsRes;
+    state.dueSoon = dueSoonRes ? dueSoonRes.items : [];
   } catch (e) {
     toast(`Load failed: ${e.message}`);
     return;

@@ -50,6 +50,15 @@
     <wa-button slot="footer" id="token-save" variant="brand">Save</wa-button>
   </wa-dialog>
 
+  <wa-dialog id="window-dialog" label="Due soon window">
+    <div class="dialog-field">
+      <label for="window-input">Days ahead (1–365)</label>
+      <input id="window-input" type="number" min="1" max="365" inputmode="numeric">
+    </div>
+    <wa-button slot="footer" id="window-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="window-ok" variant="brand">Set</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="project-dialog" label="New project">
     <div class="dialog-field">
       <label for="project-name-input">Name</label>
