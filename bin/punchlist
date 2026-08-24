@@ -48,6 +48,12 @@ function installSkill(srcDir, destDir, envFileExpr) {
   writeFileSync(shim, '#!/usr/bin/env bash\n' +
     `exec env PUNCHLIST_ENV_FILE="${envFileExpr}" "$(dirname "\${BASH_SOURCE[0]}")/pl-core.sh" "$@"\n`);
   chmodSync(shim, 0o755);
+  // the screening library (agent-security layer 2) travels with every skill;
+  // it needs no token, so the canonical copy lands as-is (replacing the
+  // repo-relative shim from the source dir)
+  const screen = join(destDir, 'scripts', 'screen.sh');
+  copyFileSync(join(ROOT, 'skills', 'shared', 'screen.sh'), screen);
+  chmodSync(screen, 0o755);
   console.log(`installed ${destDir}`);
 }
 
