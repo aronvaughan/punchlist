@@ -389,6 +389,50 @@ test('projects list paginates: limit + keyset cursor, bad cursor 400', async () 
   assert.equal((await call('GET', '/api/v1/projects?cursor=!!!')).status, 400);
 });
 
+// ---- due_soon + counts ----
+test('view=due_soon: future dues inside the window, ordered by due_date; window validated', async () => {
+  const { call } = makeApp(); // TODAY = 2026-03-10
+  await call('POST', '/api/v1/tasks', { body: { title: 'due today', due_date: '2026-03-10' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'overdue', due_date: '2026-03-01' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'in 5', due_date: '2026-03-15' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'in 30', due_date: '2026-04-09' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'in 40', due_date: '2026-04-19' } });
+  const d = await call('POST', '/api/v1/tasks', { body: { title: 'done soon', due_date: '2026-03-12' } });
+  await call('POST', `/api/v1/tasks/${d.json.id}/complete`);
+
+  const def = await call('GET', '/api/v1/tasks?view=due_soon');
+  assert.deepEqual(def.json.items.map(x => x.title), ['in 5', 'in 30']); // default 30d, edge inclusive
+  const wide = await call('GET', '/api/v1/tasks?view=due_soon&window=50');
+  assert.deepEqual(wide.json.items.map(x => x.title), ['in 5', 'in 30', 'in 40']);
+  const narrow = await call('GET', '/api/v1/tasks?view=due_soon&window=4');
+  assert.deepEqual(narrow.json.items.map(x => x.title), []);
+  for (const bad of ['0', '366', '1.5', 'x', '-2']) {
+    assert.equal((await call('GET', `/api/v1/tasks?view=due_soon&window=${bad}`)).status, 400, bad);
+  }
+});
+
+test('GET /counts: view counts + per-project open counts; zeroes included, auth required', async () => {
+  const { call } = makeApp();
+  const proj = await call('POST', '/api/v1/projects', { body: { name: 'P' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'inboxed' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'arrived', when_type: 'date', when_date: '2026-03-09', project_id: proj.json.id } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'later', when_type: 'date', when_date: '2026-03-20', project_id: proj.json.id } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'soon', due_date: '2026-03-15' } });
+  const done = await call('POST', '/api/v1/tasks', { body: { title: 'gone', project_id: proj.json.id } });
+  await call('POST', `/api/v1/tasks/${done.json.id}/complete`);
+
+  const res = await call('GET', '/api/v1/counts');
+  assert.equal(res.status, 200);
+  const { inbox, today, upcoming, due_soon, projects } = res.json;
+  assert.equal(inbox, 2);        // 'inboxed' + 'soon' (no project, no when)
+  assert.equal(today, 1);        // 'arrived'
+  assert.equal(upcoming, 1);     // 'later'
+  assert.equal(due_soon, 1);     // 'soon'
+  assert.deepEqual(projects, { [proj.json.id]: 2 }); // done task excluded
+  assert.equal((await call('GET', '/api/v1/counts', { token: null })).status, 401);
+  assert.equal((await call('GET', '/api/v1/counts?window=0')).status, 400);
+});
+
 // ---- tags ----
 test('GET /tags lists every tag with open-task count; auth required', async () => {
   const { call } = makeApp();

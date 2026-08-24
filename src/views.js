@@ -36,6 +36,12 @@ const VIEWS = {
     where: `${LIVE} AND due_date < :today`, // strictly before (C6)
     keys: ['due_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
+  due_soon: {
+    // future deadlines inside the window (:soon = today + N days); due
+    // today/overdue belong to the today/overdue views, not here
+    where: `${LIVE} AND due_date > :today AND due_date <= :soon`,
+    keys: ['due_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
   logbook: {
     where: `status = 'done'`,
     keys: [`COALESCE(completed_at, '')`], dir: 'DESC',
@@ -46,6 +52,17 @@ const VIEWS = {
     keys: [SECTION, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
 };
+
+// COUNT(*) over a view's WHERE (no pagination cap) — single source for the
+// nav-count endpoint. Project/tag/q filters don't apply here.
+export function taskCount(view, { today, soon } = {}) {
+  const def = VIEWS[view];
+  if (!def) throw new Error(`unknown view: ${view}`);
+  const args = [];
+  const sql = `SELECT COUNT(*) c FROM tasks WHERE ${def.where}`
+    .replace(/:today|:soon/g, m => { args.push(m === ':today' ? today : soon); return '?'; });
+  return { sql, args };
+}
 
 export function escapeLike(s) {
   return s.replace(/[\\%_]/g, ch => '\\' + ch);
@@ -67,7 +84,7 @@ export function decodeCursor(cursor, nKeys) {
   return vals;
 }
 
-export function taskWhere(view, { today, project, tag, q, limit = 100, cursor } = {}) {
+export function taskWhere(view, { today, soon, project, tag, q, limit = 100, cursor } = {}) {
   const def = view == null ? VIEWS._default : VIEWS[view];
   if (!def) throw new Error(`unknown view: ${view}`);
   const named = { today };
@@ -107,11 +124,12 @@ export function taskWhere(view, { today, project, tag, q, limit = 100, cursor } 
   posArgs.push(cappedLimit);
 
   // node:sqlite supports named parameters mixed with anonymous ones poorly;
-  // inline :today as a positional by substituting the marker with ? in order.
+  // inline :today/:soon as positionals by substituting each marker in order.
   const args = [];
   let idx = 0;
-  const finalSql = sql.replace(/:today|\?/g, m => {
+  const finalSql = sql.replace(/:today|:soon|\?/g, m => {
     if (m === ':today') { args.push(today); return '?'; }
+    if (m === ':soon') { args.push(soon); return '?'; }
     args.push(posArgs[idx++]);
     return '?';
   });

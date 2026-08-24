@@ -6,7 +6,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ulid } from './db.js';
-import { taskWhere, encodeCursor, decodeCursor } from './views.js';
+import { taskWhere, taskCount, encodeCursor, decodeCursor } from './views.js';
 import { between, renormalize } from './rank.js';
 import { nextDue, spawn } from './recur.js';
 import { parse as quickParse } from './quickadd.js';
@@ -197,15 +197,26 @@ export function buildApp({ db, tokens, today: todayFn }) {
   app.get('/api/v1/health', c => c.json({ ok: true }));
 
   // ---- tasks ----
+  // due_soon window: ?window= days ahead (integer 1..365, default 30)
+  function soonFrom(t, windowRaw) {
+    const w = windowRaw === undefined ? 30 : Number(windowRaw);
+    if (!Number.isInteger(w) || w < 1 || w > 365) {
+      throw new ApiError(400, 'window must be an integer between 1 and 365');
+    }
+    return new Date(Date.parse(`${t}T00:00:00Z`) + w * 86400000).toISOString().slice(0, 10);
+  }
+
   app.get('/api/v1/tasks', c => {
-    const { view, project, tag, q, limit, cursor } = c.req.query();
-    if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'logbook'].includes(view)) {
+    const { view, project, tag, q, limit, cursor, window: windowRaw } = c.req.query();
+    if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook'].includes(view)) {
       throw new ApiError(400, `unknown view: ${view}`);
     }
     const lim = Math.min(Math.max(1, Number(limit) || 100), 500);
+    const t = today();
+    const soon = view === 'due_soon' ? soonFrom(t, windowRaw) : undefined;
     let res;
     try {
-      res = taskWhere(view ?? null, { today: today(), project, tag, q, limit: lim + 1, cursor });
+      res = taskWhere(view ?? null, { today: t, soon, project, tag, q, limit: lim + 1, cursor });
     } catch (e) { throw new ApiError(400, e.message); }
     const rows = db.prepare(res.sql).all(...res.args);
     const page = rows.slice(0, lim);
@@ -434,6 +445,26 @@ export function buildApp({ db, tokens, today: todayFn }) {
       .run(c.req.param('sid'), c.req.param('id'));
     if (changes === 0) throw new ApiError(404, 'step not found');
     return c.json({ ok: true });
+  });
+
+  // ---- counts (nav badges): one call, view WHEREs from views.js ----
+  app.get('/api/v1/counts', c => {
+    const t = today();
+    const soon = soonFrom(t, c.req.query('window'));
+    const count = view => {
+      const { sql, args } = taskCount(view, { today: t, soon });
+      return db.prepare(sql).get(...args).c;
+    };
+    const projects = {};
+    for (const row of db.prepare(
+      `SELECT project_id, COUNT(*) c FROM tasks
+       WHERE status = 'active' AND project_id IS NOT NULL GROUP BY project_id`).all()) {
+      projects[row.project_id] = row.c;
+    }
+    return c.json({
+      inbox: count('inbox'), today: count('today'), upcoming: count('upcoming'),
+      due_soon: count('due_soon'), projects,
+    });
   });
 
   // ---- tags ----
