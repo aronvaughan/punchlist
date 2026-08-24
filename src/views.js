@@ -18,9 +18,11 @@ const LIVE = `status = 'active'`;
 // delegation: in_progress/review tasks are still open work — project/tag/
 // search views show them (with assignee chips); logbook stays done-only.
 const OPEN = `status IN ('active', 'in_progress', 'review')`;
-// Today/Inbox/Upcoming/Due Soon are the HUMAN's lanes (delegation design):
-// delegated work must not clutter aron's day. Project/tag/search/logbook and
-// overdue (the agent contract, C6) stay unscoped.
+// Inbox/Upcoming are the HUMAN's lanes (delegation design): when-driven
+// delegated work must not clutter aron's day. But DUE-DATES OVERRIDE ASSIGNEE
+// SCOPING (2026-08-24 amendment): a deadline is a deadline no matter whose
+// plate it sits on — today's due disjunct, due_soon, and overdue include ALL
+// assignees. Project/tag/search/logbook stay unscoped entirely.
 const MINE = `assignee = 'aron'`;
 // Agents view order inside one assignee: in_progress, then review, then queued
 const AGENT_STATUS = `CASE status WHEN 'in_progress' THEN 0 WHEN 'review' THEN 1 ELSE 2 END`;
@@ -31,8 +33,10 @@ const VIEWS = {
     keys: [`COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   today: {
-    // status filter covers BOTH disjuncts (C1)
-    where: `${LIVE} AND ${MINE} AND ((when_type = 'date' AND when_date <= :today) OR due_date <= :today)`,
+    // status filter covers BOTH disjuncts (C1). Assignee scoping covers only
+    // the WHEN disjunct: an arrived when-date is aron's plan, a due-date is a
+    // deadline for everyone (due overrides assignee — 2026-08-24 amendment).
+    where: `${LIVE} AND ((${MINE} AND when_type = 'date' AND when_date <= :today) OR due_date <= :today)`,
     // manual today_rank first; arrivals (NULL) append after (C3, I11)
     keys: [`COALESCE(today_rank, ${BIG})`, `COALESCE(when_date, ${FAR})`, `COALESCE(rank, ${BIG})`],
     dir: 'ASC',
@@ -47,8 +51,9 @@ const VIEWS = {
   },
   due_soon: {
     // future deadlines inside the window (:soon = today + N days); due
-    // today/overdue belong to the today/overdue views, not here
-    where: `${LIVE} AND ${MINE} AND due_date > :today AND due_date <= :soon`,
+    // today/overdue belong to the today/overdue views, not here. ALL
+    // assignees: due overrides assignee scoping (2026-08-24 amendment)
+    where: `${LIVE} AND due_date > :today AND due_date <= :soon`,
     keys: ['due_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   logbook: {

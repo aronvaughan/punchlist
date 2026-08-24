@@ -288,7 +288,12 @@ export function buildApp({ db, tokens, today: todayFn }) {
     // manual Today order must not outlive Today membership: a task scheduled
     // out of the view would otherwise re-enter at its stale today_rank instead
     // of appending after manually-placed items (I11).
-    // …and Today is aron's lane: a task delegated away leaves the view too
+    // …and only aron's own tasks hold a manual Today position. A delegated
+    // task can legitimately sit in Today when its DUE date arrives (due
+    // overrides assignee scoping — 2026-08-24 amendment), but delegating
+    // still clears today_rank ON PURPOSE: its slot in the human's manual
+    // order shouldn't survive delegation; due-driven appearances sort after
+    // manually-ranked items.
     const inToday = merged.assignee === HUMAN &&
                     ((merged.when_type === 'date' && merged.when_date != null && merged.when_date <= t) ||
                      (merged.due_date != null && merged.due_date <= t));
@@ -424,7 +429,9 @@ export function buildApp({ db, tokens, today: todayFn }) {
     const t = today();
     const col = list === 'today' ? 'today_rank' : 'rank';
 
-    // Today is aron's lane (delegation design) — must mirror views.js today
+    // Manual Today ordering is for aron's own rows only: delegated tasks may
+    // APPEAR in Today (due-driven — 2026-08-24 amendment) but never hold a
+    // today_rank, so they can't be dragged or used as reorder neighbors.
     const inTodayView = x => x.status === 'active' && x.assignee === HUMAN &&
       ((x.when_type === 'date' && x.when_date <= t) || (x.due_date != null && x.due_date <= t));
     const inScope = list === 'today'
@@ -469,7 +476,9 @@ export function buildApp({ db, tokens, today: todayFn }) {
       const renorm = () => {
         if (list === 'today') {
           const res = taskWhere('today', { today: t, limit: 500 });
-          const rows = db.prepare(res.sql).all(...res.args);
+          // skip delegated rows: they show in Today (due-driven) but must not
+          // be stamped into the human's manual order (2026-08-24 amendment)
+          const rows = db.prepare(res.sql).all(...res.args).filter(r => r.assignee === HUMAN);
           const upd = db.prepare('UPDATE tasks SET today_rank = ? WHERE id = ?');
           rows.forEach((r, i) => upd.run((i + 1) * 1024, r.id));
         } else {

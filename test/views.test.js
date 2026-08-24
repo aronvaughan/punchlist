@@ -27,11 +27,12 @@ function seed() {
   ins.run('done1','finished due today','',      null, 'done',   null,     null,         '2026-03-10', 7,   null, 'aron',   '2026-03-09T10:00:00.000Z', now, now);
   ins.run('done2','finished later',  '',        null, 'done',   null,     null,         null,         8,   null, 'aron',   '2026-03-10T10:00:00.000Z', now, now);
   // delegated (assignee != aron) — must stay OUT of aron's lanes
-  ins.run('del1', 'agent due today', '',        null, 'active', 'date',   '2026-03-10', '2026-03-12', 9,   null, 'claude', null, now, now);
+  ins.run('del1', 'agent when today','',        null, 'active', 'date',   '2026-03-10', '2026-03-12', 9,   null, 'claude', null, now, now);
   ins.run('del2', 'agent working',   '',        'p1', 'in_progress', null, null,        null,         9,   null, 'claude', null, now, '2026-03-10T09:00:00.000Z');
   ins.run('del3', 'awaiting review', '',        null, 'review', null,     null,         null,         10,  null, 'hermes', null, now, '2026-03-10T11:00:00.000Z');
   ins.run('del4', 'agent archived',  '',        null, 'archived', null,   null,         null,         11,  null, 'claude', null, now, now);
   ins.run('del5', 'agent queued',    '',        null, 'active', null,     null,         null,         12,  null, 'claude', null, now, now);
+  ins.run('del6', 'agent due today', '',        null, 'active', null,     null,         '2026-03-10', 13,  null, 'claude', null, now, now);
   db.prepare(`INSERT INTO task_tags (task_id,tag_id) VALUES ('tod1','g1')`).run();
   return db;
 }
@@ -43,7 +44,7 @@ function run(db, view, params = {}) {
 
 test('today: actives with arrived when OR due<=today; done EXCLUDED from both disjuncts (C1)', () => {
   const ids = run(seed(), 'today').map(r => r.id);
-  assert.deepEqual(new Set(ids), new Set(['tod1', 'tod2', 'tod3', 'smd1', 'ovr1']));
+  assert.deepEqual(new Set(ids), new Set(['tod1', 'tod2', 'tod3', 'smd1', 'ovr1', 'del6']));
   assert.ok(!ids.includes('done1'), 'done task with due today must not appear');
 });
 
@@ -110,8 +111,8 @@ test('pagination: keyset cursor walks the whole view without dupes or gaps', () 
     seen.push(...rows.map(r => r.id));
     cursor = encodeCursor(rows[rows.length - 1], keys);
   }
-  assert.deepEqual(new Set(seen), new Set(['tod1', 'tod2', 'tod3', 'smd1', 'ovr1']));
-  assert.equal(seen.length, 5, 'no duplicates across pages');
+  assert.deepEqual(new Set(seen), new Set(['tod1', 'tod2', 'tod3', 'smd1', 'ovr1', 'del6']));
+  assert.equal(seen.length, 6, 'no duplicates across pages');
 });
 
 test('unknown view throws', () => {
@@ -119,14 +120,23 @@ test('unknown view throws', () => {
 });
 
 // ---- delegation ----
-test("aron's lanes exclude delegated work: today/inbox/upcoming/due_soon are assignee='aron'", () => {
+test('due-dates override assignee scoping; when-dates do not (2026-08-24 amendment)', () => {
   const db = seed();
-  assert.ok(!run(db, 'today').map(r => r.id).includes('del1'), 'delegated arrived-when stays out of Today');
-  assert.ok(!run(db, 'inbox').map(r => r.id).includes('del5'), 'delegated projectless task stays out of Inbox');
-  assert.ok(!run(db, 'due_soon', { soon: '2026-03-20' }).map(r => r.id).includes('del1'));
-  // overdue stays UNSCOPED (agent contract C6): a delegated overdue would show
+  const today = run(db, 'today').map(r => r.id);
+  assert.ok(today.includes('del6'), 'delegated task DUE today appears in Today');
+  assert.ok(!today.includes('del1'), 'delegated arrived-WHEN (future due) stays out of Today');
+  assert.ok(run(db, 'due_soon', { soon: '2026-03-20' }).map(r => r.id).includes('del1'),
+    'delegated future due appears in due_soon (unscoped)');
+  // overdue stays UNSCOPED (agent contract C6): a delegated overdue shows
   db.prepare(`UPDATE tasks SET due_date='2026-03-01' WHERE id='del5'`).run();
   assert.ok(run(db, 'overdue').map(r => r.id).includes('del5'));
+});
+
+test("aron's when-driven lanes exclude delegated work: inbox/upcoming are assignee='aron'", () => {
+  const db = seed();
+  assert.ok(!run(db, 'inbox').map(r => r.id).includes('del5'), 'delegated projectless task stays out of Inbox');
+  db.prepare(`UPDATE tasks SET when_date='2026-03-18' WHERE id='del1'`).run();
+  assert.ok(!run(db, 'upcoming').map(r => r.id).includes('del1'), 'delegated future when stays out of Upcoming');
 });
 
 test('review view: status=review only, freshest finish first', () => {
@@ -138,7 +148,7 @@ test('review view: status=review only, freshest finish first', () => {
 
 test('delegated view: open work off aron\'s plate, grouped by agent then in_progress→review→active', () => {
   const ids = run(seed(), 'delegated').map(r => r.id);
-  assert.deepEqual(ids, ['del2', 'del1', 'del5', 'del3']); // claude (working, queued...), then hermes
+  assert.deepEqual(ids, ['del2', 'del1', 'del5', 'del6', 'del3']); // claude (working, queued...), then hermes
   assert.ok(!ids.includes('del4'), 'archived delegated task is not in flight');
   assert.ok(!ids.includes('tod1'), "aron's own tasks are not delegated");
 });
@@ -146,7 +156,7 @@ test('delegated view: open work off aron\'s plate, grouped by agent then in_prog
 test('?assignee= filter composes with views', () => {
   const db = seed();
   assert.deepEqual(new Set(run(db, null, { assignee: 'claude' }).map(r => r.id)),
-    new Set(['del1', 'del2', 'del5']));
+    new Set(['del1', 'del2', 'del5', 'del6']));
   assert.deepEqual(run(db, null, { assignee: 'claude', project: 'p1' }).map(r => r.id), ['del2']);
   assert.deepEqual(run(db, 'delegated', { assignee: 'hermes' }).map(r => r.id), ['del3']);
   assert.deepEqual(run(db, 'logbook', { assignee: 'hermes' }), []);
@@ -159,7 +169,8 @@ test('taskCount covers review and delegated', () => {
     return db.prepare(sql).get(...args).c;
   };
   assert.equal(c('review'), 1);
-  assert.equal(c('delegated'), 4);
-  assert.equal(c('today'), 5, 'aron-scoped: del1 not counted');
+  assert.equal(c('delegated'), 5);
+  assert.equal(c('today'), 6, 'when-scoped to aron but due-driven del6 counts; when-only del1 does not');
+  assert.equal(c('due_soon'), 1, 'delegated future due (del1) counts');
   assert.equal(c('inbox'), 3, 'aron-scoped: del5 not counted'); // inb1 inb2 ovr1
 });

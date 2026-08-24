@@ -36,14 +36,24 @@ created_by = who asked; assignee = who must do it. Both rendered as chips.
 
 ## Views & visibility
 
+*Amended 2026-08-24 (approved): due-dates override assignee scoping;
+when-dates don't. A deadline is a deadline no matter whose plate it's on.*
+
 - `?assignee=` filter on task lists. New views: `review` (status=review),
   `delegated` (assignee != 'aron' AND status IN
   (active,in_progress,review)).
-- **Today / Due Soon / Upcoming / Inbox = aron's lanes**: filtered to
-  assignee='aron' (delegated work must not clutter the human's day).
-  Project views show ALL tasks with assignee chips.
-- counts: today/inbox/upcoming stay aron-scoped; add `review` and
-  `delegated` counts.
+- **Upcoming / Inbox = aron's lanes**: filtered to assignee='aron'
+  (when-driven planning; delegated work must not clutter the human's day).
+- **Today**: the WHEN disjunct is aron-only, the DUE disjunct includes ALL
+  assignees — `(assignee='aron' AND when arrived) OR due_date<=today`.
+- **Due Soon / Overdue**: unscoped — windowed/lapsed deadlines for every
+  assignee.
+- Delegated tasks never hold `today_rank`: delegating clears it, and
+  due-driven Today appearances sort after manually-ranked items (they
+  can't be dragged in Today).
+- Project views show ALL tasks with assignee chips.
+- counts: inbox/upcoming stay aron-scoped; today/due_soon follow the
+  amended definitions above; add `review` and `delegated` counts.
 - **Agents view** (nav, between Logbook and Projects): everything
   delegated, grouped by agent then status (in_progress first, then
   review — with inline report preview + Approve button — then queued

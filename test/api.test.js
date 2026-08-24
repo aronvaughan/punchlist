@@ -627,22 +627,26 @@ test("view scoping over HTTP: aron's today/inbox exclude delegated; review/deleg
   const { call } = makeApp();
   await call('POST', '/api/v1/tasks', { body: { title: 'mine today', when_type: 'date', when_date: TODAY } });
   await call('POST', '/api/v1/tasks', { body: { title: 'delegated today', assignee: 'claude', when_type: 'date', when_date: TODAY } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'delegated due', assignee: 'claude', due_date: TODAY } });
   const inReview = (await call('POST', '/api/v1/tasks', { body: { title: 'delegated inbox', assignee: 'hermes' } })).json;
   await call('POST', `/api/v1/tasks/${inReview.id}/finish`, { token: TOK_HERMES, body: { report: 'r' } });
   const today = await call('GET', '/api/v1/tasks?view=today');
-  assert.deepEqual(today.json.items.map(t => t.title), ['mine today']);
+  // when-driven delegated work stays out; a delegated DUE-today task shows
+  // (due overrides assignee scoping — 2026-08-24 amendment)
+  assert.deepEqual(today.json.items.map(t => t.title), ['mine today', 'delegated due']);
   const inbox = await call('GET', '/api/v1/tasks?view=inbox');
   assert.deepEqual(inbox.json.items.map(t => t.title), []);
   const review = await call('GET', '/api/v1/tasks?view=review');
   assert.deepEqual(review.json.items.map(t => t.title), ['delegated inbox']);
   const delegated = await call('GET', '/api/v1/tasks?view=delegated');
   assert.deepEqual(new Set(delegated.json.items.map(t => t.title)),
-    new Set(['delegated today', 'delegated inbox']));
+    new Set(['delegated today', 'delegated due', 'delegated inbox']));
   const byAssignee = await call('GET', '/api/v1/tasks?assignee=claude');
-  assert.deepEqual(byAssignee.json.items.map(t => t.title), ['delegated today']);
+  assert.deepEqual(new Set(byAssignee.json.items.map(t => t.title)),
+    new Set(['delegated today', 'delegated due']));
 });
 
-test('GET /counts gains review + delegated; existing keys stay aron-scoped', async () => {
+test('GET /counts gains review + delegated; when-driven keys aron-scoped, due-driven include everyone', async () => {
   const { call } = makeApp();
   await call('POST', '/api/v1/tasks', { body: { title: 'mine' } });
   await call('POST', '/api/v1/tasks', { body: { title: 'queued', assignee: 'claude' } });
@@ -650,11 +654,15 @@ test('GET /counts gains review + delegated; existing keys stay aron-scoped', asy
   await call('POST', `/api/v1/tasks/${c1.id}/claim`, { token: TOK_CLAUDE });
   const h1 = (await call('POST', '/api/v1/tasks', { body: { title: 'checking', assignee: 'hermes' } })).json;
   await call('POST', `/api/v1/tasks/${h1.id}/finish`, { token: TOK_HERMES, body: { report: 'r' } });
+  // due-driven delegated work counts in today/due_soon (2026-08-24 amendment)
+  await call('POST', '/api/v1/tasks', { body: { title: 'agent deadline', assignee: 'claude', due_date: TODAY } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'agent soon', assignee: 'hermes', due_date: '2026-03-15' } });
   const res = await call('GET', '/api/v1/counts');
   assert.equal(res.json.inbox, 1, "delegated tasks don't clutter aron's inbox");
-  assert.equal(res.json.today, 0, "claude's arrived task is not aron's today");
+  assert.equal(res.json.today, 1, "claude's arrived WHEN is not aron's today; claude's DUE today is");
+  assert.equal(res.json.due_soon, 1, 'delegated future due counts');
   assert.equal(res.json.review, 1);
-  assert.equal(res.json.delegated, 3);
+  assert.equal(res.json.delegated, 5);
 });
 
 test('quickadd >assignee flows through to the created task', async () => {
