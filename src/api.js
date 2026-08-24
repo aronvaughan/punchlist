@@ -233,14 +233,21 @@ export function buildApp({ db, tokens, today: todayFn }) {
       : (body.recur === null ? null : JSON.stringify(body.recur));
     if (recurVal && !merged.due_date) throw new ApiError(400, 'recurrence requires a due date');
     const now = new Date().toISOString();
+    const t = today();
+    // manual Today order must not outlive Today membership: a task scheduled
+    // out of the view would otherwise re-enter at its stale today_rank instead
+    // of appending after manually-placed items (I11).
+    const inToday = (merged.when_type === 'date' && merged.when_date != null && merged.when_date <= t) ||
+                    (merged.due_date != null && merged.due_date <= t);
+    const todayRank = inToday ? task.today_rank : null;
     return tx(db, () => {
       db.prepare(
         `UPDATE tasks SET title=?, notes=?, project_id=?, status=?, when_type=?, when_date=?,
-                due_date=?, due_time=?, recur=?,
+                due_date=?, due_time=?, recur=?, today_rank=?,
                 completed_at = CASE WHEN ? = 'active' THEN NULL ELSE completed_at END,
                 updated_at=? WHERE id=?`
       ).run(merged.title, merged.notes, merged.project_id, merged.status, merged.when_type,
-            merged.when_date, merged.due_date, merged.due_time, recurVal,
+            merged.when_date, merged.due_date, merged.due_time, recurVal, todayRank,
             merged.status, now, task.id);
       if (body.tags !== undefined) setTags(task.id, body.tags);
       return c.json(attach(getTask(task.id)));

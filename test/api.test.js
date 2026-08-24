@@ -252,6 +252,24 @@ test('reorder in Today sets today_rank, not rank (C3); manual placement holds', 
   assert.deepEqual(t.json.items.map(i => i.title), ['z', 'x', 'y']);
 });
 
+test('PATCH clears today_rank when the task leaves Today; return appends after manual items (I11)', async () => {
+  const { call, db } = makeApp();
+  const mk = async n => (await call('POST', '/api/v1/tasks', { body: { title: n, when_type: 'date', when_date: TODAY } })).json;
+  const a = await mk('a'); const b = await mk('b'); const c = await mk('c');
+  // manual placement: c to the top -> everyone gets a today_rank via renorm/write
+  await call('POST', `/api/v1/tasks/${c.id}/reorder`, { body: { before_id: a.id, list: 'today' } });
+  assert.notEqual(db.prepare('SELECT today_rank FROM tasks WHERE id = ?').get(a.id).today_rank, null);
+  // schedule a out of Today -> stale manual rank must not survive
+  const r = await call('PATCH', `/api/v1/tasks/${a.id}`, { body: { when_date: '2026-03-20' } });
+  assert.equal(r.status, 200);
+  assert.equal(db.prepare('SELECT today_rank FROM tasks WHERE id = ?').get(a.id).today_rank, null);
+  // b keeps its manual rank (still in Today)
+  assert.notEqual(db.prepare('SELECT today_rank FROM tasks WHERE id = ?').get(b.id).today_rank, null);
+  // a PATCH that keeps the task in Today leaves today_rank alone
+  await call('PATCH', `/api/v1/tasks/${b.id}`, { body: { title: 'b2' } });
+  assert.notEqual(db.prepare('SELECT today_rank FROM tasks WHERE id = ?').get(b.id).today_rank, null);
+});
+
 // ---- steps ----
 test('steps: create/patch/delete + validation and caps', async () => {
   const { call } = makeApp();
