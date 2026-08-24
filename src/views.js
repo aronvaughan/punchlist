@@ -15,21 +15,30 @@ const SECTION = `CASE
   ELSE 3 END`;
 
 const LIVE = `status = 'active'`;
+// delegation: in_progress/review tasks are still open work — project/tag/
+// search views show them (with assignee chips); logbook stays done-only.
+const OPEN = `status IN ('active', 'in_progress', 'review')`;
+// Today/Inbox/Upcoming/Due Soon are the HUMAN's lanes (delegation design):
+// delegated work must not clutter aron's day. Project/tag/search/logbook and
+// overdue (the agent contract, C6) stay unscoped.
+const MINE = `assignee = 'aron'`;
+// Agents view order inside one assignee: in_progress, then review, then queued
+const AGENT_STATUS = `CASE status WHEN 'in_progress' THEN 0 WHEN 'review' THEN 1 ELSE 2 END`;
 
 const VIEWS = {
   inbox: {
-    where: `${LIVE} AND project_id IS NULL AND when_type IS NULL`, // derived (C5)
+    where: `${LIVE} AND ${MINE} AND project_id IS NULL AND when_type IS NULL`, // derived (C5)
     keys: [`COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   today: {
     // status filter covers BOTH disjuncts (C1)
-    where: `${LIVE} AND ((when_type = 'date' AND when_date <= :today) OR due_date <= :today)`,
+    where: `${LIVE} AND ${MINE} AND ((when_type = 'date' AND when_date <= :today) OR due_date <= :today)`,
     // manual today_rank first; arrivals (NULL) append after (C3, I11)
     keys: [`COALESCE(today_rank, ${BIG})`, `COALESCE(when_date, ${FAR})`, `COALESCE(rank, ${BIG})`],
     dir: 'ASC',
   },
   upcoming: {
-    where: `${LIVE} AND when_type = 'date' AND when_date > :today`,
+    where: `${LIVE} AND ${MINE} AND when_type = 'date' AND when_date > :today`,
     keys: ['when_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   overdue: {
@@ -39,16 +48,27 @@ const VIEWS = {
   due_soon: {
     // future deadlines inside the window (:soon = today + N days); due
     // today/overdue belong to the today/overdue views, not here
-    where: `${LIVE} AND due_date > :today AND due_date <= :soon`,
+    where: `${LIVE} AND ${MINE} AND due_date > :today AND due_date <= :soon`,
     keys: ['due_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   logbook: {
     where: `status = 'done'`,
     keys: [`COALESCE(completed_at, '')`], dir: 'DESC',
   },
-  // no view: active tasks; when scoped to a project, section-ordered
+  // delegation: everything awaiting aron's approval, freshest finish first
+  review: {
+    where: `status = 'review'`,
+    keys: ['updated_at'], dir: 'DESC',
+  },
+  // delegation: everything in flight off aron's plate, grouped by agent
+  // then status (in_progress → review → queued active)
+  delegated: {
+    where: `assignee <> 'aron' AND ${OPEN}`,
+    keys: ['assignee', AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
+  // no view: open tasks; when scoped to a project, section-ordered
   _default: {
-    where: LIVE,
+    where: OPEN,
     keys: [SECTION, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
 };
@@ -84,7 +104,7 @@ export function decodeCursor(cursor, nKeys) {
   return vals;
 }
 
-export function taskWhere(view, { today, soon, project, tag, q, limit = 100, cursor } = {}) {
+export function taskWhere(view, { today, soon, project, tag, q, assignee, limit = 100, cursor } = {}) {
   const def = view == null ? VIEWS._default : VIEWS[view];
   if (!def) throw new Error(`unknown view: ${view}`);
   const named = { today };
@@ -92,6 +112,7 @@ export function taskWhere(view, { today, soon, project, tag, q, limit = 100, cur
   const posArgs = [];
 
   if (project) { wheres.push('project_id = ?'); posArgs.push(project); }
+  if (assignee) { wheres.push('assignee = ?'); posArgs.push(assignee); }
   if (tag) {
     wheres.push(`EXISTS (SELECT 1 FROM task_tags tt JOIN tags g ON g.id = tt.tag_id
                  WHERE tt.task_id = tasks.id AND g.name = ? COLLATE NOCASE)`);
