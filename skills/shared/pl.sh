@@ -9,12 +9,14 @@
 #   pl.sh quickadd "text"              server-side token parsing (#tag @project ...)
 #   pl.sh list [view] [--project P] [--tag T] [--assignee A] [--window N] [--limit N] [--q S]
 #              views: inbox today upcoming overdue due_soon logbook review delegated
-#   pl.sh queue                        open work assigned to ME (active + in_progress)
+#   pl.sh queue                        open work assigned to ME (active + in_progress,
+#                                      vetted only — server-side view=queue)
 #   pl.sh show <id>                    one task, full JSON
-#   pl.sh claim <id>                   active -> in_progress (assignee only)
+#   pl.sh claim <id>                   active -> in_progress (assignee only, vetted only)
 #   pl.sh finish <id> "report"         -> review (or done if auto_close); report required
 #   pl.sh complete <id>                human-style done (the owner's own tasks)
 #   pl.sh approve <id>                 review -> done (admin actor only)
+#   pl.sh vet <id>                     mark an unvetted task safe for agents (admin only)
 #   pl.sh update <id> [--title T] [--notes N] [--project P] [--due D] [--due-time HH:MM]
 #                    [--when W|someday|none] [--assignee A] [--status active|archived]
 #                    [--tags a,b] [--auto-close 0|1]
@@ -82,7 +84,8 @@ uri() { jq -rn --arg v "$1" '$v|@uri'; }
 # one-task-per-line formatter: id  title  chips
 ROWFMT='
   def chips:
-    [ (if .status != "active" then "[" + .status + "]" else empty end),
+    [ (if (.vetted // 1) == 0 then "[UNVETTED]" else empty end),
+      (if .status != "active" then "[" + .status + "]" else empty end),
       ("@" + .assignee),
       (if .due_date then "due:" + .due_date + (if .due_time then "T" + .due_time else "" end) else empty end),
       (if .when_type == "someday" then "someday"
@@ -107,7 +110,7 @@ resolve_project() { # name-or-id -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -159,11 +162,11 @@ case "$cmd" in
   queue)
     api GET /counts
     me=$(printf '%s' "$RESP" | jq -r .actor)
-    api GET "/tasks?assignee=$(uri "$me")&limit=500"
+    # view=queue is server-enforced: active+in_progress, VETTED tasks only
+    api GET "/tasks?view=queue&assignee=$(uri "$me")&limit=500"
     printf '%s' "$RESP" | jq -r "
-      [.items[] | select(.status == \"active\" or .status == \"in_progress\")] as \$q
-      | if (\$q | length) == 0 then \"queue empty — nothing assigned to $me\"
-        else \$q[] | $ROWFMT end" ;;
+      if (.items | length) == 0 then \"queue empty — nothing assigned to $me\"
+      else .items[] | $ROWFMT end" ;;
 
   show)
     [ $# -eq 1 ] || { echo "usage: pl.sh show <id>" >&2; exit 2; }
@@ -194,6 +197,10 @@ case "$cmd" in
   approve)
     [ $# -eq 1 ] || { echo "usage: pl.sh approve <id>" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/approve" '{}'; one ;;
+
+  vet)
+    [ $# -eq 1 ] || { echo "usage: pl.sh vet <id>" >&2; exit 2; }
+    api POST "/tasks/$(uri "$1")/vet" '{}'; one ;;
 
   update)
     [ $# -ge 3 ] || { echo "usage: pl.sh update <id> --field val ..." >&2; exit 2; }
@@ -238,6 +245,6 @@ case "$cmd" in
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac

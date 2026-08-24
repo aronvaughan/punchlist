@@ -80,6 +80,7 @@ function slim(t) {
   if (t.report) out.report = t.report;
   if (t.auto_close) out.auto_close = true;
   if (t.created_by) out.created_by = t.created_by;
+  if (t.vetted === 0) out.unvetted = true; // quarantined: agents must not work it
   return out;
 }
 
@@ -212,13 +213,14 @@ const TOOLS = [
   {
     name: 'punchlist_queue',
     description: 'My work queue: open tasks assigned to me (the actor this token belongs to), ' +
-      'status active or in_progress. Check this to find delegated work to pick up.',
+      'status active or in_progress. Server-side scoped: unvetted tasks are excluded. ' +
+      'Check this to find delegated work to pick up.',
     inputSchema: { type: 'object', properties: {} },
     handler: async () => {
       const { actor } = await api('GET', '/counts');
-      const { items } = await api('GET', `/tasks?assignee=${encodeURIComponent(actor)}&limit=500`);
-      const queue = items.filter(t => t.status === 'active' || t.status === 'in_progress');
-      return text({ actor, items: queue.map(slim) });
+      // view=queue is the server-enforced contract: active+in_progress, vetted only
+      const { items } = await api('GET', `/tasks?view=queue&assignee=${encodeURIComponent(actor)}&limit=500`);
+      return text({ actor, items: items.map(slim) });
     },
   },
   {
@@ -252,6 +254,14 @@ const TOOLS = [
       '(review -> done). Admin (human) actor only.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'] },
     handler: async a => taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/approve`, {})),
+  },
+  {
+    name: 'punchlist_vet',
+    description: 'Vet a task for agent execution (admin/human actor only). Tasks created by ' +
+      'untrusted actors (e.g. email) arrive unvetted: agents cannot see them in queues or ' +
+      'claim/finish them until the admin vets them. Idempotent.',
+    inputSchema: { type: 'object', properties: { id: ID }, required: ['id'] },
+    handler: async a => taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/vet`, {})),
   },
   {
     name: 'punchlist_update',

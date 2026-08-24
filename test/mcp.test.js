@@ -20,11 +20,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MCP = join(ROOT, 'src', 'mcp.js');
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
+const TOK_EMAIL = 'e'.repeat(32);
 const TODAY = '2026-03-10';
 
 const TOOL_NAMES = ['punchlist_add', 'punchlist_quickadd', 'punchlist_list', 'punchlist_show',
   'punchlist_queue', 'punchlist_claim', 'punchlist_finish', 'punchlist_complete',
-  'punchlist_approve', 'punchlist_update', 'punchlist_projects', 'punchlist_counts'];
+  'punchlist_approve', 'punchlist_vet', 'punchlist_update', 'punchlist_projects', 'punchlist_counts'];
 
 // minimal newline-delimited JSON-RPC client over a spawned mcp.js
 class McpClient {
@@ -87,7 +88,8 @@ let server, url, admin, agent, tmp;
 before(async () => {
   const { db, migrate } = open(':memory:');
   migrate();
-  const app = buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE }, today: () => TODAY });
+  const app = buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE, email: TOK_EMAIL },
+    today: () => TODAY });
   server = serve(app, { host: '127.0.0.1', port: 0 });
   await new Promise(resolve => server.on('listening', resolve));
   url = `http://127.0.0.1:${server.address().port}`;
@@ -117,7 +119,7 @@ test('initialize handshake reports the punchlist server', async () => {
   await extra.close();
 });
 
-test('tools/list exposes all twelve tools with object schemas and descriptions', async () => {
+test('tools/list exposes all thirteen tools with object schemas and descriptions', async () => {
   const res = await admin.request('tools/list', {});
   const tools = res.result.tools;
   assert.deepEqual(tools.map(t => t.name).sort(), [...TOOL_NAMES].sort());
@@ -183,6 +185,40 @@ test('delegation flow: add → today → queue → claim → finish → review �
   assert.equal(counts.actor, 'aron');
   assert.equal(counts.review, 0);
   assert.equal(counts.delegated, 0);
+});
+
+test('vetting over MCP: email-created work is unvetted, invisible to the queue, unclaimable until punchlist_vet', async () => {
+  const email = new McpClient({ ...process.env, PUNCHLIST_URL: url, PUNCHLIST_TOKEN: TOK_EMAIL,
+    PUNCHLIST_ENV_FILE: '', HERMES_HOME: '' });
+  await email.init();
+  const added = await email.ok('punchlist_add', { title: 'ingested request', assignee: 'claude' });
+  const id = added.task.id;
+  assert.equal(added.task.created_by, 'email');
+  assert.equal(added.task.unvetted, true, 'slim shape carries the quarantine flag');
+  await email.close();
+
+  // server-side queue scoping: the agent never sees it
+  const queue = await agent.ok('punchlist_queue');
+  assert.ok(!queue.items.some(t => t.id === id), 'unvetted task leaked into the queue');
+  // ...but the claim door is locked too, even knowing the id
+  const claim = await agent.call('punchlist_claim', { id });
+  assert.equal(claim.isError, true);
+  assert.equal(claim.text, 'HTTP 403 — task not vetted for agent execution');
+  // agents cannot vet
+  const agentVet = await agent.call('punchlist_vet', { id });
+  assert.equal(agentVet.isError, true);
+  assert.match(agentVet.text, /only the admin/);
+  // counts surface the quarantine for the owner
+  assert.equal((await admin.ok('punchlist_counts')).unvetted, 1);
+
+  // admin vets → queue shows it → claim works
+  const vetted = await admin.ok('punchlist_vet', { id });
+  assert.equal(vetted.task.unvetted, undefined);
+  const queue2 = await agent.ok('punchlist_queue');
+  assert.ok(queue2.items.some(t => t.id === id));
+  const claimed = await agent.ok('punchlist_claim', { id });
+  assert.equal(claimed.task.status, 'in_progress');
+  await agent.ok('punchlist_finish', { id, report: 'handled the ingested request' });
 });
 
 test('quickadd, update (sparse + "none" clears), complete, filtered list', async () => {

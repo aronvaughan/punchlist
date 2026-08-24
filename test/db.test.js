@@ -10,7 +10,7 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate();
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
-  assert.deepEqual(versions.map(v => v.version), ['001-init', '002-delegation']);
+  assert.deepEqual(versions.map(v => v.version), ['001-init', '002-delegation', '003-vetting']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -115,9 +115,9 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
   db.prepare(`INSERT INTO tags (id,name) VALUES ('g1','chore')`).run();
   db.prepare(`INSERT INTO task_tags (task_id,tag_id) VALUES ('t1','g1')`).run();
 
-  migrate(); // real migrations dir — applies 002 only
+  migrate(); // real migrations dir — applies 002 (rebuild) and 003 (vetting)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation']);
+    ['001-init', '002-delegation', '003-vetting']);
   // data survived; existing rows got assignee='aron' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
@@ -151,6 +151,35 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
   for (const want of ['idx_tasks_project', 'idx_tasks_status_when', 'idx_tasks_due', 'idx_tasks_assignee']) {
     assert.ok(idx.includes(want), `missing index ${want}`);
   }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('003-vetting backfill: existing rows vetted=1 EXCEPT created_by=email -> 0 (regardless of assignee)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'av-tasks.db');
+  // seed a database that only knows 001+002
+  const migDirPre = join(dir, 'migs-pre');
+  mkdirSync(migDirPre);
+  for (const f of ['001-init.sql', '002-delegation.sql']) {
+    writeFileSync(join(migDirPre, f), readFileSync(join(import.meta.dirname, '..', 'migrations', f)));
+  }
+  const { db, migrate } = open(dbPath);
+  migrate(migDirPre);
+  const ins = db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,created_at,updated_at)
+                          VALUES (?,?,'active',?,?,'t','t')`);
+  ins.run('t1', 'owner task', 'aron', 'aron');
+  ins.run('t2', 'agent-made', 'claude', 'hermes');
+  ins.run('t3', 'from email for agent', 'email', 'hermes');
+  // the noted live-db case: email-created but assigned to the human —
+  // backfill keys on PROVENANCE, so this becomes unvetted too (acceptable:
+  // complete/PATCH stay open, and the admin can vet it)
+  ins.run('t4', 'from email for aron', 'email', 'aron');
+  migrate(); // real dir — applies 003 only
+  const vetted = id => db.prepare('SELECT vetted FROM tasks WHERE id = ?').get(id).vetted;
+  assert.equal(vetted('t1'), 1);
+  assert.equal(vetted('t2'), 1);
+  assert.equal(vetted('t3'), 0);
+  assert.equal(vetted('t4'), 0);
   rmSync(dir, { recursive: true, force: true });
 });
 

@@ -177,6 +177,27 @@ test('admin is a parameter, not a literal: lanes follow whoever :admin names', (
   assert.equal(db.prepare(c.sql).get(...c.args).c, 2); // del5, del6
 });
 
+// ---- agent security (layer 1) ----
+test('queue view: active+in_progress, vetted only — the server-side agent-queue contract', () => {
+  const db = seed();
+  db.prepare(`UPDATE tasks SET vetted=0 WHERE id='del5'`).run();
+  const ids = run(db, 'queue', { assignee: 'claude' }).map(r => r.id);
+  assert.deepEqual(ids, ['del2', 'del1', 'del6'], 'in_progress first; unvetted del5 excluded');
+  // review/archived rows are never queue material either
+  assert.deepEqual(run(db, 'queue', { assignee: 'hermes' }), []);
+  // the same rows still show in delegated (visibility is not filtered)
+  assert.ok(run(db, 'delegated').map(r => r.id).includes('del5'));
+});
+
+test('unvetted view: open agent-assigned vetted=0 rows; taskCount agrees', () => {
+  const db = seed();
+  db.prepare(`UPDATE tasks SET vetted=0 WHERE id IN ('del5', 'inb1')`).run(); // inb1 is aron's
+  const ids = run(db, 'unvetted').map(r => r.id);
+  assert.deepEqual(ids, ['del5'], "only agent-assigned quarantine counts; aron's own row does not");
+  const { sql, args } = taskCount('unvetted', { today: TODAY, admin: 'aron' });
+  assert.equal(db.prepare(sql).get(...args).c, 1);
+});
+
 test('taskCount covers review and delegated', () => {
   const db = seed();
   const c = view => {

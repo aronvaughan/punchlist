@@ -106,10 +106,14 @@ function sectionOf(task, today) {
   return 3;
 }
 
-export function buildApp({ db, tokens, admin, today: todayFn }) {
+export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
+  // agent-security layer 1: tasks created by an untrusted actor are born
+  // vetted=0 — quarantined from agent queues and the claim/finish doors
+  // until the admin vets them (AV_TASKS_UNTRUSTED_ACTORS, default "email")
+  const UNTRUSTED = new Set(untrusted ?? ['email']);
   const byToken = new Map(Object.entries(tokens).map(([name, tok]) => [tok, name]));
   const app = new Hono();
 
@@ -164,11 +168,12 @@ export function buildApp({ db, tokens, admin, today: todayFn }) {
       db.prepare(
         `INSERT INTO tasks (id, title, notes, project_id, status, when_type, when_date, due_date,
                             due_time, rank, today_rank, recur, spawned_from, created_by, completed_at,
-                            created_at, updated_at, assignee, auto_close)
-         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?)`
+                            created_at, updated_at, assignee, auto_close, vetted)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)`
       ).run(id, body.title.trim(), body.notes, body.project_id, body.when_type, body.when_date,
             body.due_date, body.due_time, rank, body.recur ? JSON.stringify(body.recur) : null,
-            actor, now, now, body.assignee.trim(), body.auto_close ? 1 : 0);
+            actor, now, now, body.assignee.trim(), body.auto_close ? 1 : 0,
+            UNTRUSTED.has(actor) ? 0 : 1);
       setTags(id, body.tags);
       const insStep = db.prepare('INSERT INTO steps (id, task_id, title, done, rank) VALUES (?, ?, ?, 0, ?)');
       body.steps.forEach((s, i) => insStep.run(ulid(), id, s.trim(), (i + 1) * 1024));
@@ -229,7 +234,7 @@ export function buildApp({ db, tokens, admin, today: todayFn }) {
   app.get('/api/v1/tasks', c => {
     const { view, project, tag, q, assignee, limit, cursor, window: windowRaw } = c.req.query();
     if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook',
-      'review', 'delegated'].includes(view)) {
+      'review', 'delegated', 'queue', 'unvetted'].includes(view)) {
       throw new ApiError(400, `unknown view: ${view}`);
     }
     const lim = Math.min(Math.max(1, Number(limit) || 100), 500);
@@ -364,6 +369,9 @@ export function buildApp({ db, tokens, admin, today: todayFn }) {
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
+      // agent-security layer 1: the gate is the DOOR, not just queue
+      // filtering — an unvetted task cannot be worked even by id
+      if (!task.vetted) throw new ApiError(403, 'task not vetted for agent execution');
       if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can claim');
       const now = new Date().toISOString();
       // guarded: active -> in_progress; re-claiming your own in_progress task
@@ -388,6 +396,7 @@ export function buildApp({ db, tokens, admin, today: todayFn }) {
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
+      if (!task.vetted) throw new ApiError(403, 'task not vetted for agent execution');
       if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can finish');
       if (task.status !== 'active' && task.status !== 'in_progress') {
         throw new ApiError(409, `cannot finish a ${task.status} task`);
@@ -418,6 +427,20 @@ export function buildApp({ db, tokens, admin, today: todayFn }) {
       if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
       return doneResponse(c, id, toDone(task, ['review']));
     });
+  });
+
+  // agent-security layer 1: the ONLY way a task becomes vetted (PATCH rejects
+  // the field). Admin-only door; idempotent — re-vetting a vetted task = 200.
+  app.post('/api/v1/tasks/:id/vet', c => {
+    const id = c.req.param('id');
+    const task = getTask(id);
+    if (!task) throw new ApiError(404, 'task not found');
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can vet`);
+    if (!task.vetted) {
+      db.prepare('UPDATE tasks SET vetted = 1, updated_at = ? WHERE id = ?')
+        .run(new Date().toISOString(), id);
+    }
+    return c.json({ task: attach(getTask(id)) });
   });
 
   app.post('/api/v1/tasks/:id/reorder', async c => {
@@ -583,6 +606,7 @@ export function buildApp({ db, tokens, admin, today: todayFn }) {
     return c.json({
       inbox: count('inbox'), today: count('today'), upcoming: count('upcoming'),
       due_soon: count('due_soon'), review: count('review'), delegated: count('delegated'),
+      unvetted: count('unvetted'), // quarantined agent work awaiting the admin's vet
       projects,
       actor: c.get('actor'), // who this token belongs to (rail footer)
     });

@@ -72,6 +72,20 @@ const VIEWS = {
     where: `assignee <> :admin AND ${OPEN}`,
     keys: ['assignee', AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
+  // agent work queue (agent-security layer 1): what an agent may pick up.
+  // vetted=0 rows are EXCLUDED server-side — combined with the ?assignee=
+  // filter this is the whole queue contract for pl.sh queue / MCP
+  // punchlist_queue; the claim/finish doors enforce the same gate.
+  queue: {
+    where: `status IN ('active', 'in_progress') AND vetted = 1`,
+    keys: [AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
+  // quarantined arrivals: delegated work an agent will not execute until
+  // the admin vets it (counts badge + Agents-view header line)
+  unvetted: {
+    where: `assignee <> :admin AND vetted = 0 AND ${OPEN}`,
+    keys: ['assignee', `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
   // no view: open tasks; when scoped to a project, section-ordered
   _default: {
     where: OPEN,
