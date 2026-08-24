@@ -33,6 +33,10 @@ const CASES = [
   ['everything combined', 'trim hedge @Home #garden #chore !friday ^2026-03-05',
     { title: 'trim hedge', project_id: 'p1', tags: ['garden', 'chore'], due_date: '2026-03-06', when_type: 'date', when_date: '2026-03-05' }],
   ['tokens only, empty title', '#x !today', { title: '', tags: ['x'], due_date: '2026-03-04' }],
+  ['^someday after a ^date clears the stale when_date (last ^ wins)',
+    'task ^2026-03-11 ^someday', { title: 'task', when_type: 'someday' }],
+  ['^date after ^someday wins cleanly too',
+    'task ^someday ^2026-03-11', { title: 'task', when_type: 'date', when_date: '2026-03-11' }],
 ];
 
 for (const [name, text, expected] of CASES) {

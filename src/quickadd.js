@@ -87,8 +87,10 @@ export function parse(text, { projects = [], today } = {}) {
       out.due_date = parseDate(tok.slice(1), todayISO);
     } else if (tok.startsWith('^') && tok.length > 1) {
       const v = tok.slice(1);
-      if (v.toLowerCase() === 'someday') out.when_type = 'someday';
-      else { out.when_type = 'date'; out.when_date = parseDate(v, todayISO); }
+      if (v.toLowerCase() === 'someday') {
+        out.when_type = 'someday';
+        delete out.when_date; // last ^ wins: clear a stale date from an earlier ^token
+      } else { out.when_type = 'date'; out.when_date = parseDate(v, todayISO); }
     } else if (tok.startsWith('*') && tok.length > 1) {
       out.recur = parseRecur(tok.slice(1));
     } else {
