@@ -9,7 +9,7 @@ setBasePath('/vendor/webawesome');
 
 // ---- themes: stored pref, "system" follows the OS; boot flash is handled
 // by theme-boot.js (blocking, pre-CSS). This mirrors that logic for runtime.
-const THEMES = ['system', 'light', 'dark', 'paper', 'spruce'];
+const THEMES = ['system', 'light', 'dark', 'paper', 'spruce', 'midnight', 'slate', 'ember', 'rose'];
 const THEME_KEY = 'av-tasks-theme';
 const mq = matchMedia('(prefers-color-scheme: dark)');
 
@@ -23,7 +23,7 @@ function applyTheme() {
   const h = document.documentElement;
   h.setAttribute('data-theme', resolved);
   h.classList.remove('wa-dark', 'wa-light');
-  h.classList.add(resolved === 'dark' || resolved === 'spruce' ? 'wa-dark' : 'wa-light');
+  h.classList.add(['dark', 'spruce', 'midnight', 'ember'].includes(resolved) ? 'wa-dark' : 'wa-light');
 }
 mq.addEventListener('change', applyTheme);
 applyTheme();

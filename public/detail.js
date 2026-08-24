@@ -5,6 +5,7 @@ import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
+import { tagsField } from '/suggest.js';
 
 const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -127,15 +128,9 @@ function projectEditor() {
 }
 
 function tagsEditor() {
-  const input = el('input');
-  input.type = 'text';
-  input.placeholder = 'comma, separated';
-  input.value = (current.tags ?? []).join(', ');
-  input.addEventListener('change', () => {
-    const tags = input.value.split(',').map(s => s.trim()).filter(Boolean);
-    patch({ tags });
-  });
-  return labeled('Tags', input);
+  // shared chips + suggestion-popover field (suggest.js); patch() refreshes
+  // `current`, the field keeps its own copy in sync on success
+  return labeled('Tags', tagsField(current, fields => patch(fields)));
 }
 
 function notesEditor() {

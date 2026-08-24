@@ -5,6 +5,7 @@
 import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { openDetail, stepsEditorFor } from '/detail.js';
 import { dueCountdown } from '/dates.js';
+import { tagsField } from '/suggest.js';
 
 let expanded = null; // { row, task, orig, titleSpan }
 
@@ -87,6 +88,14 @@ export function expandRow(task, row) {
   inner.append(controlsRow(task));
   row.append(head, body);
 
+  // after the expand transition, release overflow so popovers (tag
+  // suggestions) can escape the card; reduced motion has no transition
+  const release = () => body.classList.add('done');
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) release();
+  else {
+    body.addEventListener('transitionend', release, { once: true });
+    setTimeout(release, 350); // fallback: transitionend can be swallowed
+  }
   requestAnimationFrame(() => { body.classList.add('open'); grow(); });
   setTimeout(() => title.focus({ preventScroll: true }), 30);
 }
@@ -143,53 +152,9 @@ function dueControl(task) {
   return labeled('Due', box);
 }
 
-// tag chips with x-remove + type-to-add (datalist autocomplete)
+// tags: shared chips + suggestion-popover field (suggest.js)
 function tagsControl(task) {
-  const box = el('div', 'inline-tags');
-  const chips = el('div', 'inline-tag-chips');
-  const paint = () => {
-    chips.replaceChildren();
-    for (const name of task.tags ?? []) {
-      const chip = el('span', 'chip tag', `#${name}`);
-      const x = el('button', 'chip-x', '✕');
-      x.setAttribute('aria-label', `Remove tag ${name}`);
-      x.addEventListener('click', async e => {
-        e.stopPropagation();
-        if (await save(task, { tags: task.tags.filter(t => t !== name) })) paint();
-      });
-      chip.append(x);
-      chips.append(chip);
-    }
-  };
-  const input = el('input', 'inline-tag-add');
-  input.type = 'text';
-  input.placeholder = 'add tag…';
-  input.setAttribute('list', 'tag-options');
-  let datalist = document.getElementById('tag-options');
-  if (!datalist) {
-    datalist = el('datalist');
-    datalist.id = 'tag-options';
-    document.body.append(datalist);
-  }
-  datalist.replaceChildren(...(state.tags ?? []).map(t => {
-    const o = el('option');
-    o.value = t.name;
-    return o;
-  }));
-  const addTag = async () => {
-    const v = input.value.trim().replace(/^#/, '');
-    if (!v) return;
-    if (!(task.tags ?? []).some(t => t.toLowerCase() === v.toLowerCase())) {
-      if (!(await save(task, { tags: [...(task.tags ?? []), v] }))) return;
-    }
-    input.value = '';
-    paint();
-  };
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); addTag(); } });
-  input.addEventListener('change', addTag); // datalist pick
-  paint();
-  box.append(chips, input);
-  return labeled('Tags', box);
+  return labeled('Tags', tagsField(task, fields => save(task, fields)));
 }
 
 function labeled(label, child) {

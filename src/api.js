@@ -567,10 +567,15 @@ export function buildApp({ db, tokens, today: todayFn }) {
     if (!file.startsWith(PUBLIC_DIR) || !existsSync(file) || !statSync(file).isFile()) {
       return c.json({ error: 'not found' }, 404);
     }
+    // no-cache (revalidate, not no-store): without it browsers heuristically
+    // cache app modules/styles and serve a stale UI after upgrades. Vendored
+    // assets are immutable-ish and large — let them cache for a day.
+    const cache = p.startsWith('vendor/') ? 'public, max-age=86400' : 'no-cache';
     return c.body(readFileSync(file), 200, {
       'Content-Type': MIME[extname(file)] || 'application/octet-stream',
       'Content-Security-Policy': CSP,
       'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': cache,
     });
   });
 

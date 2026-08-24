@@ -35,7 +35,30 @@ function fmtDate(iso) {
 
 // ---- rail ----
 const COLLAPSE_KEY = 'av-tasks-collapsed';
-const TAGS_OPEN_KEY = 'av-tasks-tags-open';
+
+// whole-section disclosures (Projects / Tags), persisted, default expanded
+const SEC_KEYS = { projects: 'av-tasks-sec-projects', tags: 'av-tasks-sec-tags' };
+function secOpen(name) {
+  try { return localStorage.getItem(SEC_KEYS[name]) !== '0'; } catch { return true; }
+}
+function toggleSec(name) {
+  try { localStorage.setItem(SEC_KEYS[name], secOpen(name) ? '0' : '1'); } catch { /* private mode */ }
+  renderRail();
+}
+// heading becomes one full-width 44px toggle: caret + label
+function sectionHead(headEl, name, label) {
+  headEl.replaceChildren();
+  const open = secOpen(name);
+  const btn = el('button', 'sec-toggle');
+  btn.setAttribute('aria-expanded', String(open));
+  btn.setAttribute('aria-label', (open ? 'Collapse ' : 'Expand ') + label);
+  btn.addEventListener('click', () => toggleSec(name));
+  const caret = el('span', 'caret' + (open ? '' : ' closed'));
+  caret.setAttribute('aria-hidden', 'true');
+  btn.append(caret, document.createTextNode(label));
+  headEl.append(btn);
+  return open;
+}
 
 function childrenMap(projects) {
   const map = new Map();
@@ -133,7 +156,9 @@ export function renderRail() {
       ul.append(li);
     }
   };
-  addRows(rootUl, '');
+  const projOpen = sectionHead(document.getElementById('rail-projects-head'), 'projects', 'Projects');
+  document.getElementById('rail-new-project').hidden = !projOpen;
+  if (projOpen) addRows(rootUl, '');
   renderRailTags();
 }
 
@@ -146,22 +171,7 @@ function renderRailTags() {
   const tags = state.tags ?? [];
   head.hidden = tags.length === 0;
   if (!tags.length) return;
-  // long lists (>8) sit behind a disclosure, collapsed by default
-  const long = tags.length > 8;
-  let open = true;
-  if (long) {
-    const stored = localStorage.getItem(TAGS_OPEN_KEY);
-    open = stored != null ? stored === '1' : false;
-    const caret = el('button', 'caret' + (open ? '' : ' closed'));
-    caret.setAttribute('aria-expanded', String(open));
-    caret.setAttribute('aria-label', open ? 'Collapse tags' : 'Expand tags');
-    caret.addEventListener('click', () => {
-      try { localStorage.setItem(TAGS_OPEN_KEY, open ? '0' : '1'); } catch { /* private mode */ }
-      renderRail();
-    });
-    head.append(caret);
-  }
-  head.append(document.createTextNode('Tags'));
+  const open = sectionHead(head, 'tags', 'Tags');
   if (!open) return;
   for (const t of tags) {
     const li = el('li');

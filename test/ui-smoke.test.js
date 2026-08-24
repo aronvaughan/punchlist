@@ -37,7 +37,7 @@ test('GET / returns the app shell with CSP', async () => {
 
 test('app JS modules are served as text/javascript', async () => {
   const { get } = makeApp();
-  for (const p of ['/app.js', '/views.js', '/detail.js', '/md.js', '/dates.js', '/inline.js', '/theme-boot.js']) {
+  for (const p of ['/app.js', '/views.js', '/detail.js', '/md.js', '/dates.js', '/inline.js', '/theme-boot.js', '/suggest.js']) {
     const res = await get(p);
     assert.equal(res.status, 200, p);
     assert.equal(res.headers.get('Content-Type'), 'text/javascript', p);
@@ -61,6 +61,14 @@ test('vendored assets in subdirectories: correct MIME + CSP + nosniff', async ()
     assert.equal(res.status, 200, p);
     assert.equal(res.headers.get('Content-Type'), 'text/css', p);
   }
+});
+
+test('caching: app files revalidate (no-cache), vendored assets may cache', async () => {
+  const { get } = makeApp();
+  assert.equal((await get('/app.js')).headers.get('Cache-Control'), 'no-cache');
+  assert.equal((await get('/')).headers.get('Cache-Control'), 'no-cache');
+  assert.equal((await get('/vendor/sortable.core.esm.js')).headers.get('Cache-Control'),
+    'public, max-age=86400');
 });
 
 test('CSP permits data: for icons but stays same-origin for scripts', async () => {
