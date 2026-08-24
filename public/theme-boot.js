@@ -2,14 +2,17 @@
 // theme applies before first paint (no flash). Plain script, CSP-safe
 // (external, same-origin). Mirrors the applyTheme logic in app.js.
 (function () {
+  var THEMES = ['system', 'light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte',
+    'dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal'];
+  var DARK = ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal'];
   var pref = 'system';
   try { pref = localStorage.getItem('av-tasks-theme') || 'system'; } catch (e) { /* blocked */ }
-  if (['system', 'light', 'dark', 'paper', 'spruce', 'midnight', 'slate', 'ember', 'rose'].indexOf(pref) === -1) pref = 'system';
+  if (THEMES.indexOf(pref) === -1) pref = 'system';
   var dark = false;
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { /* old UA */ }
   var resolved = pref === 'system' ? (dark ? 'dark' : 'light') : pref;
   var h = document.documentElement;
   h.setAttribute('data-theme', resolved);
   h.classList.remove('wa-dark', 'wa-light');
-  h.classList.add(['dark', 'spruce', 'midnight', 'ember'].includes(resolved) ? 'wa-dark' : 'wa-light');
+  h.classList.add(DARK.indexOf(resolved) !== -1 ? 'wa-dark' : 'wa-light');
 })();

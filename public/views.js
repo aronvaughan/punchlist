@@ -170,9 +170,10 @@ function renderRailTags() {
   head.replaceChildren();
   const tags = state.tags ?? [];
   head.hidden = tags.length === 0;
-  if (!tags.length) return;
-  const open = sectionHead(head, 'tags', 'Tags');
-  if (!open) return;
+  // "+ New tag" shows unless the Tags section is explicitly collapsed
+  const open = tags.length ? sectionHead(head, 'tags', 'Tags') : true;
+  document.getElementById('rail-new-tag').hidden = !open;
+  if (!tags.length || !open) return;
   for (const t of tags) {
     const li = el('li');
     const row = el('button', 'rail-tag');
@@ -251,6 +252,40 @@ document.getElementById('window-ok').addEventListener('click', saveWindow);
 document.getElementById('window-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveWindow(); });
 document.getElementById('window-cancel').addEventListener('click', () => {
   document.getElementById('window-dialog').open = false;
+});
+
+// ---- new-tag dialog ----
+function openTagDialog() {
+  const input = document.getElementById('tag-name-input');
+  input.value = '';
+  document.getElementById('tag-error').hidden = true;
+  document.getElementById('tag-dialog').open = true;
+  setTimeout(() => input.focus(), 50);
+}
+async function createTag() {
+  const input = document.getElementById('tag-name-input');
+  const err = document.getElementById('tag-error');
+  const name = input.value.trim().replace(/^#/, '');
+  if (!name) { err.textContent = 'Name is required.'; err.hidden = false; return; }
+  if ((state.tags ?? []).some(t => t.name.toLowerCase() === name.toLowerCase())) {
+    err.textContent = 'That tag already exists.';
+    err.hidden = false;
+    return;
+  }
+  try {
+    await api('POST', '/tags', { name });
+    document.getElementById('tag-dialog').open = false;
+    await reload(); // zero-count tag appears in the nav immediately
+  } catch (e) {
+    err.textContent = e.status === 409 ? 'That tag already exists.' : `Create failed: ${e.message}`;
+    err.hidden = false;
+  }
+}
+document.getElementById('rail-new-tag').addEventListener('click', openTagDialog);
+document.getElementById('tag-create').addEventListener('click', createTag);
+document.getElementById('tag-name-input').addEventListener('keydown', e => { if (e.key === 'Enter') createTag(); });
+document.getElementById('tag-cancel').addEventListener('click', () => {
+  document.getElementById('tag-dialog').open = false;
 });
 
 document.getElementById('rail-new-project').addEventListener('click', () => openProjectDialog(null));

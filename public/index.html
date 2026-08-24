@@ -19,6 +19,7 @@
       <input id="search" type="search" autocomplete="off" placeholder="Search (/)" aria-label="Search">
     </header>
     <nav id="rail" aria-label="Views and projects">
+      <div id="brand"><span class="brand-mark" aria-hidden="true"></span><span id="brand-name">av-tasks</span></div>
       <ul id="rail-views">
         <li><a href="#/inbox" data-view="inbox">Inbox</a></li>
         <li><a href="#/today" data-view="today">Today</a></li>
@@ -30,7 +31,9 @@
       <button id="rail-new-project" class="rail-project rail-new">+ New project</button>
       <div id="rail-tags-head" class="rail-heading" hidden>Tags</div>
       <ul id="rail-tags"></ul>
+      <button id="rail-new-tag" class="rail-project rail-new">+ New tag</button>
       <button id="theme-open" class="rail-project rail-new">◐ Theme</button>
+      <div id="rail-foot"></div>
     </nav>
     <main id="main">
       <div id="list-head">
@@ -50,6 +53,16 @@
     <p>Enter your av-tasks API token. It is stored only in this browser.</p>
     <input id="token-input" type="password" autocomplete="off" aria-label="API token">
     <wa-button slot="footer" id="token-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="tag-dialog" label="New tag">
+    <div class="dialog-field">
+      <label for="tag-name-input">Name</label>
+      <input id="tag-name-input" type="text" autocomplete="off">
+    </div>
+    <p id="tag-error" class="dialog-error" hidden></p>
+    <wa-button slot="footer" id="tag-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="tag-create" variant="brand">Create</wa-button>
   </wa-dialog>
 
   <wa-dialog id="theme-dialog" label="Theme">

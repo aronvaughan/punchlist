@@ -1,5 +1,9 @@
 // app.js — core: token flow, fetch wrapper, hash routing, quick-add, search,
 // keyboard, toasts. Rendering lives in views.js; the drawer in detail.js.
+
+// the ONE place the app's name lives in JS (index.html's <title>/#brand-name
+// are synced from it at boot); rename here + <title> text only
+export const APP_NAME = 'av-tasks';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
 import { renderRail, renderMain } from '/views.js';
 import { closeDetail } from '/detail.js';
@@ -9,7 +13,13 @@ setBasePath('/vendor/webawesome');
 
 // ---- themes: stored pref, "system" follows the OS; boot flash is handled
 // by theme-boot.js (blocking, pre-CSS). This mirrors that logic for runtime.
-const THEMES = ['system', 'light', 'dark', 'paper', 'spruce', 'midnight', 'slate', 'ember', 'rose'];
+const THEME_GROUPS = [
+  ['System', ['system']],
+  ['Light', ['light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte']],
+  ['Dark', ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal']],
+];
+const THEMES = THEME_GROUPS.flatMap(([, list]) => list);
+const DARK_THEMES = new Set(THEME_GROUPS[2][1]);
 const THEME_KEY = 'av-tasks-theme';
 const mq = matchMedia('(prefers-color-scheme: dark)');
 
@@ -23,30 +33,36 @@ function applyTheme() {
   const h = document.documentElement;
   h.setAttribute('data-theme', resolved);
   h.classList.remove('wa-dark', 'wa-light');
-  h.classList.add(['dark', 'spruce', 'midnight', 'ember'].includes(resolved) ? 'wa-dark' : 'wa-light');
+  h.classList.add(DARK_THEMES.has(resolved) ? 'wa-dark' : 'wa-light');
 }
 mq.addEventListener('change', applyTheme);
 applyTheme();
 
-// picker: 5 labeled swatches, current pref highlighted
+// picker: swatch grid grouped System / Light / Dark, current pref highlighted
 function renderThemeChoices() {
   const box = document.getElementById('theme-choices');
   box.replaceChildren();
   const current = themePref();
-  for (const t of THEMES) {
-    const b = document.createElement('button');
-    b.className = `theme-choice${t === current ? ' on' : ''}`;
-    const sw = document.createElement('span');
-    sw.className = `swatch swatch-${t}`;
-    const label = document.createElement('span');
-    label.textContent = t[0].toUpperCase() + t.slice(1);
-    b.append(sw, label);
-    b.addEventListener('click', () => {
-      try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
-      applyTheme();
-      document.getElementById('theme-dialog').open = false;
-    });
-    box.append(b);
+  for (const [groupLabel, list] of THEME_GROUPS) {
+    const lab = document.createElement('div');
+    lab.className = 'theme-group-label';
+    lab.textContent = groupLabel;
+    box.append(lab);
+    for (const t of list) {
+      const b = document.createElement('button');
+      b.className = `theme-choice${t === current ? ' on' : ''}`;
+      const sw = document.createElement('span');
+      sw.className = `swatch swatch-${t}`;
+      const label = document.createElement('span');
+      label.textContent = t[0].toUpperCase() + t.slice(1);
+      b.append(sw, label);
+      b.addEventListener('click', () => {
+        try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
+        applyTheme();
+        document.getElementById('theme-dialog').open = false;
+      });
+      box.append(b);
+    }
   }
 }
 document.getElementById('theme-open').addEventListener('click', () => {
@@ -64,8 +80,23 @@ export const state = {
   tags: [],
   counts: null,
   dueSoon: [],
+  version: '',
   nextCursor: null,
 };
+
+document.getElementById('brand-name').textContent = APP_NAME;
+document.title = APP_NAME;
+
+// rail footer: name + version (/health) + actor (/counts)
+function renderFoot() {
+  const foot = document.getElementById('rail-foot');
+  const bits = [`${APP_NAME}${state.version ? ` v${state.version}` : ''}`];
+  if (state.counts?.actor) bits.push(`signed in as ${state.counts.actor}`);
+  foot.textContent = bits.join(' · ');
+}
+fetch('/api/v1/health').then(r => r.json())
+  .then(h => { state.version = h.version || ''; renderFoot(); })
+  .catch(() => {});
 
 // due-soon window (days ahead), persisted; server validates 1..365
 export function dueWindow() {
@@ -217,6 +248,7 @@ export async function reload() {
   }
   renderRail();
   renderMain();
+  renderFoot();
 }
 
 export function setTagFilter(tag) {
