@@ -11,7 +11,9 @@ import { between, renormalize } from './rank.js';
 import { nextDue, spawn } from './recur.js';
 import { parse as quickParse } from './quickadd.js';
 
-const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+const PUBLIC_DIR = join(ROOT_DIR, 'public');
+const VERSION = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')).version;
 // data: in img-src/connect-src: Web Awesome's system icon library ships its
 // SVGs as data: URIs and wa-icon fetch()es them at runtime — same-origin-only
 // otherwise, no remote hosts allowed.
@@ -194,7 +196,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
     return body;
   }
 
-  app.get('/api/v1/health', c => c.json({ ok: true }));
+  app.get('/api/v1/health', c => c.json({ ok: true, version: VERSION }));
 
   // ---- tasks ----
   // due_soon window: ?window= days ahead (integer 1..365, default 30)
@@ -464,6 +466,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
     return c.json({
       inbox: count('inbox'), today: count('today'), upcoming: count('upcoming'),
       due_soon: count('due_soon'), projects,
+      actor: c.get('actor'), // who this token belongs to (rail footer)
     });
   });
 
@@ -480,6 +483,22 @@ export function buildApp({ db, tokens, today: todayFn }) {
        ORDER BY g.name COLLATE NOCASE, g.id`
     ).all();
     return c.json({ items });
+  });
+
+  app.post('/api/v1/tags', async c => {
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (k !== 'name') throw new ApiError(400, `unknown field: ${k}`);
+    if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > CAPS.title) {
+      throw new ApiError(400, 'name required (<=500 chars)');
+    }
+    const name = body.name.trim().replace(/^#/, '');
+    if (!name) throw new ApiError(400, 'name required (<=500 chars)');
+    if (db.prepare('SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE').get(name)) {
+      throw new ApiError(409, 'tag already exists');
+    }
+    const id = ulid();
+    db.prepare('INSERT INTO tags (id, name) VALUES (?, ?)').run(id, name);
+    return c.json({ id, name, count: 0 }, 201);
   });
 
   // ---- projects ----

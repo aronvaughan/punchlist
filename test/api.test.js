@@ -33,7 +33,8 @@ test('auth: 401 without/with bad token; health is open', async () => {
   assert.equal((await call('GET', '/api/v1/tasks', { token: 'x'.repeat(32) })).status, 401);
   const h = await call('GET', '/api/v1/health', { token: null });
   assert.equal(h.status, 200);
-  assert.deepEqual(h.json, { ok: true });
+  assert.equal(h.json.ok, true);
+  assert.match(h.json.version, /^\d+\.\d+\.\d+$/); // rail footer reads this
 });
 
 test('per-token created_by is server-set; client-supplied created_by rejected', async () => {
@@ -429,6 +430,7 @@ test('GET /counts: view counts + per-project open counts; zeroes included, auth 
   assert.equal(upcoming, 1);     // 'later'
   assert.equal(due_soon, 1);     // 'soon'
   assert.deepEqual(projects, { [proj.json.id]: 2 }); // done task excluded
+  assert.equal(res.json.actor, 'aron'); // rail footer: "signed in as …"
   assert.equal((await call('GET', '/api/v1/counts', { token: null })).status, 401);
   assert.equal((await call('GET', '/api/v1/counts?window=0')).status, 400);
 });
@@ -448,6 +450,30 @@ test('GET /tags lists every tag with open-task count; auth required', async () =
     [{ name: 'home', count: 1 }, { name: 'urgent', count: 0 }]);
   for (const it of res.json.items) assert.equal(typeof it.id, 'string');
   assert.equal((await call('GET', '/api/v1/tags', { token: null })).status, 401);
+});
+
+test('POST /tags: creates (leading # stripped), NOCASE dup 409, validation, auth', async () => {
+  const { call } = makeApp();
+  const a = await call('POST', '/api/v1/tags', { body: { name: 'Errands' } });
+  assert.equal(a.status, 201);
+  assert.equal(a.json.name, 'Errands');
+  assert.equal(a.json.count, 0);
+  assert.equal(typeof a.json.id, 'string');
+  const b = await call('POST', '/api/v1/tags', { body: { name: '#chores' } });
+  assert.equal(b.json.name, 'chores');
+  // case-insensitive duplicate -> 409 (also against tags created via tasks)
+  assert.equal((await call('POST', '/api/v1/tags', { body: { name: 'errands' } })).status, 409);
+  await call('POST', '/api/v1/tasks', { body: { title: 't', tags: ['home'] } });
+  assert.equal((await call('POST', '/api/v1/tags', { body: { name: 'HOME' } })).status, 409);
+  // validation + auth
+  assert.equal((await call('POST', '/api/v1/tags', { body: { name: '  ' } })).status, 400);
+  assert.equal((await call('POST', '/api/v1/tags', { body: { name: '#' } })).status, 400);
+  assert.equal((await call('POST', '/api/v1/tags', { body: { nome: 'x' } })).status, 400);
+  assert.equal((await call('POST', '/api/v1/tags', { body: { name: 'x' }, token: null })).status, 401);
+  // new zero-count tag still listed by GET /tags
+  const list = await call('GET', '/api/v1/tags');
+  assert.deepEqual(list.json.items.map(t => t.name), ['chores', 'Errands', 'home']);
+  assert.equal(list.json.items.find(t => t.name === 'Errands').count, 0);
 });
 
 // ---- static / CSP ----
