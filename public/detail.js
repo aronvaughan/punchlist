@@ -5,7 +5,7 @@ import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
-import { tagsField } from '/suggest.js';
+import { tagsField, assigneeField } from '/suggest.js';
 
 const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -56,9 +56,14 @@ export function openDetail(task) {
   title.addEventListener('change', () => { if (title.value.trim()) patch({ title: title.value.trim() }); });
   body.append(title);
 
-  body.append(whenEditor(), dueEditor(), projectEditor(), tagsEditor());
-  body.append(notesEditor(), stepsEditorFor(task), recurEditor(), actions());
-  body.append(el('div', 'meta-line', `added by ${task.created_by} · ${(task.created_at || '').slice(0, 10)}`));
+  body.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(), tagsEditor());
+  body.append(notesEditor(), stepsEditorFor(task), recurEditor());
+  const rep = reportView();
+  if (rep) body.append(rep);
+  body.append(actions());
+  const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
+  if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
+  body.append(el('div', 'meta-line', meta.join(' · ')));
   drawer().open = true;
 }
 
@@ -125,6 +130,26 @@ function projectEditor() {
   sel.value = current.project_id ?? '';
   sel.addEventListener('change', () => patch({ project_id: sel.value || null }));
   return labeled('Project', sel);
+}
+
+function assigneeEditor() {
+  const t = current;
+  return labeled('Assignee', assigneeField(t, async fields => {
+    const ok = await patch(fields);
+    if (ok) Object.assign(t, current); // patch() replaced `current`; refresh the field's ref
+    return ok;
+  }));
+}
+
+// agent's report (markdown, safe renderer) — shown for review/done delegated work
+function reportView() {
+  if (!current.report) return null;
+  const wrap = el('div');
+  wrap.append(el('label', null, 'Report'));
+  const bodyEl = el('div', 'report-body notes-preview');
+  bodyEl.innerHTML = mdToHtml(current.report); // mdToHtml escapes ALL input
+  wrap.append(bodyEl);
+  return wrap;
 }
 
 function tagsEditor() {
@@ -299,19 +324,38 @@ function recurEditor() {
 
 function actions() {
   const row = el('div', 'detail-actions');
+  const primaryDoor = async (path, okMsg) => {
+    try {
+      const res = await api('POST', `/tasks/${current.id}${path}`);
+      if (res.spawned_id) toast('Done — next occurrence scheduled', 'success');
+      else if (okMsg) toast(okMsg, 'success');
+      closeDetail();
+      reload();
+    } catch (e) { toast(`Failed: ${e.message}`); }
+  };
   const complete = document.createElement('wa-button');
   complete.setAttribute('variant', 'brand');
-  complete.textContent = current.status === 'done' ? 'Completed' : 'Complete';
-  if (current.status !== 'done') {
-    complete.addEventListener('click', async () => {
-      try {
-        const res = await api('POST', `/tasks/${current.id}/complete`);
-        if (res.spawned_id) toast('Done — next occurrence scheduled', 'success');
-        closeDetail();
-        reload();
-      } catch (e) { toast(`Complete failed: ${e.message}`); }
+  if (current.status === 'review') {
+    // review lane: aron approves (→ done) or reopens (→ active, report kept)
+    complete.textContent = 'Approve';
+    complete.addEventListener('click', () => primaryDoor('/approve', 'Approved'));
+    const reopen = document.createElement('wa-button');
+    reopen.setAttribute('appearance', 'plain');
+    reopen.textContent = 'Reopen';
+    reopen.addEventListener('click', async () => {
+      if (await patch({ status: 'active' })) closeDetail();
     });
-  } else complete.setAttribute('disabled', '');
+    row.append(reopen);
+  } else if (current.status === 'done') {
+    complete.textContent = 'Completed';
+    complete.setAttribute('disabled', '');
+  } else if (current.status === 'in_progress') {
+    complete.textContent = `In progress (${current.assignee})`;
+    complete.setAttribute('disabled', '');
+  } else {
+    complete.textContent = 'Complete';
+    complete.addEventListener('click', () => primaryDoor('/complete'));
+  }
   const archive = document.createElement('wa-button');
   archive.setAttribute('appearance', 'outlined');
   archive.textContent = current.status === 'archived' ? 'Unarchive' : 'Archive';

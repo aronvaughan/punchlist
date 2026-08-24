@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>av-tasks</title>
+  <title>punchlist</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230F766E'/%3E%3Cpath d='M28 53l16 16 28-34' stroke='%23FFFFFF' stroke-width='11' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <script src="/theme-boot.js"></script>
   <link rel="stylesheet" href="/vendor/webawesome/styles/webawesome.css" data-webawesome="/vendor/webawesome">
@@ -15,16 +15,17 @@
     <header id="topbar">
       <button id="nav-toggle" aria-label="Menu" aria-expanded="false">☰</button>
       <input id="quickadd" type="text" autocomplete="off" enterkeyhint="done"
-             placeholder="New task…  #tag @project !due ^when  (n)" aria-label="Quick add">
+             placeholder="New task…  #tag @project !due ^when >agent  (n)" aria-label="Quick add">
       <input id="search" type="search" autocomplete="off" placeholder="Search (/)" aria-label="Search">
     </header>
     <nav id="rail" aria-label="Views and projects">
-      <div id="brand"><span class="brand-mark" aria-hidden="true"></span><span id="brand-name">av-tasks</span></div>
+      <div id="brand"><span class="brand-mark" aria-hidden="true"></span><span id="brand-name">Punchlist</span></div>
       <ul id="rail-views">
         <li><a href="#/inbox" data-view="inbox">Inbox</a></li>
         <li><a href="#/today" data-view="today">Today</a></li>
         <li><a href="#/upcoming" data-view="upcoming">Upcoming</a></li>
         <li><a href="#/logbook" data-view="logbook">Logbook</a></li>
+        <li><a href="#/agents" data-view="agents">Agents</a></li>
       </ul>
       <div id="rail-projects-head" class="rail-heading">Projects</div>
       <ul id="rail-projects"></ul>
@@ -53,6 +54,12 @@
     <p>Enter your av-tasks API token. It is stored only in this browser.</p>
     <input id="token-input" type="password" autocomplete="off" aria-label="API token">
     <wa-button slot="footer" id="token-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="review-dialog" label="Review">
+    <div id="review-report" class="report-body"></div>
+    <wa-button slot="footer" id="review-reopen" appearance="plain">Reopen</wa-button>
+    <wa-button slot="footer" id="review-approve" variant="brand">Approve</wa-button>
   </wa-dialog>
 
   <wa-dialog id="tag-dialog" label="New tag">

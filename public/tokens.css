@@ -728,6 +728,64 @@ body.drag-active .section-block.empty .task-list {
 .chip.due.arrived { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); font-weight: 600; }
 .chip.filter { background: var(--accent); color: var(--on-accent); }
 .chip.project-name { cursor: default; }
+/* delegation chips */
+.chip.agent { cursor: default; }
+.chip.agent.working {
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  padding: 1.5px 7.5px;
+}
+.chip.review-chip { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
+.claimed-at { flex: none; font-size: 11px; color: var(--ink-faint); }
+.review-card {
+  margin: 0 8px 8px 42px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--chip-bg);
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+}
+.review-actions { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
+@media (max-width: 700px) {
+  .review-actions wa-button::part(base) { min-height: 44px; }
+  .review-actions .link-btn { min-height: 44px; }
+}
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 6px 0;
+}
+.link-btn:hover { color: var(--accent); }
+.report-line {
+  margin: 0 8px 6px 42px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+.report-line.open { display: block; -webkit-line-clamp: unset; }
+.report-line p { margin: 0 0 4px; }
+.report-body p:first-child { margin-top: 0; }
+.nav-count.attention { color: var(--accent); font-weight: 700; }
+.auto-close-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.auto-close-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
 .empty-note { color: var(--ink-faint); padding: 28px 8px; text-align: center; }
 
 /* ---- inline row editor (Things-style expand-in-place) ---- */

@@ -12,6 +12,42 @@ function el(tag, className, text) {
   return n;
 }
 
+// assignee: segmented [Me | Claude | Hermes] + auto-close toggle when
+// delegated. save(fields) -> Promise<boolean>; used by inline card + drawer.
+const AGENTS = ['claude', 'hermes'];
+const HUMAN = 'aron';
+
+export function assigneeField(task, save) {
+  const box = el('div');
+  const seg = el('div', 'seg');
+  const auto = el('label', 'auto-close-toggle');
+  const check = el('input');
+  check.type = 'checkbox';
+  auto.append(check, el('span', null, 'close without my review'));
+
+  const paint = () => {
+    const who = task.assignee ?? HUMAN;
+    [...seg.children].forEach(b => b.classList.toggle('on', b.dataset.who === who));
+    auto.hidden = who === HUMAN;
+    check.checked = !!task.auto_close;
+  };
+  for (const who of [HUMAN, ...AGENTS]) {
+    const b = el('button', null, who === HUMAN ? 'Me' : who[0].toUpperCase() + who.slice(1));
+    b.dataset.who = who;
+    b.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (await save({ assignee: who })) paint();
+    });
+    seg.append(b);
+  }
+  check.addEventListener('change', async () => {
+    if (!(await save({ auto_close: check.checked }))) check.checked = !check.checked;
+  });
+  paint();
+  box.append(seg, auto);
+  return box;
+}
+
 export function tagsField(task, save) {
   let tags = [...(task.tags ?? [])];
   const box = el('div', 'tag-field');

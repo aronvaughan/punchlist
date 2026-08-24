@@ -31,6 +31,8 @@ test('GET / returns the app shell with CSP', async () => {
   assert.match(html, /id="backdrop"/);
   assert.match(html, /src="\/app\.js"/);
   assert.match(html, /data-webawesome="\/vendor\/webawesome"/);
+  assert.match(html, /data-view="agents"/); // delegation: Agents nav entry
+  assert.match(html, />agent/); // quick-add placeholder hints the assignee token
   // favicon is an inline data: SVG (no extra request; CSP img-src allows data:)
   assert.match(html, /rel="icon" href="data:image\/svg\+xml,/);
 });

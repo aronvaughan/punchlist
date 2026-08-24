@@ -5,7 +5,7 @@
 import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { openDetail, stepsEditorFor } from '/detail.js';
 import { dueCountdown } from '/dates.js';
-import { tagsField } from '/suggest.js';
+import { tagsField, assigneeField } from '/suggest.js';
 
 let expanded = null; // { row, task, orig, titleSpan }
 
@@ -103,7 +103,8 @@ export function expandRow(task, row) {
 // compact controls: When | Due | Tags — wraps on narrow screens
 function controlsRow(task) {
   const wrap = el('div', 'inline-controls');
-  wrap.append(whenControl(task), dueControl(task), tagsControl(task));
+  wrap.append(whenControl(task), dueControl(task), tagsControl(task),
+    labeled('Assignee', assigneeField(task, fields => save(task, fields))));
   return wrap;
 }
 

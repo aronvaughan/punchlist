@@ -5,6 +5,7 @@ import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, 
 import { openDetail } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { expandRow } from '/inline.js';
+import { mdToHtml } from '/md.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -87,13 +88,19 @@ export function renderRail() {
     a.classList.toggle('active',
       state.route.view === a.dataset.view && state.route.projectId === null);
   }
-  // nav counts (muted, right-aligned; zero renders nothing)
+  // nav counts (muted, right-aligned; zero renders nothing).
+  // Agents badge = delegated (which already includes its review rows —
+  // summing delegated+review would double-count); accent while reviews wait.
   const counts = state.counts ?? {};
   for (const a of document.querySelectorAll('#rail-views a')) {
     a.querySelector('.nav-count')?.remove();
     if (a.dataset.view === 'logbook') continue;
-    const n = counts[a.dataset.view] ?? 0;
-    if (n > 0) a.append(el('span', 'nav-count', String(n)));
+    const n = a.dataset.view === 'agents' ? (counts.delegated ?? 0) : (counts[a.dataset.view] ?? 0);
+    if (n > 0) {
+      const badge = el('span', 'nav-count', String(n));
+      if (a.dataset.view === 'agents' && (counts.review ?? 0) > 0) badge.classList.add('attention');
+      a.append(badge);
+    }
   }
   const collapsed = loadCollapsed();
   const live = state.projects.filter(p => !p.archived);
@@ -296,7 +303,7 @@ document.getElementById('project-name-input').addEventListener('keydown', e => {
 });
 
 // ---- rows ----
-function taskRow(task, { showProject = false, logbook = false, sortable = false } = {}) {
+function taskRow(task, { showProject = false, logbook = false, sortable = false, showClaimed = false } = {}) {
   const row = el('div', 'task-row');
   row.dataset.id = task.id;
   const t = todayISO();
@@ -340,6 +347,19 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false 
   if (showProject && task.project_id) {
     const p = state.projects.find(x => x.id === task.project_id);
     if (p) row.append(el('span', 'chip project-name', p.name));
+  }
+  if (task.assignee && task.assignee !== 'aron') {
+    // agent chip: muted; accent outline while claimed (in_progress)
+    row.append(el('span', 'chip agent' + (task.status === 'in_progress' ? ' working' : ''), task.assignee));
+    if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
+      row.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));
+    }
+    if (task.status === 'review') {
+      const chip = el('button', 'chip review-chip', 'review');
+      chip.setAttribute('aria-label', `Review ${task.assignee}'s report`);
+      chip.addEventListener('click', e => { e.stopPropagation(); openReviewDialog(task); });
+      row.append(chip);
+    }
   }
   for (const tag of task.tags ?? []) {
     const chip = el('button', 'chip tag', `#${tag}`);
@@ -492,6 +512,9 @@ export function renderMain() {
     titleEl.textContent = 'Logbook';
     renderGrouped(listEl, tasks, t => (t.completed_at || '').slice(0, 10) || 'Earlier',
       { showProject: true, logbook: true });
+  } else if (r.view === 'agents') {
+    titleEl.textContent = 'Agents';
+    renderAgents(listEl, tasks);
   } else {
     titleEl.textContent = 'Inbox';
     const ul = taskList(tasks, { sortable: true });
@@ -507,6 +530,7 @@ function emptyNote(view) {
     today: 'Nothing scheduled today.',
     upcoming: 'No scheduled tasks yet.',
     logbook: 'Completed tasks land here.',
+    agents: 'Nothing delegated — assign a task to Claude or Hermes.',
   }[view] ?? 'No tasks here yet.';
 }
 
@@ -522,6 +546,79 @@ function renderGrouped(listEl, tasks, keyFn, opts) {
       listEl.append(ul);
     }
     ul.append(taskRow(task, opts));
+    // logbook: agent report, collapsed to one line, tap to expand
+    if (opts?.logbook && task.report) {
+      const line = el('div', 'report-line notes-preview');
+      line.innerHTML = mdToHtml(task.report); // md renderer escapes all input
+      line.addEventListener('click', () => line.classList.toggle('open'));
+      ul.append(line);
+    }
+  }
+}
+
+// ---- Agents view + review actions ----
+async function approveTask(id) {
+  try {
+    const res = await api('POST', `/tasks/${id}/approve`);
+    toast(res.spawned_id ? 'Approved — next occurrence scheduled' : 'Approved', 'success');
+  } catch (e) { toast(`Approve failed: ${e.message}`); }
+  await reload();
+}
+async function reopenTask(id) {
+  try {
+    await api('PATCH', `/tasks/${id}`, { status: 'active' });
+    toast('Reopened', 'success');
+  } catch (e) { toast(`Reopen failed: ${e.message}`); }
+  await reload();
+}
+
+let reviewTask = null;
+function openReviewDialog(task) {
+  reviewTask = task;
+  const dlg = document.getElementById('review-dialog');
+  dlg.label = `${task.assignee}: ${task.title}`;
+  const box = document.getElementById('review-report');
+  box.innerHTML = mdToHtml(task.report || '(no report)'); // escaped by md.js
+  dlg.open = true;
+}
+document.getElementById('review-approve').addEventListener('click', () => {
+  document.getElementById('review-dialog').open = false;
+  if (reviewTask) approveTask(reviewTask.id);
+});
+document.getElementById('review-reopen').addEventListener('click', () => {
+  document.getElementById('review-dialog').open = false;
+  if (reviewTask) reopenTask(reviewTask.id);
+});
+
+function renderAgents(listEl, tasks) {
+  const byAgent = new Map();
+  for (const t of tasks) {
+    if (!byAgent.has(t.assignee)) byAgent.set(t.assignee, []);
+    byAgent.get(t.assignee).push(t);
+  }
+  for (const [agent, list] of byAgent) {
+    listEl.append(el('div', 'section-head', agent[0].toUpperCase() + agent.slice(1)));
+    const ul = el('div', 'task-list');
+    for (const task of list) { // server order: in_progress → review → queued
+      ul.append(taskRow(task, { showProject: true, showClaimed: true }));
+      if (task.status === 'review') {
+        const card = el('div', 'review-card');
+        const body = el('div', 'report-body notes-preview');
+        body.innerHTML = mdToHtml(task.report || '(no report)'); // escaped by md.js
+        const actions = el('div', 'review-actions');
+        const approve = document.createElement('wa-button');
+        approve.setAttribute('variant', 'brand');
+        approve.setAttribute('size', 'small');
+        approve.textContent = 'Approve';
+        approve.addEventListener('click', () => approveTask(task.id));
+        const reopen = el('button', 'link-btn', 'Reopen');
+        reopen.addEventListener('click', () => reopenTask(task.id));
+        actions.append(approve, reopen);
+        card.append(body, actions);
+        ul.append(card);
+      }
+    }
+    listEl.append(ul);
   }
 }
 

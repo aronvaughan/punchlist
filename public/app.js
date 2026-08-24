@@ -2,8 +2,9 @@
 // keyboard, toasts. Rendering lives in views.js; the drawer in detail.js.
 
 // the ONE place the app's name lives in JS (index.html's <title>/#brand-name
-// are synced from it at boot); rename here + <title> text only
-export const APP_NAME = 'av-tasks';
+// are synced from it at boot); rename here + <title> text only.
+// Wordmark shows APP_NAME; CLI-ish surfaces (title, footer) use the lowercase.
+export const APP_NAME = 'Punchlist';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
 import { renderRail, renderMain } from '/views.js';
 import { closeDetail } from '/detail.js';
@@ -85,12 +86,12 @@ export const state = {
 };
 
 document.getElementById('brand-name').textContent = APP_NAME;
-document.title = APP_NAME;
+document.title = APP_NAME.toLowerCase();
 
 // rail footer: name + version (/health) + actor (/counts)
 function renderFoot() {
   const foot = document.getElementById('rail-foot');
-  const bits = [`${APP_NAME}${state.version ? ` v${state.version}` : ''}`];
+  const bits = [`${APP_NAME.toLowerCase()}${state.version ? ` v${state.version}` : ''}`];
   if (state.counts?.actor) bits.push(`signed in as ${state.counts.actor}`);
   foot.textContent = bits.join(' · ');
 }
@@ -195,7 +196,7 @@ export function pickWhen(initial) {
 }
 
 // ---- routing ----
-const VIEWS = ['inbox', 'today', 'upcoming', 'logbook'];
+const VIEWS = ['inbox', 'today', 'upcoming', 'logbook', 'agents'];
 
 function parseHash() {
   const h = location.hash || '#/today';
@@ -223,6 +224,7 @@ export async function reload() {
   const params = new URLSearchParams();
   if (r.view === 'project') params.set('project', r.projectId);
   else if (r.view === 'tag') params.set('tag', r.tag);
+  else if (r.view === 'agents') params.set('view', 'delegated');
   else params.set('view', r.view);
   if (state.tag && r.view !== 'tag') params.set('tag', state.tag);
   if (state.q) params.set('q', state.q);
