@@ -31,6 +31,7 @@ test('GET / returns the app shell with CSP', async () => {
   assert.match(html, /id="backdrop"/);
   assert.match(html, /src="\/app\.js"/);
   assert.match(html, /data-webawesome="\/vendor\/webawesome"/);
+  assert.match(html, /data-view="review"/); // delegation: Review nav entry
   assert.match(html, /data-view="agents"/); // delegation: Agents nav entry
   assert.match(html, /id="new-task-btn"/); // header + button opens the create drawer
   assert.match(html, />agent/); // quick-add placeholder hints the assignee token

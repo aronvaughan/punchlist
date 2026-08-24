@@ -33,6 +33,8 @@ export function openNewTask() {
     ctx = `#${r.tag}`;
   } else if (r.view === 'logbook') {
     ctx = 'Logbook';
+  } else if (r.view === 'review') {
+    ctx = 'Review';
   } else if (r.view === 'agents') {
     ctx = 'Agents';
   }
@@ -129,7 +131,9 @@ export function renderRail() {
     const n = a.dataset.view === 'agents' ? (counts.delegated ?? 0) : (counts[a.dataset.view] ?? 0);
     if (n > 0) {
       const badge = el('span', 'nav-count', String(n));
-      if (a.dataset.view === 'agents' && (counts.review ?? 0) > 0) badge.classList.add('attention');
+      // reviews waiting on the human = accent/bold on both Review and Agents
+      if (a.dataset.view === 'review' ||
+          (a.dataset.view === 'agents' && (counts.review ?? 0) > 0)) badge.classList.add('attention');
       a.append(badge);
     }
   }
@@ -550,6 +554,9 @@ export function renderMain() {
     titleEl.textContent = 'Logbook';
     renderGrouped(listEl, tasks, t => (t.completed_at || '').slice(0, 10) || 'Earlier',
       { showProject: true, logbook: true });
+  } else if (r.view === 'review') {
+    titleEl.textContent = 'Review';
+    renderReview(listEl, tasks);
   } else if (r.view === 'agents') {
     titleEl.textContent = 'Agents';
     renderAgents(listEl, tasks);
@@ -568,6 +575,7 @@ function emptyNote(view) {
     today: 'Nothing scheduled today.',
     upcoming: 'No scheduled tasks yet.',
     logbook: 'Completed tasks land here.',
+    review: 'Nothing waiting on your review.',
     agents: 'Nothing delegated — assign a task to Claude or Hermes.',
   }[view] ?? 'No tasks here yet.';
 }
@@ -628,6 +636,34 @@ document.getElementById('review-reopen').addEventListener('click', () => {
   if (reviewTask) reopenTask(reviewTask.id);
 });
 
+// report card under a review row: rendered report + Approve / Reopen
+function reviewCard(task) {
+  const card = el('div', 'review-card');
+  const body = el('div', 'report-body notes-preview');
+  body.innerHTML = mdToHtml(task.report || '(no report)'); // escaped by md.js
+  const actions = el('div', 'review-actions');
+  const approve = document.createElement('wa-button');
+  approve.setAttribute('variant', 'brand');
+  approve.setAttribute('size', 'small');
+  approve.textContent = 'Approve';
+  approve.addEventListener('click', () => approveTask(task.id));
+  const reopen = el('button', 'link-btn', 'Reopen');
+  reopen.addEventListener('click', () => reopenTask(task.id));
+  actions.append(approve, reopen);
+  card.append(body, actions);
+  return card;
+}
+
+// Review view: every task here is status=review — row (with agent chip) + card
+function renderReview(listEl, tasks) {
+  const ul = el('div', 'task-list');
+  for (const task of tasks) {
+    ul.append(taskRow(task, { showProject: true }));
+    ul.append(reviewCard(task));
+  }
+  listEl.append(ul);
+}
+
 function renderAgents(listEl, tasks) {
   const byAgent = new Map();
   for (const t of tasks) {
@@ -639,22 +675,7 @@ function renderAgents(listEl, tasks) {
     const ul = el('div', 'task-list');
     for (const task of list) { // server order: in_progress → review → queued
       ul.append(taskRow(task, { showProject: true, showClaimed: true }));
-      if (task.status === 'review') {
-        const card = el('div', 'review-card');
-        const body = el('div', 'report-body notes-preview');
-        body.innerHTML = mdToHtml(task.report || '(no report)'); // escaped by md.js
-        const actions = el('div', 'review-actions');
-        const approve = document.createElement('wa-button');
-        approve.setAttribute('variant', 'brand');
-        approve.setAttribute('size', 'small');
-        approve.textContent = 'Approve';
-        approve.addEventListener('click', () => approveTask(task.id));
-        const reopen = el('button', 'link-btn', 'Reopen');
-        reopen.addEventListener('click', () => reopenTask(task.id));
-        actions.append(approve, reopen);
-        card.append(body, actions);
-        ul.append(card);
-      }
+      if (task.status === 'review') ul.append(reviewCard(task));
     }
     listEl.append(ul);
   }
