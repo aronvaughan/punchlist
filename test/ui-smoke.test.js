@@ -29,6 +29,8 @@ test('GET / returns the app shell with CSP', async () => {
   assert.match(html, /id="rail"/);
   assert.match(html, /src="\/app\.js"/);
   assert.match(html, /data-webawesome="\/vendor\/webawesome"/);
+  // favicon is an inline data: SVG (no extra request; CSP img-src allows data:)
+  assert.match(html, /rel="icon" href="data:image\/svg\+xml,/);
 });
 
 test('app JS modules are served as text/javascript', async () => {

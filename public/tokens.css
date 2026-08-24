@@ -1,35 +1,56 @@
-/* tokens.css — Things-ish look: airy lists, system stack, soft shadows,
-   generous whitespace. Layout: rail + list pane; rail collapses to a top
-   tab bar on small screens. Dark mode via prefers-color-scheme + WA classes. */
+/* tokens.css — Things-ish look: warm paper, deep-teal accent, airy lists,
+   system stack, soft shadows. Layout: rail + list pane; rail collapses to a
+   top tab bar on small screens.
+
+   Dark mode reacts to BOTH the system preference and a manual override:
+   html.wa-dark forces dark, html.wa-light forces light (agents/tests can
+   toggle the class); with neither forced, @media prefers-color-scheme wins. */
 
 :root {
-  --bg: #f5f6f8;
-  --pane: #ffffff;
-  --ink: #1c1e21;
-  --ink-soft: #6b7280;
-  --ink-faint: #9ca3af;
-  --accent: #2f7cf6;
-  --danger: #e5484d;
-  --chip-bg: #eef1f5;
-  --hover: #f0f3f7;
-  --line: #e7eaf0;
+  --bg: #FAFAF8;
+  --pane: #FFFFFF;
+  --ink: #1C1D20;
+  --ink-soft: #6B7280;
+  --ink-faint: #9CA3AF;
+  --accent: #0F766E;
+  --on-accent: #FFFFFF;
+  --danger: #E5484D;
+  --chip-bg: #EFF1F0;
+  --hover: #F1F3F1;
+  --line: #E8EAE8;
   --shadow: 0 1px 3px rgba(20, 24, 33, .07), 0 8px 24px rgba(20, 24, 33, .06);
   --radius: 10px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
           "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
+/* dark palette — duplicated for the media query and the manual class */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17191d;
-    --pane: #202329;
-    --ink: #e8eaed;
-    --ink-soft: #9aa2ad;
-    --ink-faint: #6b7280;
-    --chip-bg: #2b2f37;
-    --hover: #262a31;
-    --line: #2d323b;
+  html:not(.wa-light) {
+    --bg: #16181A;
+    --pane: #1E2124;
+    --ink: #E8E9EA;
+    --ink-soft: #9AA2AD;
+    --ink-faint: #6B7280;
+    --accent: #2DD4BF;
+    --on-accent: #0C2321;
+    --chip-bg: #2A2E32;
+    --hover: #26292D;
+    --line: #2C3034;
     --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
   }
+}
+html.wa-dark {
+  --bg: #16181A;
+  --pane: #1E2124;
+  --ink: #E8E9EA;
+  --ink-soft: #9AA2AD;
+  --ink-faint: #6B7280;
+  --accent: #2DD4BF;
+  --on-accent: #0C2321;
+  --chip-bg: #2A2E32;
+  --hover: #26292D;
+  --line: #2C3034;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
 }
 
 * { box-sizing: border-box; }
@@ -40,6 +61,13 @@ body {
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+
+/* visible keyboard focus everywhere, accent ring */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ---- layout ---- */
@@ -67,7 +95,7 @@ body {
   font: inherit;
   outline: none;
 }
-#topbar input:focus { border-color: var(--accent); }
+#topbar input:focus { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 0; }
 #topbar #search { flex: 0 1 260px; }
 
 #rail {
@@ -89,17 +117,20 @@ body {
   user-select: none;
 }
 #rail a:hover, .rail-project:hover { background: var(--hover); }
-#rail a.active, .rail-project.active { background: var(--hover); font-weight: 600; }
+#rail a.active, .rail-project.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
 .rail-heading {
   margin: 18px 12px 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: .08em;
   color: var(--ink-faint);
 }
 .rail-child { padding-left: 26px !important; }
-.rail-project.drag-over { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 #main {
   grid-area: main;
@@ -107,17 +138,33 @@ body {
   padding: 20px clamp(16px, 4vw, 48px) 120px;
 }
 #list-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-#view-title { font-size: 26px; font-weight: 700; margin: 6px 0 14px; }
+#view-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0 2px; }
+#view-sub { font-size: 14px; color: var(--ink-soft); margin: 0 0 14px; width: 100%; }
+#view-sub:empty { margin: 0 0 12px; }
 
 /* ---- list ---- */
+/* signature element: quiet uppercase section header with a hairline rule */
 .section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin: 26px 2px 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
 }
+.section-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+/* empty sections hide — except while a drag is active (they are drop targets) */
+.section-block.empty { display: none; }
+body.drag-active .section-block.empty { display: block; }
+body.drag-active .section-block.empty .task-list {
+  min-height: 44px;
+  border: 1px dashed var(--line);
+  box-shadow: none;
+}
+
 .group-head { /* date headers in Upcoming / Logbook */
   margin: 22px 2px 6px;
   font-size: 13px;
@@ -139,36 +186,60 @@ body {
   align-items: center;
   gap: 10px;
   min-height: 44px;
+  max-height: 80px;
   padding: 4px 10px;
   border-radius: 8px;
   cursor: pointer;
 }
 .task-row:hover { background: var(--hover); }
-.task-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-row .title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 450;
+}
 .task-row.done .title { color: var(--ink-faint); text-decoration: line-through; }
 .section-someday .task-row, .task-row.someday { opacity: .55; }
 .sortable-ghost { opacity: .35; }
 .sortable-drag { box-shadow: var(--shadow); background: var(--pane); }
 
+/* completion micro-interaction: fade + collapse before removal */
+@media (prefers-reduced-motion: no-preference) {
+  .task-row {
+    transition: opacity .25s ease, max-height .25s ease,
+                padding-top .25s ease, padding-bottom .25s ease;
+  }
+  .task-row.removing {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
 .check {
   flex: none;
   width: 22px;
   height: 22px;
-  border: 1.5px solid var(--ink-faint);
+  border: 1.5px solid var(--accent);
   border-radius: 6px;
   background: none;
   cursor: pointer;
   padding: 0;
   position: relative;
 }
-.check:hover { border-color: var(--accent); }
 .check.checked { background: var(--accent); border-color: var(--accent); }
 .check.checked::after {
   content: "";
   position: absolute;
   left: 6px; top: 2px;
   width: 5px; height: 10px;
-  border: solid #fff;
+  border: solid var(--on-accent);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -187,12 +258,20 @@ body {
 .chip.tag:hover { color: var(--accent); }
 .chip.due { color: var(--ink-soft); cursor: default; }
 .chip.due.arrived { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); font-weight: 600; }
-.chip.filter { background: var(--accent); color: #fff; }
+.chip.filter { background: var(--accent); color: var(--on-accent); }
 .chip.project-name { cursor: default; }
 .empty-note { color: var(--ink-faint); padding: 28px 8px; text-align: center; }
 
 /* ---- detail drawer ---- */
 wa-drawer { --size: min(420px, 100vw); }
+/* project-name eyebrow in the drawer header */
+wa-drawer#detail::part(title) {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-soft);
+}
 #detail-body { display: flex; flex-direction: column; gap: 14px; }
 #detail-body label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-faint); margin-bottom: 4px; }
 #detail-body input[type="text"], #detail-body input[type="date"], #detail-body input[type="time"],
@@ -221,7 +300,13 @@ wa-drawer { --size: min(420px, 100vw); }
   font: inherit;
   cursor: pointer;
 }
-.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+/* primary WA buttons pick up the accent */
+wa-button[variant="brand"]::part(base) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
 .steps-list { list-style: none; margin: 0; padding: 0; }
 .step-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
 .step-row input[type="text"] { border: none; background: transparent; flex: 1; min-height: 36px; }
@@ -263,8 +348,10 @@ wa-drawer { --size: min(420px, 100vw); }
     background: var(--pane);
     border-bottom: 1px solid var(--line);
     white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
   }
   #rail ul { display: flex; gap: 4px; }
+  #rail li, #rail a, .rail-project { flex: none; }
   .rail-heading { margin: 0 4px; }
   .rail-child { padding-left: 12px !important; }
   #topbar #search { flex: 1 1 120px; }
