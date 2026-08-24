@@ -9,7 +9,9 @@ Docs: docs/ (product analysis, PRD, architecture). Built with GSD phases.
 ## M0 (API core)
 
 - Run: `AV_TASKS_TOKENS="aron:<32+ char token>,claude:<token>" npm start`
-  (or put `AV_TASKS_TOKENS=...` in `data/.env`, chmod 600). Binds
+  (or put `AV_TASKS_TOKENS=...` in `data/.env`, chmod 600 — the server
+  warns at startup if the file is group/other-readable; the M3 install
+  script will enforce this). Binds
   127.0.0.1:8600; `AV_TASKS_PORT`/`AV_TASKS_HOST`/`AV_TASKS_DATA` override.
   Startup fails closed without well-formed tokens.
 - Test: `npm test` (node:test + coverage; 80% line floor over src/).

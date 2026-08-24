@@ -2,7 +2,7 @@
 // well-formed per-actor tokens. Minimal node:http -> fetch adapter so Hono
 // stays the only runtime dependency.
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
@@ -14,9 +14,21 @@ const DATA_DIR = process.env.AV_TASKS_DATA || join(ROOT, 'data');
 const PORT = Number(process.env.AV_TASKS_PORT || 8600);
 const HOST = process.env.AV_TASKS_HOST || '127.0.0.1';
 
+// data/.env holds the bearer tokens — it must be chmod 600 (M3 installs
+// scripts own enforcement; until then, warn loudly on permissive modes).
+export function envPermWarning(mode, path = 'data/.env') {
+  if ((mode & 0o077) === 0) return null;
+  return `av-tasks: WARNING: ${path} is readable by group/other ` +
+    `(mode ${(mode & 0o777).toString(8).padStart(3, '0')}) — it contains auth tokens; run: chmod 600 ${path}`;
+}
+
 function loadEnvFile() {
   const envPath = join(DATA_DIR, '.env');
   if (!existsSync(envPath)) return;
+  if (process.platform !== 'win32') {
+    const warn = envPermWarning(statSync(envPath).mode, envPath);
+    if (warn) console.error(warn);
+  }
   for (const line of readFileSync(envPath, 'utf8').split('\n')) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
     if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];

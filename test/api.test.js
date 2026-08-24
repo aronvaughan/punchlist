@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
-import { parseTokens } from '../src/server.js';
+import { parseTokens, envPermWarning } from '../src/server.js';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
@@ -53,6 +53,13 @@ test('fail-closed token parsing', () => {
   assert.throws(() => parseTokens('nocolon'), /malformed/);
   assert.deepEqual(parseTokens(`aron:${TOK_ARON}, claude:${TOK_CLAUDE}`),
     { aron: TOK_ARON, claude: TOK_CLAUDE });
+});
+
+test('data/.env permission check: warn on group/other-readable, silent on 600', () => {
+  assert.equal(envPermWarning(0o100600), null);
+  assert.equal(envPermWarning(0o100700), null);
+  assert.match(envPermWarning(0o100644), /chmod 600/);
+  assert.match(envPermWarning(0o100640), /group\/other/);
 });
 
 // ---- tasks CRUD ----
