@@ -1,17 +1,45 @@
 {
   "name": "punchlist",
   "version": "0.1.0",
-  "description": "Agent-first Things-ish task manager (M0 core: sqlite + Hono JSON API)",
+  "description": "Agent-first task manager: a Things-style drag-and-drop web app for humans, the same REST API + ready-made skills for AI agents, with claim/finish/report delegation and a review lane",
   "type": "module",
-  "private": true,
+  "keywords": [
+    "tasks",
+    "todo",
+    "task-manager",
+    "agents",
+    "ai-agents",
+    "delegation",
+    "claude",
+    "self-hosted",
+    "sqlite",
+    "hono"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aronvaughan/punchlist.git"
+  },
   "engines": {
     "node": ">=26"
   },
+  "bin": {
+    "punchlist": "bin/punchlist"
+  },
+  "files": [
+    "src",
+    "migrations",
+    "public",
+    "skills",
+    "scripts",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "node src/server.js",
     "test": "node scripts/check-coverage.mjs"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "dependencies": {
     "hono": "^4.13.3"
   }

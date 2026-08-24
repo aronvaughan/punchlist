@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+// punchlist — thin CLI over the repo. Plain node, no dependencies.
+//   punchlist serve                                start the server (node src/server.js)
+//   punchlist install-skills [--claude DIR] [--hermes DIR]
+//                                                  copy the agent skills into place
+//   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
+import { spawn } from 'node:child_process';
+import { cpSync, copyFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+function run(cmd, args) {
+  const child = spawn(cmd, args, { stdio: 'inherit' });
+  child.on('exit', (code, signal) => process.exit(signal ? 1 : code ?? 1));
+  child.on('error', err => { console.error(`punchlist: ${err.message}`); process.exit(1); });
+}
+
+function parseFlags(argv, allowed) {
+  const flags = {};
+  for (let i = 0; i < argv.length; i++) {
+    const name = argv[i].replace(/^--/, '');
+    if (!argv[i].startsWith('--') || !allowed.includes(name) || argv[i + 1] === undefined) {
+      console.error(`punchlist: bad flag ${argv[i]} (allowed: ${allowed.map(a => '--' + a).join(', ')})`);
+      process.exit(2);
+    }
+    flags[name] = argv[++i];
+  }
+  return flags;
+}
+
+// Copy one skill dir and make its scripts/pl.sh the CANONICAL implementation
+// (the in-repo copies are 2-line shims to skills/shared/pl.sh; an installed
+// skill must be self-contained).
+function installSkill(srcDir, destDir) {
+  mkdirSync(destDir, { recursive: true });
+  cpSync(srcDir, destDir, { recursive: true });
+  const pl = join(destDir, 'scripts', 'pl.sh');
+  copyFileSync(join(ROOT, 'skills', 'shared', 'pl.sh'), pl);
+  chmodSync(pl, 0o755);
+  console.log(`installed ${destDir}`);
+}
+
+const [cmd, ...rest] = process.argv.slice(2);
+
+switch (cmd) {
+  case 'serve':
+    run(process.execPath, [join(ROOT, 'src', 'server.js')]);
+    break;
+
+  case 'snapshot':
+    run('bash', [join(ROOT, 'scripts', 'db-snapshot.sh')]);
+    break;
+
+  case 'install-skills': {
+    const flags = parseFlags(rest, ['claude', 'hermes']);
+    const claudeDir = resolve(flags.claude ?? join(homedir(), '.claude'));
+    installSkill(join(ROOT, 'skills', 'claude', 'punchlist'), join(claudeDir, 'skills', 'punchlist'));
+    const hermesHome = flags.hermes ?? process.env.HERMES_HOME;
+    if (hermesHome) {
+      installSkill(join(ROOT, 'skills', 'hermes', 'punchlist'),
+        join(resolve(hermesHome), 'skills', 'common', 'punchlist'));
+    } else {
+      console.log('hermes skill skipped (no --hermes DIR and HERMES_HOME is not set)');
+    }
+    console.log(`
+Now give each agent its token (this tool never edits your env files):
+  - Claude Code: add to ~/.claude/secrets.local.env (chmod 600):
+      PUNCHLIST_TOKEN=<that agent's token from data/.env AV_TASKS_TOKENS>
+  - Hermes: add PUNCHLIST_TOKEN=<its token> to $HERMES_HOME/.env
+  - Non-default server? Also export PUNCHLIST_URL (default http://127.0.0.1:8600)`);
+    break;
+  }
+
+  default:
+    console.error('usage: punchlist serve | install-skills [--claude DIR] [--hermes DIR] | snapshot');
+    process.exit(cmd ? 2 : 0);
+}
