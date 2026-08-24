@@ -1,5 +1,5 @@
 {
-  "name": "av-tasks",
+  "name": "punchlist",
   "version": "0.1.0",
   "description": "Agent-first Things-ish task manager (M0 core: sqlite + Hono JSON API)",
   "type": "module",
