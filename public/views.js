@@ -3,6 +3,7 @@
 import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen } from '/app.js';
 import { openDetail } from '/detail.js';
+import { dueCountdown } from '/dates.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -257,9 +258,10 @@ function taskRow(task, { showProject = false, logbook = false } = {}) {
     row.append(chip);
   }
   if (task.due_date) {
-    const arrived = task.due_date <= t && task.status === 'active';
-    const chip = el('span', 'chip due' + (arrived ? ' arrived' : ''),
-      `due ${fmtDate(task.due_date)}${task.due_time ? ' ' + task.due_time : ''}`);
+    // countdown chip: red when overdue/today/within 7 days, muted beyond
+    const { text, urgent } = dueCountdown(task.due_date, t);
+    const chip = el('span', 'chip due' + (urgent && task.status === 'active' ? ' arrived' : ''),
+      `${text}${task.due_time ? ' · ' + task.due_time : ''}`);
     row.append(chip);
   }
   row.tabIndex = 0;

@@ -4,6 +4,7 @@
 import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { mdToHtml } from '/md.js';
+import { dueLine } from '/dates.js';
 
 const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -82,19 +83,32 @@ function whenEditor() {
   return labeled('When', seg);
 }
 
-// ---- due date + time ----
+// ---- due date + time (+ live countdown line) ----
 function dueEditor() {
+  const wrap = el('div');
   const row = el('div', 'field-row');
+  const line = el('div', 'due-line');
+  const renderLine = () => {
+    if (!current.due_date) { line.hidden = true; return; }
+    const { text, urgent } = dueLine(current.due_date, todayISO());
+    line.textContent = text;
+    line.classList.toggle('urgent', urgent);
+    line.hidden = false;
+  };
   const date = el('input');
   date.type = 'date';
   date.value = current.due_date ?? '';
-  date.addEventListener('change', () => patch({ due_date: date.value || null }));
+  date.addEventListener('change', async () => {
+    if (await patch({ due_date: date.value || null })) renderLine();
+  });
   const time = el('input');
   time.type = 'time';
   time.value = current.due_time ?? '';
   time.addEventListener('change', () => patch({ due_time: time.value || null }));
   row.append(labeled('Deadline', date), labeled('Time', time));
-  return row;
+  renderLine();
+  wrap.append(row, line);
+  return wrap;
 }
 
 function projectEditor() {

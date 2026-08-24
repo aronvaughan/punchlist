@@ -426,6 +426,8 @@ wa-button[variant="brand"]::part(base) {
 .weekday-row { display: flex; gap: 4px; flex-wrap: wrap; }
 .weekday-row button { min-width: 40px; }
 .meta-line { font-size: 12px; color: var(--ink-faint); }
+.due-line { font-size: 13px; color: var(--ink-soft); margin-top: 6px; }
+.due-line.urgent { color: var(--danger); font-weight: 600; }
 
 /* ---- toasts ---- */
 #toasts {
