@@ -252,6 +252,27 @@ test('reorder in Today sets today_rank, not rank (C3); manual placement holds', 
   assert.deepEqual(t.json.items.map(i => i.title), ['z', 'x', 'y']);
 });
 
+test('PATCH re-ranks a task moved to a new project/section: lands at end of target section', async () => {
+  const { call, db } = makeApp();
+  const p = (await call('POST', '/api/v1/projects', { body: { name: 'P' } })).json;
+  const rankOf = id => db.prepare('SELECT rank FROM tasks WHERE id = ?').get(id).rank;
+  const a = (await call('POST', '/api/v1/tasks', { body: { title: 'a' } })).json; // inbox, rank 1024
+  const b = (await call('POST', '/api/v1/tasks', { body: { title: 'b', project_id: p.id } })).json; // P ANYTIME, 1024
+  const mv = await call('PATCH', `/api/v1/tasks/${a.id}`, { body: { project_id: p.id } });
+  assert.equal(mv.status, 200);
+  assert.ok(rankOf(a.id) > rankOf(b.id), 'moved task appends after existing section members');
+  const list = await call('GET', `/api/v1/tasks?project=${p.id}`);
+  assert.deepEqual(list.json.items.map(x => x.title), ['b', 'a']);
+  // section change within the same project also re-ranks to end of new section
+  const c = (await call('POST', '/api/v1/tasks', { body: { title: 'c', project_id: p.id, when_type: 'someday' } })).json;
+  await call('PATCH', `/api/v1/tasks/${b.id}`, { body: { when_type: 'someday' } });
+  assert.ok(rankOf(b.id) > rankOf(c.id), 'b appends after c in SOMEDAY');
+  // a PATCH that does not change scope keeps the rank
+  const before = rankOf(a.id);
+  await call('PATCH', `/api/v1/tasks/${a.id}`, { body: { title: 'a2' } });
+  assert.equal(rankOf(a.id), before);
+});
+
 test('PATCH clears today_rank when the task leaves Today; return appends after manual items (I11)', async () => {
   const { call, db } = makeApp();
   const mk = async n => (await call('POST', '/api/v1/tasks', { body: { title: n, when_type: 'date', when_date: TODAY } })).json;

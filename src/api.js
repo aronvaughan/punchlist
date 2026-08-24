@@ -241,13 +241,19 @@ export function buildApp({ db, tokens, today: todayFn }) {
                     (merged.due_date != null && merged.due_date <= t);
     const todayRank = inToday ? task.today_rank : null;
     return tx(db, () => {
+      // rank is scoped to (project, section): a task moved to a new scope must
+      // append there, not carry a rank minted in its old scope (collisions,
+      // id-tiebreak ordering). Same placement rule as createTask.
+      const rank = (merged.project_id !== task.project_id || sectionOf(merged, t) !== sectionOf(task, t))
+        ? endOfSectionRank(merged.project_id, sectionOf(merged, t), t)
+        : task.rank;
       db.prepare(
         `UPDATE tasks SET title=?, notes=?, project_id=?, status=?, when_type=?, when_date=?,
-                due_date=?, due_time=?, recur=?, today_rank=?,
+                due_date=?, due_time=?, recur=?, today_rank=?, rank=?,
                 completed_at = CASE WHEN ? = 'active' THEN NULL ELSE completed_at END,
                 updated_at=? WHERE id=?`
       ).run(merged.title, merged.notes, merged.project_id, merged.status, merged.when_type,
-            merged.when_date, merged.due_date, merged.due_time, recurVal, todayRank,
+            merged.when_date, merged.due_date, merged.due_time, recurVal, todayRank, rank,
             merged.status, now, task.id);
       if (body.tags !== undefined) setTags(task.id, body.tags);
       return c.json(attach(getTask(task.id)));
