@@ -36,6 +36,38 @@ Other commands: `./bin/punchlist serve` (foreground server),
 `./bin/punchlist snapshot` (WAL-safe backup to `data/backup/`).
 `npm test` runs the suite with an 80% coverage floor.
 
+## MCP
+
+Punchlist also ships as an MCP stdio server (`punchlist mcp`), so **any MCP
+agent** — Claude Code, Cursor, Hermes, or your own — gets the punchlist as
+native tools: `punchlist_add`, `punchlist_quickadd`, `punchlist_list`,
+`punchlist_show`, `punchlist_queue`, `punchlist_claim`, `punchlist_finish`,
+`punchlist_complete`, `punchlist_approve`, `punchlist_update`,
+`punchlist_projects`, `punchlist_counts`.
+
+```bash
+punchlist install -t claude     # runs `claude mcp add punchlist --scope user -- punchlist mcp`
+                                # (prints the .mcp.json snippet if the claude CLI is missing)
+punchlist install -t hermes     # prints the config.yaml snippet — nothing is edited for you
+punchlist install --print-config  # just show both snippets
+```
+
+For Hermes, add to the `mcp_servers` block of `$HERMES_HOME/config.yaml`:
+
+```yaml
+mcp_servers:
+  punchlist:
+    command: punchlist
+    args: [mcp]
+```
+
+Auth is identical to the skills: `PUNCHLIST_TOKEN` in the agent's environment,
+or `PUNCHLIST_ENV_FILE`, or `~/.claude/secrets.local.env`, or
+`$HERMES_HOME/.env`; set `PUNCHLIST_URL` for a non-default server (default
+`http://127.0.0.1:8600`). Skills vs MCP: the skills are zero-protocol simple
+(a bash CLI any agent with a shell can run), while MCP surfaces the same API
+as native tools in every MCP-speaking client — pick per agent, they coexist.
+
 ## Screenshots
 
 *(coming soon — Today view, the review lane, and the Agents board)*

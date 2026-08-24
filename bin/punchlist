@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // punchlist — thin CLI over the repo. Plain node, no dependencies.
 //   punchlist serve                                start the server (node src/server.js)
+//   punchlist mcp                                  run the MCP stdio server (src/mcp.js)
+//   punchlist install -t claude|hermes|all [--print-config]
+//                                                  register the MCP server with an agent
 //   punchlist install-skills [--claude DIR] [--hermes DIR]
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, copyFileSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,11 +51,76 @@ function installSkill(srcDir, destDir, envFileExpr) {
   console.log(`installed ${destDir}`);
 }
 
+// ---- MCP registration (codegraph-style): register where we safely can,
+// print copy-paste config where we must not edit files we don't own. ----
+const CLAUDE_SNIPPET = `{
+  "mcpServers": {
+    "punchlist": {
+      "command": "punchlist",
+      "args": ["mcp"]
+    }
+  }
+}`;
+const HERMES_SNIPPET = `mcp_servers:
+  punchlist:
+    command: punchlist
+    args: [mcp]`;
+const ENV_NOTE = `
+The MCP server authenticates like the skills do: PUNCHLIST_TOKEN in the agent's
+environment, or PUNCHLIST_ENV_FILE, or ~/.claude/secrets.local.env, or
+$HERMES_HOME/.env. Non-default server? Also set PUNCHLIST_URL (default
+http://127.0.0.1:8600). \`punchlist\` must be on PATH (npm link / npm i -g).`;
+
+function installClaude({ printOnly }) {
+  if (!printOnly && spawnSync('claude', ['--version'], { stdio: 'ignore' }).status === 0) {
+    const r = spawnSync('claude', ['mcp', 'add', 'punchlist', '--scope', 'user', '--', 'punchlist', 'mcp'],
+      { stdio: 'inherit' });
+    if (r.status === 0) { console.log('registered with Claude Code (user scope)'); return; }
+    console.error('claude mcp add failed — falling back to the config snippet:');
+  } else if (!printOnly) {
+    console.log('claude CLI not found — add this to your project .mcp.json (or Claude Desktop config):');
+  } else {
+    console.log('Claude Code: `claude mcp add punchlist --scope user -- punchlist mcp`, or .mcp.json:');
+  }
+  console.log(CLAUDE_SNIPPET);
+}
+
+function installHermes() {
+  console.log('Hermes: add to the mcp_servers block of $HERMES_HOME/config.yaml (not edited automatically):');
+  console.log(HERMES_SNIPPET);
+}
+
+function installMcp(argv) {
+  let target = null, printOnly = false;
+  for (let i = 0; i < argv.length; i++) {
+    if ((argv[i] === '-t' || argv[i] === '--target') && argv[i + 1]) target = argv[++i];
+    else if (argv[i] === '--print-config') printOnly = true;
+    else { console.error(`punchlist: bad flag ${argv[i]}`); process.exit(2); }
+  }
+  if (printOnly && !target) target = 'all';
+  if (!['claude', 'hermes', 'all'].includes(target)) {
+    console.error('usage: punchlist install -t claude|hermes|all [--print-config]');
+    process.exit(2);
+  }
+  if (target === 'claude' || target === 'all') installClaude({ printOnly });
+  if (target === 'all') console.log('');
+  if (target === 'hermes' || target === 'all') installHermes();
+  console.log(ENV_NOTE);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 switch (cmd) {
   case 'serve':
     run(process.execPath, [join(ROOT, 'src', 'server.js')]);
+    break;
+
+  case 'mcp':
+    run(process.execPath, [join(ROOT, 'src', 'mcp.js')]);
+    break;
+
+  case 'install':
+    installMcp(rest);
     break;
 
   case 'snapshot':
@@ -82,6 +150,6 @@ Now give each agent its token (this tool never edits your env files):
   }
 
   default:
-    console.error('usage: punchlist serve | install-skills [--claude DIR] [--hermes DIR] | snapshot');
+    console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);
 }
