@@ -97,7 +97,10 @@ export function taskWhere(view, { today, project, tag, q, limit = 100, cursor } 
 
   const selectKeys = def.keys.map((k, i) => `${k} AS __k${i}`).join(', ');
   const orderBy = [...def.keys, 'id'].map(k => `${k} ${def.dir}`).join(', ');
-  const cappedLimit = Math.min(Math.max(1, Number(limit) || 100), 500);
+  // cap at 501, not 500: api.js over-fetches lim+1 (lim <= 500) to detect the
+  // next page — re-capping at 500 would swallow the probe row at limit=500 and
+  // suppress next_cursor exactly at the documented max page size.
+  const cappedLimit = Math.min(Math.max(1, Number(limit) || 100), 501);
   const sql =
     `SELECT tasks.*, ${selectKeys} FROM tasks WHERE ${wheres.join(' AND ')}
      ORDER BY ${orderBy} LIMIT ?`;

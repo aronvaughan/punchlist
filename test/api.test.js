@@ -124,6 +124,22 @@ test('pagination over HTTP: limit + next_cursor, no dupes', async () => {
   assert.equal(pages, 3);
 });
 
+test('pagination at the documented max limit=500 still emits next_cursor', async () => {
+  const { call, db } = makeApp();
+  const ins = db.prepare(
+    `INSERT INTO tasks (id, title, status, rank, created_at, updated_at) VALUES (?, ?, 'active', ?, 't', 't')`);
+  for (let i = 0; i < 501; i++) ins.run(String(i).padStart(26, '0'), `t${i}`, (i + 1) * 1024);
+  const first = await call('GET', '/api/v1/tasks?view=inbox&limit=500');
+  assert.equal(first.status, 200);
+  assert.equal(first.json.items.length, 500);
+  assert.ok(first.json.next_cursor, 'boundary page must expose the tail');
+  const rest = await call('GET', `/api/v1/tasks?view=inbox&limit=500&cursor=${first.json.next_cursor}`);
+  assert.equal(rest.json.items.length, 1);
+  assert.equal(rest.json.next_cursor, undefined);
+  const seen = new Set([...first.json.items, ...rest.json.items].map(t => t.id));
+  assert.equal(seen.size, 501, 'no dupes, no gaps');
+});
+
 test('PATCH: sparse updates; unknown field 400; status done -> 400 use /complete', async () => {
   const { call } = makeApp();
   const t = (await call('POST', '/api/v1/tasks', { body: { title: 'edit me' } })).json;
