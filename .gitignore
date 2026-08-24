@@ -10,4 +10,9 @@
 !/docs/
 !/public/
 !/scripts/
+!/skills/
+!/bin/
+!/packaging/
+!/install.sh
+!/LICENSE
 # data/ (live db, tokens) and node_modules stay ignored by /*
