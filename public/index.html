@@ -2,11 +2,54 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>av-tasks</title>
+  <link rel="stylesheet" href="/vendor/webawesome/styles/webawesome.css" data-webawesome="/vendor/webawesome">
+  <link rel="stylesheet" href="/tokens.css">
+  <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <h1>av-tasks</h1>
-  <p>M0: API only. The UI arrives in M1. See <code>/api/v1/health</code>.</p>
+  <div id="shell">
+    <header id="topbar">
+      <input id="quickadd" type="text" autocomplete="off" enterkeyhint="done"
+             placeholder="New task…  #tag @project !due ^when  (n)" aria-label="Quick add">
+      <input id="search" type="search" autocomplete="off" placeholder="Search (/)" aria-label="Search">
+    </header>
+    <nav id="rail" aria-label="Views and projects">
+      <ul id="rail-views">
+        <li><a href="#/inbox" data-view="inbox">Inbox</a></li>
+        <li><a href="#/today" data-view="today">Today</a></li>
+        <li><a href="#/upcoming" data-view="upcoming">Upcoming</a></li>
+        <li><a href="#/logbook" data-view="logbook">Logbook</a></li>
+      </ul>
+      <div id="rail-projects-head" class="rail-heading">Projects</div>
+      <ul id="rail-projects"></ul>
+    </nav>
+    <main id="main">
+      <div id="list-head">
+        <h1 id="view-title">Today</h1>
+        <div id="filter-chips"></div>
+      </div>
+      <div id="list" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <wa-drawer id="detail" label="Task" placement="end">
+    <div id="detail-body"></div>
+  </wa-drawer>
+
+  <wa-dialog id="token-dialog" label="API token" without-header-actions>
+    <p>Enter your av-tasks API token. It is stored only in this browser.</p>
+    <input id="token-input" type="password" autocomplete="off" aria-label="API token">
+    <wa-button slot="footer" id="token-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="when-dialog" label="Schedule for…">
+    <input id="when-date-input" type="date" aria-label="When date">
+    <wa-button slot="footer" id="when-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="when-ok" variant="brand">Set</wa-button>
+  </wa-dialog>
+
+  <div id="toasts" aria-live="assertive"></div>
 </body>
 </html>
