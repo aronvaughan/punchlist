@@ -5,7 +5,7 @@
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn } from 'node:child_process';
-import { cpSync, copyFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { cpSync, copyFileSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -31,15 +31,20 @@ function parseFlags(argv, allowed) {
   return flags;
 }
 
-// Copy one skill dir and make its scripts/pl.sh the CANONICAL implementation
-// (the in-repo copies are 2-line shims to skills/shared/pl.sh; an installed
-// skill must be self-contained).
-function installSkill(srcDir, destDir) {
+// Copy one skill dir and make it self-contained: the canonical shared pl.sh
+// lands next to the shim as scripts/pl-core.sh, and scripts/pl.sh becomes a
+// tiny wrapper that pins the agent's own token file (PUNCHLIST_ENV_FILE) so
+// each agent authenticates as ITSELF on multi-agent machines.
+function installSkill(srcDir, destDir, envFileExpr) {
   mkdirSync(destDir, { recursive: true });
   cpSync(srcDir, destDir, { recursive: true });
-  const pl = join(destDir, 'scripts', 'pl.sh');
-  copyFileSync(join(ROOT, 'skills', 'shared', 'pl.sh'), pl);
-  chmodSync(pl, 0o755);
+  const core = join(destDir, 'scripts', 'pl-core.sh');
+  copyFileSync(join(ROOT, 'skills', 'shared', 'pl.sh'), core);
+  chmodSync(core, 0o755);
+  const shim = join(destDir, 'scripts', 'pl.sh');
+  writeFileSync(shim, '#!/usr/bin/env bash\n' +
+    `exec env PUNCHLIST_ENV_FILE="${envFileExpr}" "$(dirname "\${BASH_SOURCE[0]}")/pl-core.sh" "$@"\n`);
+  chmodSync(shim, 0o755);
   console.log(`installed ${destDir}`);
 }
 
@@ -57,11 +62,13 @@ switch (cmd) {
   case 'install-skills': {
     const flags = parseFlags(rest, ['claude', 'hermes']);
     const claudeDir = resolve(flags.claude ?? join(homedir(), '.claude'));
-    installSkill(join(ROOT, 'skills', 'claude', 'punchlist'), join(claudeDir, 'skills', 'punchlist'));
+    installSkill(join(ROOT, 'skills', 'claude', 'punchlist'), join(claudeDir, 'skills', 'punchlist'),
+      '$HOME/.claude/secrets.local.env');
     const hermesHome = flags.hermes ?? process.env.HERMES_HOME;
     if (hermesHome) {
       installSkill(join(ROOT, 'skills', 'hermes', 'punchlist'),
-        join(resolve(hermesHome), 'skills', 'common', 'punchlist'));
+        join(resolve(hermesHome), 'skills', 'common', 'punchlist'),
+        '${HERMES_HOME:-$HOME/.hermes}/.env');
     } else {
       console.log('hermes skill skipped (no --hermes DIR and HERMES_HOME is not set)');
     }

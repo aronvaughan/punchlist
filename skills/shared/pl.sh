@@ -30,13 +30,19 @@ API="$BASE/api/v1"
 
 # --- token resolution ---
 # 1. $PUNCHLIST_TOKEN in the environment (canonical).
-# 2. ~/.claude/secrets.local.env (Claude Code convention, if present).
-# 3. $HERMES_HOME/.env (Hermes convention, if HERMES_HOME is set).
+# 2. $PUNCHLIST_ENV_FILE — a KEY=value file to read PUNCHLIST_TOKEN from. The
+#    per-agent shim sets this so each agent authenticates as ITSELF even on a
+#    machine where several agents (and their secrets files) coexist.
+# 3. Conventions, as a last resort: ~/.claude/secrets.local.env (Claude Code),
+#    then $HERMES_HOME/.env (Hermes).
 # Never echo/log the token — it is only ever passed to curl via a variable.
 read_env_token() { # read_env_token FILE -> token on stdout (trimmed, unquoted)
   sed -n 's/^PUNCHLIST_TOKEN=//p' "$1" | head -n1 \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//'
 }
+if [ -z "${PUNCHLIST_TOKEN:-}" ] && [ -n "${PUNCHLIST_ENV_FILE:-}" ] && [ -r "$PUNCHLIST_ENV_FILE" ]; then
+  PUNCHLIST_TOKEN=$(read_env_token "$PUNCHLIST_ENV_FILE")
+fi
 if [ -z "${PUNCHLIST_TOKEN:-}" ] && [ -r "$HOME/.claude/secrets.local.env" ]; then
   PUNCHLIST_TOKEN=$(read_env_token "$HOME/.claude/secrets.local.env")
 fi
