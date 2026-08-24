@@ -11,6 +11,9 @@ const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 let current = null; // the task being edited (kept fresh from PATCH responses)
+let createMode = false; // create: fields collect locally, ONE POST on Create
+let createContext = ''; // view name shown in the eyebrow
+let titleInput = null;
 
 export function isDetailOpen() { return !!drawer().open; }
 export function closeDetail() { drawer().open = false; }
@@ -29,6 +32,14 @@ function labeled(label, child) {
 }
 
 async function patch(fields) {
+  if (createMode) {
+    // draft: collect locally, mirroring the server's when-field coupling;
+    // nothing exists on the server until Create POSTs once
+    if (fields.when_type === 'someday' || fields.when_type === null) current.when_date = null;
+    if (fields.when_date && fields.when_type === undefined) fields.when_type = 'date';
+    Object.assign(current, fields);
+    return true;
+  }
   try {
     current = await api('PATCH', `/tasks/${current.id}`, fields);
     reload(); // background: keep the list truthful
@@ -40,11 +51,38 @@ async function patch(fields) {
 }
 
 export function openDetail(task) {
+  createMode = false;
   current = task;
-  // eyebrow: the task's project name (or Inbox) as the drawer heading,
-  // styled small/muted in tokens.css via ::part(title); keeps the close X
-  const proj = state.projects.find(p => p.id === task.project_id);
-  drawer().label = proj ? proj.name : 'Inbox';
+  renderDrawer();
+}
+
+// create mode: full editor, prefilled from the current view's context.
+// prefill.__openWhenPicker opens the date picker right away (Upcoming).
+export function openCreate(prefill = {}, contextName = 'Inbox') {
+  const { __openWhenPicker, ...fields } = prefill;
+  createMode = true;
+  createContext = contextName;
+  current = { title: '', notes: '', project_id: null, when_type: null, when_date: null,
+    due_date: null, due_time: null, recur: null, tags: [], steps: [],
+    assignee: 'aron', auto_close: 0, status: 'active', report: null, ...fields };
+  renderDrawer();
+  setTimeout(() => titleInput?.focus(), 60);
+  if (__openWhenPicker) {
+    pickWhen().then(async d => {
+      if (d && createMode) { await patch({ when_type: 'date', when_date: d }); rebuild(); }
+    });
+  }
+}
+
+function renderDrawer() {
+  const task = current;
+  if (createMode) {
+    drawer().label = `New task — ${createContext}`;
+  } else {
+    // eyebrow: the task's project name (or Inbox); keeps the close X
+    const proj = state.projects.find(p => p.id === task.project_id);
+    drawer().label = proj ? proj.name : 'Inbox';
+  }
   const body = document.getElementById('detail-body');
   body.replaceChildren();
 
@@ -53,21 +91,28 @@ export function openDetail(task) {
   title.type = 'text';
   title.id = 'detail-title';
   title.value = task.title;
-  title.addEventListener('change', () => { if (title.value.trim()) patch({ title: title.value.trim() }); });
+  title.placeholder = createMode ? 'Task title' : '';
+  title.addEventListener('change', () => { if (title.value.trim() || createMode) patch({ title: title.value.trim() }); });
+  title.addEventListener('keydown', e => { if (e.key === 'Enter' && createMode) submitCreate(); });
+  titleInput = title;
   body.append(title);
 
   body.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(), tagsEditor());
-  body.append(notesEditor(), stepsEditorFor(task), recurEditor());
-  const rep = reportView();
-  if (rep) body.append(rep);
-  body.append(actions());
-  const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
-  if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
-  body.append(el('div', 'meta-line', meta.join(' · ')));
+  body.append(notesEditor(), createMode ? draftStepsEditor() : stepsEditorFor(task), recurEditor());
+  if (createMode) {
+    body.append(createActions());
+  } else {
+    const rep = reportView();
+    if (rep) body.append(rep);
+    body.append(actions());
+    const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
+    if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
+    body.append(el('div', 'meta-line', meta.join(' · ')));
+  }
   drawer().open = true;
 }
 
-function rebuild() { openDetail(current); }
+function rebuild() { renderDrawer(); }
 
 // ---- when: Today | date | Someday | Clear ----
 function whenEditor() {
@@ -320,6 +365,87 @@ function recurEditor() {
   renderParams();
   wrap.append(freqSeg, paramsBox, anchorSeg);
   return wrap;
+}
+
+// ---- create mode: local draft steps (POSTed as titles with the task) ----
+function draftStepsEditor() {
+  const wrap = el('div');
+  wrap.append(el('label', null, 'Steps'));
+  const ul = el('ul', 'steps-list');
+  const render = () => {
+    ul.replaceChildren();
+    current.steps.forEach((title, i) => {
+      const li = el('li', 'step-row');
+      const name = el('input');
+      name.type = 'text';
+      name.value = title;
+      name.addEventListener('change', () => {
+        if (name.value.trim()) current.steps[i] = name.value.trim();
+        else { current.steps.splice(i, 1); render(); }
+      });
+      const del = el('button', 'del', '✕');
+      del.setAttribute('aria-label', 'Delete step');
+      del.addEventListener('click', () => { current.steps.splice(i, 1); render(); });
+      li.append(name, del);
+      ul.append(li);
+    });
+  };
+  render();
+  const add = el('input', 'step-add');
+  add.type = 'text';
+  add.placeholder = 'Add a step…';
+  add.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || !add.value.trim()) return;
+    e.stopPropagation();
+    current.steps.push(add.value.trim());
+    add.value = '';
+    render();
+  });
+  wrap.append(ul, add);
+  return wrap;
+}
+
+async function submitCreate() {
+  const title = (titleInput?.value ?? current.title).trim();
+  if (!title) { toast('A title is required'); titleInput?.focus(); return; }
+  const body = {
+    title, notes: current.notes, project_id: current.project_id,
+    when_type: current.when_type, when_date: current.when_date,
+    due_date: current.due_date, due_time: current.due_time,
+    recur: current.recur, tags: current.tags, steps: current.steps,
+    assignee: current.assignee, auto_close: !!current.auto_close,
+  };
+  try {
+    const created = await api('POST', '/tasks', body);
+    createMode = false;
+    closeDetail();
+    await reload();
+    if (!state.tasks.some(t => t.id === created.id)) {
+      // landed outside the current view — say where
+      const proj = state.projects.find(p => p.id === created.project_id);
+      const where = created.assignee !== 'aron'
+        ? `${created.assignee}'s queue`
+        : proj ? proj.name
+        : created.when_type === 'someday' ? 'Someday'
+        : created.when_type === 'date' ? 'Upcoming'
+        : 'Inbox';
+      toast(`Added to ${where}`, 'success');
+    }
+  } catch (e) { toast(`Create failed: ${e.message}`); }
+}
+
+function createActions() {
+  const row = el('div', 'detail-actions');
+  const create = document.createElement('wa-button');
+  create.setAttribute('variant', 'brand');
+  create.textContent = 'Create';
+  create.addEventListener('click', submitCreate);
+  const cancel = document.createElement('wa-button');
+  cancel.setAttribute('appearance', 'plain');
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => { createMode = false; closeDetail(); });
+  row.append(create, cancel);
+  return row;
 }
 
 function actions() {

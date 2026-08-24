@@ -2,12 +2,43 @@
 // textContent (titles/tags/names) — never innerHTML.
 import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow } from '/app.js';
-import { openDetail } from '/detail.js';
+import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { expandRow } from '/inline.js';
 import { mdToHtml } from '/md.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
+const lastSection = new Map(); // projectId -> section the user last touched
+
+// "+" button / Shift+N: full editor prefilled from the current view
+export function openNewTask() {
+  const r = state.route;
+  let prefill = {};
+  let ctx = 'Inbox';
+  if (r.view === 'today') {
+    prefill = { when_type: 'date', when_date: todayISO() };
+    ctx = 'Today';
+  } else if (r.view === 'upcoming') {
+    prefill = { __openWhenPicker: true }; // date mode, no preset
+    ctx = 'Upcoming';
+  } else if (r.view === 'project') {
+    const p = state.projects.find(x => x.id === r.projectId);
+    ctx = p?.name ?? 'Project';
+    prefill = { project_id: r.projectId };
+    const sec = lastSection.get(r.projectId);
+    if (sec === 0) Object.assign(prefill, { when_type: 'date', when_date: todayISO() });
+    else if (sec === 3) prefill.when_type = 'someday';
+  } else if (r.view === 'tag') {
+    prefill = { tags: [r.tag] };
+    ctx = `#${r.tag}`;
+  } else if (r.view === 'logbook') {
+    ctx = 'Logbook';
+  } else if (r.view === 'agents') {
+    ctx = 'Agents';
+  }
+  openCreate(prefill, ctx);
+}
+document.getElementById('new-task-btn').addEventListener('click', openNewTask);
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // coarse pointers (touch): task rows drag only from a grip so the list
 // scrolls normally; fine pointers keep whole-row dragging
@@ -375,7 +406,14 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   }
   row.tabIndex = 0;
   // Things-style: active rows expand in place; done/archived open the drawer
-  const open = () => task.status === 'active' ? expandRow(task, row) : openDetail(task);
+  const open = () => {
+    // remember which section the user last worked in per project — the new-task
+    // button seeds its when-prefill from it
+    if (state.route.view === 'project' && state.route.projectId) {
+      lastSection.set(state.route.projectId, sectionOf(task, todayISO()));
+    }
+    return task.status === 'active' ? expandRow(task, row) : openDetail(task);
+  };
   row.addEventListener('click', e => {
     if (row.classList.contains('expanded')) return; // clicks inside the editor
     if (e.target.closest('button, input, textarea, select, a')) return;

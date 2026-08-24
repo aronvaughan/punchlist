@@ -6,7 +6,7 @@
 // Wordmark shows APP_NAME; CLI-ish surfaces (title, footer) use the lowercase.
 export const APP_NAME = 'Punchlist';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
-import { renderRail, renderMain } from '/views.js';
+import { renderRail, renderMain, openNewTask } from '/views.js';
 import { closeDetail } from '/detail.js';
 import { collapseInline } from '/inline.js';
 
@@ -315,7 +315,8 @@ document.addEventListener('keydown', e => {
   if (t instanceof Element &&
       (t.closest('input, textarea, select, [contenteditable]') || t.closest('wa-dialog, wa-drawer'))) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === 'n') { e.preventDefault(); quickadd.focus(); }
+  if (e.key === 'N' && e.shiftKey) { e.preventDefault(); openNewTask(); }
+  else if (e.key === 'n') { e.preventDefault(); quickadd.focus(); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
 });
 

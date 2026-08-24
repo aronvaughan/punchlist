@@ -607,6 +607,21 @@ html[data-theme="latte"] {
 #list-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 #view-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0 2px; font-family: var(--font-title); }
 #view-sub { font-size: 14px; color: var(--ink-soft); margin: 0 0 14px; width: 100%; }
+#new-task-btn {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  align-self: center;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+#new-task-btn:hover { filter: brightness(1.08); }
 #view-sub:empty { margin: 0 0 12px; }
 
 /* ---- list ---- */
