@@ -1,16 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { open, ulid, MigrationError } from '../src/db.js';
 
-test('migrate applies 001-init once, records version, enables pragmas', () => {
+test('migrate applies each migration once, records versions, enables pragmas', () => {
   const { db, migrate } = open(':memory:');
   migrate();
   migrate(); // idempotent
-  const versions = db.prepare('SELECT version FROM schema_migrations').all();
-  assert.deepEqual(versions.map(v => v.version), ['001-init']);
+  const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
+  assert.deepEqual(versions.map(v => v.version), ['001-init', '002-delegation']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -92,6 +92,65 @@ test('pre-copy overwrites a stale snapshot from an earlier failed attempt', () =
   migrate(migDir); // retry must not trip over the existing pre-002
   const { db: snap } = open(`${dbPath}.pre-002`);
   snap.prepare('SELECT COUNT(*) c FROM projects').get();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old constraints survive; new columns land', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'av-tasks.db');
+  // seed a database that only knows 001 (copy just that migration aside)
+  const migDir001 = join(dir, 'migs-001');
+  mkdirSync(migDir001);
+  writeFileSync(join(migDir001, '001-init.sql'),
+    readFileSync(join(import.meta.dirname, '..', 'migrations', '001-init.sql')));
+  const { db, migrate } = open(dbPath);
+  migrate(migDir001);
+  const now = '2026-08-01T00:00:00.000Z';
+  db.prepare(`INSERT INTO projects (id,name,rank,created_at,updated_at) VALUES ('p1','Home',1,?,?)`).run(now, now);
+  db.prepare(`INSERT INTO tasks (id,title,project_id,status,due_date,recur,created_by,created_at,updated_at)
+              VALUES ('t1','recurring','p1','active','2026-08-05','{"freq":"daily","anchor":"due"}','aron',?,?)`).run(now, now);
+  db.prepare(`INSERT INTO tasks (id,title,status,spawned_from,created_at,updated_at)
+              VALUES ('t2','spawned','done','t1',?,?)`).run(now, now);
+  db.prepare(`INSERT INTO steps (id,task_id,title) VALUES ('s1','t1','step one')`).run();
+  db.prepare(`INSERT INTO tags (id,name) VALUES ('g1','chore')`).run();
+  db.prepare(`INSERT INTO task_tags (task_id,tag_id) VALUES ('t1','g1')`).run();
+
+  migrate(); // real migrations dir — applies 002 only
+  assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
+    ['001-init', '002-delegation']);
+  // data survived; existing rows got assignee='aron' and the new defaults
+  const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
+  assert.equal(t1.title, 'recurring');
+  assert.equal(t1.assignee, 'aron');
+  assert.equal(t1.auto_close, 0);
+  assert.equal(t1.claimed_at, null);
+  assert.equal(t1.report, null);
+  assert.equal(t1.recur, '{"freq":"daily","anchor":"due"}');
+  assert.equal(db.prepare('SELECT spawned_from FROM tasks WHERE id = ?').get('t2').spawned_from, 't1');
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM task_tags').get().c, 1);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  // extended status CHECK: new states accepted, junk still rejected
+  const ins = db.prepare(`INSERT INTO tasks (id,title,status,created_at,updated_at) VALUES (?,?,?,'t','t')`);
+  ins.run('t3', 'x', 'review');
+  ins.run('t4', 'x', 'in_progress');
+  assert.throws(() => ins.run('t5', 'x', 'inbox'));
+  // old constraints survive the rebuild
+  assert.throws(() => db.prepare(
+    `INSERT INTO tasks (id,title,status,when_type,created_at,updated_at) VALUES ('t6','x','active','date','t','t')`).run());
+  assert.throws(() => db.prepare(
+    `INSERT INTO tasks (id,title,status,recur,created_at,updated_at) VALUES ('t7','x','active','{"freq":"daily"}','t','t')`).run());
+  assert.throws(() => db.prepare(
+    `INSERT INTO tasks (id,title,status,project_id,created_at,updated_at) VALUES ('t8','x','active','ghost','t','t')`).run());
+  // steps still cascade on task delete
+  db.prepare(`DELETE FROM task_tags WHERE task_id='t1'`).run();
+  db.prepare(`UPDATE tasks SET spawned_from=NULL WHERE id='t2'`).run();
+  db.prepare(`DELETE FROM tasks WHERE id='t1'`).run();
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM steps').get().c, 0);
+  // every existing index recreated (+ the new assignee one)
+  const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='tasks'`).all().map(r => r.name);
+  for (const want of ['idx_tasks_project', 'idx_tasks_status_when', 'idx_tasks_due', 'idx_tasks_assignee']) {
+    assert.ok(idx.includes(want), `missing index ${want}`);
+  }
   rmSync(dir, { recursive: true, force: true });
 });
 
