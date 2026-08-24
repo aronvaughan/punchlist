@@ -37,7 +37,7 @@ test('GET / returns the app shell with CSP', async () => {
 
 test('app JS modules are served as text/javascript', async () => {
   const { get } = makeApp();
-  for (const p of ['/app.js', '/views.js', '/detail.js', '/md.js']) {
+  for (const p of ['/app.js', '/views.js', '/detail.js', '/md.js', '/dates.js', '/inline.js', '/theme-boot.js']) {
     const res = await get(p);
     assert.equal(res.status, 200, p);
     assert.equal(res.headers.get('Content-Type'), 'text/javascript', p);

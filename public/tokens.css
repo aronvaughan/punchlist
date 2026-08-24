@@ -449,6 +449,135 @@ body.drag-active .section-block.empty .task-list {
 .chip.project-name { cursor: default; }
 .empty-note { color: var(--ink-faint); padding: 28px 8px; text-align: center; }
 
+/* ---- inline row editor (Things-style expand-in-place) ---- */
+.task-row.expanded {
+  display: block;
+  max-height: none;
+  cursor: default;
+  background: var(--pane);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 4px 0;
+}
+.inline-head { display: flex; align-items: center; gap: 8px; }
+.inline-title {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+}
+.inline-pencil {
+  flex: none;
+  width: 36px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 16px;
+  cursor: pointer;
+}
+.inline-pencil:hover { color: var(--accent); background: var(--chip-bg); }
+.inline-body { display: grid; grid-template-rows: 0fr; }
+.inline-body.open { grid-template-rows: 1fr; }
+.inline-body-inner {
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 2px;
+}
+.inline-body-inner > :first-child { margin-top: 8px; }
+@media (prefers-reduced-motion: no-preference) {
+  .inline-body { transition: grid-template-rows .25s ease; }
+}
+.inline-notes {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  resize: none;
+  overflow: hidden;
+}
+.inline-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.inline-field label { display: block; font-size: 11px; font-weight: 600; color: var(--ink-faint); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+.inline-when button { min-height: 36px; }
+.inline-due { display: flex; align-items: center; gap: 8px; }
+.inline-due input {
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.inline-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.inline-tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.inline-tag-chips .chip { display: inline-flex; align-items: center; gap: 4px; cursor: default; }
+.chip-x {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px;
+  line-height: 1;
+}
+.chip-x:hover { color: var(--danger); }
+.inline-tag-add {
+  min-height: 36px;
+  width: 110px;
+  padding: 4px 8px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.task-row.expanded .steps-list input[type="text"] { min-height: 40px; }
+.task-row.expanded label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 4px;
+}
+.task-row.expanded .step-add {
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+@media (max-width: 700px) {
+  .inline-controls { gap: 10px; }
+  .task-row.expanded .seg button { min-height: 44px; }
+  .task-row.expanded .inline-due input, .task-row.expanded .inline-tag-add { min-height: 44px; }
+}
+
 /* ---- detail drawer ---- */
 wa-drawer { --size: min(420px, 100vw); }
 /* project-name eyebrow in the drawer header */

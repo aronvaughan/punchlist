@@ -56,7 +56,7 @@ export function openDetail(task) {
   body.append(title);
 
   body.append(whenEditor(), dueEditor(), projectEditor(), tagsEditor());
-  body.append(notesEditor(), stepsEditor(), recurEditor(), actions());
+  body.append(notesEditor(), stepsEditorFor(task), recurEditor(), actions());
   body.append(el('div', 'meta-line', `added by ${task.created_by} · ${(task.created_at || '').slice(0, 10)}`));
   drawer().open = true;
 }
@@ -155,8 +155,8 @@ function notesEditor() {
   return wrap;
 }
 
-// ---- steps checklist ----
-function stepsEditor() {
+// ---- steps checklist (shared with the inline row editor) ----
+export function stepsEditorFor(task) {
   const wrap = el('div');
   wrap.append(el('label', null, 'Steps'));
   const ul = el('ul', 'steps-list');
@@ -168,7 +168,7 @@ function stepsEditor() {
     check.setAttribute('aria-label', 'Toggle step');
     check.addEventListener('click', async () => {
       check.classList.toggle('checked');
-      try { await api('PATCH', `/tasks/${current.id}/steps/${step.id}`, { done: check.classList.contains('checked') }); }
+      try { await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { done: check.classList.contains('checked') }); }
       catch (e) { check.classList.toggle('checked'); toast(`Save failed: ${e.message}`); }
     });
     const name = el('input');
@@ -176,21 +176,21 @@ function stepsEditor() {
     name.value = step.title;
     name.addEventListener('change', async () => {
       if (!name.value.trim()) { name.value = step.title; return; }
-      try { await api('PATCH', `/tasks/${current.id}/steps/${step.id}`, { title: name.value.trim() }); }
+      try { await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { title: name.value.trim() }); }
       catch (e) { toast(`Save failed: ${e.message}`); }
     });
     const del = el('button', 'del', '✕');
     del.setAttribute('aria-label', 'Delete step');
     del.addEventListener('click', async () => {
-      try { await api('DELETE', `/tasks/${current.id}/steps/${step.id}`); li.remove(); }
+      try { await api('DELETE', `/tasks/${task.id}/steps/${step.id}`); li.remove(); }
       catch (e) { toast(`Delete failed: ${e.message}`); }
     });
     li.append(check, name, del);
     return li;
   };
-  for (const s of current.steps ?? []) ul.append(stepRow(s));
+  for (const s of task.steps ?? []) ul.append(stepRow(s));
 
-  const ranks = new Map((current.steps ?? []).map(s => [s.id, s.rank]));
+  const ranks = new Map((task.steps ?? []).map(s => [s.id, s.rank]));
   new Sortable(ul, {
     animation: 150,
     handle: '.step-row',
@@ -202,20 +202,20 @@ function stepsEditor() {
       const n = next ? ranks.get(next) : null;
       const rank = p != null && n != null ? (p + n) / 2 : p != null ? p + 1024 : n != null ? n - 1024 : 1024;
       try {
-        const updated = await api('PATCH', `/tasks/${current.id}/steps/${sid}`, { rank });
+        const updated = await api('PATCH', `/tasks/${task.id}/steps/${sid}`, { rank });
         ranks.set(sid, updated.rank);
       } catch (e) { toast(`Reorder failed: ${e.message}`); }
     },
   });
 
-  const add = el('input');
+  const add = el('input', 'step-add');
   add.type = 'text';
   add.placeholder = 'Add a step…';
   add.addEventListener('keydown', async e => {
     if (e.key !== 'Enter' || !add.value.trim()) return;
     e.stopPropagation();
     try {
-      const step = await api('POST', `/tasks/${current.id}/steps`, { title: add.value.trim() });
+      const step = await api('POST', `/tasks/${task.id}/steps`, { title: add.value.trim() });
       ranks.set(step.id, step.rank);
       ul.append(stepRow(step));
       add.value = '';

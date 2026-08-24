@@ -3,6 +3,7 @@
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
 import { renderRail, renderMain } from '/views.js';
 import { closeDetail } from '/detail.js';
+import { collapseInline } from '/inline.js';
 
 setBasePath('/vendor/webawesome');
 
@@ -270,7 +271,12 @@ search.addEventListener('input', () => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeNav(); closeDetail(); return; }
+  if (e.key === 'Escape') {
+    if (collapseInline()) return; // inline editor first, then nav/drawer
+    closeNav();
+    closeDetail();
+    return;
+  }
   const t = e.target;
   if (t instanceof Element &&
       (t.closest('input, textarea, select, [contenteditable]') || t.closest('wa-dialog, wa-drawer'))) return;

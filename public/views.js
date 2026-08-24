@@ -4,6 +4,7 @@ import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow } from '/app.js';
 import { openDetail } from '/detail.js';
 import { dueCountdown } from '/dates.js';
+import { expandRow } from '/inline.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -300,9 +301,15 @@ function taskRow(task, { showProject = false, logbook = false } = {}) {
     row.append(chip);
   }
   row.tabIndex = 0;
-  row.addEventListener('click', () => openDetail(task));
+  // Things-style: active rows expand in place; done/archived open the drawer
+  const open = () => task.status === 'active' ? expandRow(task, row) : openDetail(task);
+  row.addEventListener('click', e => {
+    if (row.classList.contains('expanded')) return; // clicks inside the editor
+    if (e.target.closest('button, input, textarea, select, a')) return;
+    open();
+  });
   row.addEventListener('keydown', e => {
-    if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDetail(task); }
+    if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); }
   });
   return row;
 }
@@ -341,6 +348,8 @@ function sortableList(ul, { list, section } = {}) {
     animation: 150,
     delay: 150,
     delayOnTouchOnly: true,
+    filter: '.expanded', // the expanded editing card must not drag
+    preventOnFilter: false,
     // while a drag is live, empty project sections re-appear as drop targets
     onStart: () => document.body.classList.add('drag-active'),
     onEnd: async evt => {
