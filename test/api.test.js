@@ -389,6 +389,23 @@ test('projects list paginates: limit + keyset cursor, bad cursor 400', async () 
   assert.equal((await call('GET', '/api/v1/projects?cursor=!!!')).status, 400);
 });
 
+// ---- tags ----
+test('GET /tags lists every tag with open-task count; auth required', async () => {
+  const { call } = makeApp();
+  const a = await call('POST', '/api/v1/tasks', { body: { title: 'one', tags: ['home', 'urgent'] } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'two', tags: ['home'] } });
+  const done = await call('POST', '/api/v1/tasks', { body: { title: 'three', tags: ['home'] } });
+  await call('POST', `/api/v1/tasks/${done.json.id}/complete`);
+  // archived tasks don't count either
+  await call('PATCH', `/api/v1/tasks/${a.json.id}`, { body: { status: 'archived' } });
+  const res = await call('GET', '/api/v1/tags');
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.items.map(({ name, count }) => ({ name, count })),
+    [{ name: 'home', count: 1 }, { name: 'urgent', count: 0 }]);
+  for (const it of res.json.items) assert.equal(typeof it.id, 'string');
+  assert.equal((await call('GET', '/api/v1/tags', { token: null })).status, 401);
+});
+
 // ---- static / CSP ----
 test('static UI: CSP header on static responses; traversal blocked; API 404 is JSON', async () => {
   const { app } = makeApp();

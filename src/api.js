@@ -436,6 +436,21 @@ export function buildApp({ db, tokens, today: todayFn }) {
     return c.json({ ok: true });
   });
 
+  // ---- tags ----
+  app.get('/api/v1/tags', c => {
+    // nav listing: every tag with its open-task count (active tasks only).
+    // Small bounded set in practice — no pagination (unlike /tasks, /projects).
+    const items = db.prepare(
+      `SELECT g.id, g.name, COUNT(t.id) AS count
+       FROM tags g
+       LEFT JOIN task_tags tt ON tt.tag_id = g.id
+       LEFT JOIN tasks t ON t.id = tt.task_id AND t.status = 'active'
+       GROUP BY g.id
+       ORDER BY g.name COLLATE NOCASE, g.id`
+    ).all();
+    return c.json({ items });
+  });
+
   // ---- projects ----
   const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived']);
 
