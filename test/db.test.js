@@ -95,6 +95,21 @@ test('pre-copy overwrites a stale snapshot from an earlier failed attempt', () =
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('a migration that breaks FK integrity is rolled back (foreign_key_check gate); FKs re-enabled after', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const { db, migrate } = open(join(dir, 'av-tasks.db'));
+  migrate();
+  const migDir = join(dir, 'migs');
+  mkdirSync(migDir);
+  // runs FK-off, so this INSERT succeeds — the foreign_key_check gate must catch it
+  writeFileSync(join(migDir, '002-orphan.sql'),
+    `INSERT INTO steps (id, task_id, title) VALUES ('s1', 'ghost-task', 'orphan');`);
+  assert.throws(() => migrate(migDir), /foreign_key_check/);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM steps').get().c, 0, 'rolled back');
+  assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1, 'FKs re-enabled');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('ulid: 26 chars, lexicographically time-ordered', () => {
   const a = ulid(1000), b = ulid(2000);
   assert.equal(a.length, 26);

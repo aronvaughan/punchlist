@@ -53,14 +53,25 @@ export function open(path) {
         db.prepare('VACUUM INTO ?').run(dest);
       }
       const sql = readFileSync(join(dir, file), 'utf8');
+      // Table rebuilds (SQLite can't ALTER a CHECK) need FK enforcement
+      // suspended for the DROP/RENAME swap. PRAGMA foreign_keys is a no-op
+      // inside a transaction, so toggle it around the tx and prove integrity
+      // with foreign_key_check before COMMIT (sqlite.org/lang_altertable §7).
+      db.exec('PRAGMA foreign_keys = OFF');
       db.exec('BEGIN');
       try {
         db.exec(sql);
+        const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
+        if (fkViolations.length > 0) {
+          throw new Error(`foreign_key_check: ${fkViolations.length} violation(s), first in table "${fkViolations[0].table}"`);
+        }
         db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(version);
         db.exec('COMMIT');
       } catch (err) {
         try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
         throw new MigrationError(version, err);
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON');
       }
     }
   }
