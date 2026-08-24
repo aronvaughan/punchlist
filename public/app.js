@@ -6,14 +6,52 @@ import { closeDetail } from '/detail.js';
 
 setBasePath('/vendor/webawesome');
 
-// ---- theme: follow the system, via WA theme classes ----
+// ---- themes: stored pref, "system" follows the OS; boot flash is handled
+// by theme-boot.js (blocking, pre-CSS). This mirrors that logic for runtime.
+const THEMES = ['system', 'light', 'dark', 'paper', 'spruce'];
+const THEME_KEY = 'av-tasks-theme';
 const mq = matchMedia('(prefers-color-scheme: dark)');
+
+export function themePref() {
+  try { const v = localStorage.getItem(THEME_KEY); return THEMES.includes(v) ? v : 'system'; }
+  catch { return 'system'; }
+}
 function applyTheme() {
-  document.documentElement.classList.toggle('wa-dark', mq.matches);
-  document.documentElement.classList.toggle('wa-light', !mq.matches);
+  const pref = themePref();
+  const resolved = pref === 'system' ? (mq.matches ? 'dark' : 'light') : pref;
+  const h = document.documentElement;
+  h.setAttribute('data-theme', resolved);
+  h.classList.remove('wa-dark', 'wa-light');
+  h.classList.add(resolved === 'dark' || resolved === 'spruce' ? 'wa-dark' : 'wa-light');
 }
 mq.addEventListener('change', applyTheme);
 applyTheme();
+
+// picker: 5 labeled swatches, current pref highlighted
+function renderThemeChoices() {
+  const box = document.getElementById('theme-choices');
+  box.replaceChildren();
+  const current = themePref();
+  for (const t of THEMES) {
+    const b = document.createElement('button');
+    b.className = `theme-choice${t === current ? ' on' : ''}`;
+    const sw = document.createElement('span');
+    sw.className = `swatch swatch-${t}`;
+    const label = document.createElement('span');
+    label.textContent = t[0].toUpperCase() + t.slice(1);
+    b.append(sw, label);
+    b.addEventListener('click', () => {
+      try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
+      applyTheme();
+      document.getElementById('theme-dialog').open = false;
+    });
+    box.append(b);
+  }
+}
+document.getElementById('theme-open').addEventListener('click', () => {
+  renderThemeChoices();
+  document.getElementById('theme-dialog').open = true;
+});
 
 // ---- state ----
 export const state = {

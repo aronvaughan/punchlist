@@ -2,11 +2,14 @@
    system stack, soft shadows. Layout: rail + list pane; rail collapses to a
    top tab bar on small screens.
 
-   Dark mode reacts to BOTH the system preference and a manual override:
-   html.wa-dark forces dark, html.wa-light forces light (agents/tests can
-   toggle the class); with neither forced, @media prefers-color-scheme wins. */
+   THEMES: every color lives in custom properties keyed by
+   html[data-theme="light|dark|paper|spruce"]. theme-boot.js resolves the
+   stored preference ("system" follows prefers-color-scheme) to a concrete
+   data-theme BEFORE first paint and keeps wa-dark/wa-light in sync for
+   Web Awesome. All muted/accent/danger shades hold >=4.5:1 on bg and pane. */
 
 :root {
+  /* light (default + fallback) */
   --bg: #FAFAF8;
   --pane: #FFFFFF;
   --ink: #1C1D20;
@@ -14,7 +17,7 @@
   --ink-faint: #9CA3AF;
   --accent: #0F766E;
   --on-accent: #FFFFFF;
-  --danger: #E5484D;
+  --danger: #D93036;
   --chip-bg: #EFF1F0;
   --hover: #F1F3F1;
   --line: #E8EAE8;
@@ -23,23 +26,7 @@
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
           "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
-/* dark palette — duplicated for the media query and the manual class */
-@media (prefers-color-scheme: dark) {
-  html:not(.wa-light) {
-    --bg: #16181A;
-    --pane: #1E2124;
-    --ink: #E8E9EA;
-    --ink-soft: #9AA2AD;
-    --ink-faint: #6B7280;
-    --accent: #2DD4BF;
-    --on-accent: #0C2321;
-    --chip-bg: #2A2E32;
-    --hover: #26292D;
-    --line: #2C3034;
-    --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
-  }
-}
-html.wa-dark {
+html[data-theme="dark"] {
   --bg: #16181A;
   --pane: #1E2124;
   --ink: #E8E9EA;
@@ -47,10 +34,41 @@ html.wa-dark {
   --ink-faint: #6B7280;
   --accent: #2DD4BF;
   --on-accent: #0C2321;
+  --danger: #F87171;
   --chip-bg: #2A2E32;
   --hover: #26292D;
   --line: #2C3034;
   --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+}
+html[data-theme="paper"] {
+  /* warm sepia */
+  --bg: #F6F1E7;
+  --pane: #FDFBF5;
+  --ink: #3B3128;
+  --ink-soft: #756A5B;
+  --ink-faint: #9C9080;
+  --accent: #A34A05;   /* burnt amber */
+  --on-accent: #FFF8EE;
+  --danger: #B02A25;   /* distinct from the amber accent */
+  --chip-bg: #EDE5D6;
+  --hover: #EFE9DC;
+  --line: #E4DAC8;
+  --shadow: 0 1px 3px rgba(92, 70, 36, .10), 0 8px 24px rgba(92, 70, 36, .08);
+}
+html[data-theme="spruce"] {
+  /* deep green dark */
+  --bg: #0E1512;
+  --pane: #16201B;
+  --ink: #E4EAE6;
+  --ink-soft: #7E938A;
+  --ink-faint: #5C6E66;
+  --accent: #34D399;
+  --on-accent: #06251A;
+  --danger: #F87171;
+  --chip-bg: #1E2A24;
+  --hover: #1B2620;
+  --line: #24322B;     /* green-tinted hairlines */
+  --shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 8px 24px rgba(0, 0, 0, .32);
 }
 
 * { box-sizing: border-box; }
@@ -239,6 +257,52 @@ a { color: var(--accent); }
   cursor: pointer;
 }
 .window-chip:hover { color: var(--accent); }
+
+/* theme picker */
+.theme-choices { display: flex; flex-direction: column; gap: 6px; }
+.theme-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--pane);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.theme-choice:hover { background: var(--hover); }
+.theme-choice.on { border-color: var(--accent); outline: 1px solid var(--accent); font-weight: 600; }
+.swatch {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(128, 128, 128, .45);
+  position: relative;
+}
+.swatch::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.swatch-system { background: linear-gradient(105deg, #FAFAF8 49%, #16181A 51%); }
+.swatch-system::after { background: #0F766E; }
+.swatch-light { background: #FAFAF8; }
+.swatch-light::after { background: #0F766E; }
+.swatch-dark { background: #16181A; }
+.swatch-dark::after { background: #2DD4BF; }
+.swatch-paper { background: #F6F1E7; }
+.swatch-paper::after { background: #A34A05; }
+.swatch-spruce { background: #0E1512; }
+.swatch-spruce::after { background: #34D399; }
 
 /* dialogs */
 .dialog-field { margin-bottom: 12px; }
