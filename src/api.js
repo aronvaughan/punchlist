@@ -474,6 +474,10 @@ export function buildApp({ db, tokens, today: todayFn }) {
     if (body.name !== undefined && (typeof body.name !== 'string' || !body.name.trim())) {
       throw new ApiError(400, 'name must be non-empty');
     }
+    if (body.name !== undefined &&
+        db.prepare('SELECT 1 FROM projects WHERE name = ? AND id <> ?').get(body.name.trim(), project.id)) {
+      throw new ApiError(409, 'project name already exists');
+    }
     if (body.parent_id !== undefined && body.parent_id !== null) {
       // cycle check: walk ancestors of the proposed parent (review I12)
       let cur = body.parent_id, hops = 0;

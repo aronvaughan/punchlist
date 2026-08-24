@@ -341,6 +341,12 @@ test('projects: create/list/patch, duplicate name 409, parent cycle 400', async 
   assert.match(cyc.json.error, /cycle/);
   // self-parent
   assert.equal((await call('PATCH', `/api/v1/projects/${a.id}`, { body: { parent_id: a.id } })).status, 400);
+  // rename onto an existing name is a clean 409, not a raw SQLite 500
+  const dup = await call('PATCH', `/api/v1/projects/${b.id}`, { body: { name: 'A' } });
+  assert.equal(dup.status, 409);
+  assert.match(dup.json.error, /already exists/);
+  // renaming to its OWN name is fine (no self-conflict)
+  assert.equal((await call('PATCH', `/api/v1/projects/${b.id}`, { body: { name: 'B' } })).status, 200);
   const upd = await call('PATCH', `/api/v1/projects/${b.id}`, { body: { archived: true, notes: 'done era' } });
   assert.equal(upd.json.archived, 1);
   assert.equal((await call('PATCH', '/api/v1/projects/NOPE', { body: { name: 'x' } })).status, 404);
