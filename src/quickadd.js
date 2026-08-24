@@ -37,7 +37,12 @@ function parseRecur(spec) {
   let anchor = 'due';
   if (spec.endsWith('+completion')) { anchor = 'completion'; spec = spec.slice(0, -'+completion'.length); }
   else if (spec.endsWith('+due')) { spec = spec.slice(0, -'+due'.length); }
-  const [freq, arg] = spec.split(':', 2);
+  // split on the FIRST colon only — split(':', 2) would silently DISCARD any
+  // extra segments ('every:2:3' -> valid every:2); keep the remainder so the
+  // per-freq validators reject malformed specs loudly.
+  const i = spec.indexOf(':');
+  const freq = i < 0 ? spec : spec.slice(0, i);
+  const arg = i < 0 ? undefined : spec.slice(i + 1);
   switch (freq) {
     case 'daily':
       if (arg !== undefined) throw new Error('daily takes no argument');

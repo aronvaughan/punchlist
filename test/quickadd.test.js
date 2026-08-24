@@ -53,3 +53,9 @@ test('quickadd: invalid recur token throws', () => {
   assert.throws(() => parse('x *yearly', OPTS));
   assert.throws(() => parse('x *every:0', OPTS));
 });
+test('quickadd: over-specified recur tokens are rejected, not silently truncated', () => {
+  assert.throws(() => parse('x *every:2:3', OPTS));
+  assert.throws(() => parse('x *daily:1', OPTS));
+  assert.throws(() => parse('x *weekly:mon:fri', OPTS));
+  assert.throws(() => parse('x *monthly:1:2', OPTS));
+});
