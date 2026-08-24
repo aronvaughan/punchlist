@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test --experimental-test-coverage"
+    "test": "node scripts/check-coverage.mjs"
   },
   "license": "UNLICENSED",
   "dependencies": {
