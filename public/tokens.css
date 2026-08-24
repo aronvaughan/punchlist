@@ -752,6 +752,24 @@ body.drag-active .section-block.empty .task-list {
   padding: 1.5px 7.5px;
 }
 .chip.review-chip { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
+/* agent-security: amber quarantine chip + Agents-view subsection. The amber
+   mixes with theme ink/chip-bg so it reads in light and dark themes alike. */
+.chip.unvetted {
+  background: color-mix(in srgb, #E8A317 24%, var(--chip-bg));
+  color: color-mix(in srgb, #B97700 55%, var(--ink));
+  font-weight: 600;
+  cursor: pointer;
+}
+.section-head.unvetted-head { color: color-mix(in srgb, #B97700 55%, var(--ink)); }
+.unvet-card {
+  margin: 0 8px 8px 42px;
+  padding: 10px 12px;
+  border-left: 3px solid color-mix(in srgb, #E8A317 70%, var(--ink));
+  background: color-mix(in srgb, #E8A317 10%, var(--chip-bg));
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+}
+.unvet-card .unvet-note { color: var(--ink-soft); }
 .claimed-at { flex: none; font-size: 11px; color: var(--ink-faint); }
 .review-card {
   margin: 0 8px 8px 42px;

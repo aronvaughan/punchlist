@@ -383,6 +383,16 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     const p = state.projects.find(x => x.id === task.project_id);
     if (p) row.append(el('span', 'chip project-name', p.name));
   }
+  if (task.vetted === 0) {
+    // amber quarantine chip (agent-security layer 1): agents will not execute
+    // this task. Tapping it is the admin's Vet action — the server 403s
+    // anyone else, and the toast explains.
+    const chip = el('button', 'chip unvetted', '⛨ unvetted');
+    chip.title = 'Created by an untrusted source — agents will not execute it. Tap to vet.';
+    chip.setAttribute('aria-label', 'Unvetted — tap to vet for agent execution');
+    chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
+    row.append(chip);
+  }
   if (task.assignee && task.assignee !== 'aron') {
     // agent chip: muted; accent outline while claimed (in_progress)
     row.append(el('span', 'chip agent' + (task.status === 'in_progress' ? ' working' : ''), task.assignee));
@@ -512,7 +522,9 @@ export function renderMain() {
   chipsEl.replaceChildren();
   subEl.textContent = state.route.view === 'today'
     ? new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-    : '';
+    : state.route.view === 'agents' && (state.counts?.unvetted ?? 0) > 0
+      ? `${state.counts.unvetted} unvetted — agents will not execute`
+      : '';
 
   if (state.tag) {
     const chip = el('button', 'chip filter', `#${state.tag} ✕`);
@@ -610,6 +622,13 @@ async function approveTask(id) {
   } catch (e) { toast(`Approve failed: ${e.message}`); }
   await reload();
 }
+async function vetTask(id) {
+  try {
+    await api('POST', `/tasks/${id}/vet`);
+    toast('Vetted — agents may now work it', 'success');
+  } catch (e) { toast(`Vet failed: ${e.message}`); }
+  await reload();
+}
 async function reopenTask(id) {
   try {
     await api('PATCH', `/tasks/${id}`, { status: 'active' });
@@ -664,6 +683,23 @@ function renderReview(listEl, tasks) {
   listEl.append(ul);
 }
 
+// quarantine card under an unvetted row in the Agents view: why it's held +
+// the admin's Vet button (the row chip does the same)
+function unvetCard(task) {
+  const card = el('div', 'unvet-card');
+  card.append(el('div', 'unvet-note',
+    `Created by ${task.created_by || 'an untrusted source'} — quarantined until you vet it.`));
+  const actions = el('div', 'review-actions');
+  const vet = document.createElement('wa-button');
+  vet.setAttribute('variant', 'brand');
+  vet.setAttribute('size', 'small');
+  vet.textContent = 'Vet';
+  vet.addEventListener('click', () => vetTask(task.id));
+  actions.append(vet);
+  card.append(actions);
+  return card;
+}
+
 function renderAgents(listEl, tasks) {
   const byAgent = new Map();
   for (const t of tasks) {
@@ -672,12 +708,25 @@ function renderAgents(listEl, tasks) {
   }
   for (const [agent, list] of byAgent) {
     listEl.append(el('div', 'section-head', agent[0].toUpperCase() + agent.slice(1)));
+    const vetted = list.filter(t => t.vetted !== 0);
+    const unvetted = list.filter(t => t.vetted === 0);
     const ul = el('div', 'task-list');
-    for (const task of list) { // server order: in_progress → review → queued
+    for (const task of vetted) { // server order: in_progress → review → queued
       ul.append(taskRow(task, { showProject: true, showClaimed: true }));
       if (task.status === 'review') ul.append(reviewCard(task));
     }
     listEl.append(ul);
+    if (unvetted.length) {
+      // quarantine subsection (agent-security layer 1): visible to the owner,
+      // excluded from the agent's queue until vetted
+      listEl.append(el('div', 'section-head unvetted-head', 'UNVETTED — agents will not execute'));
+      const qul = el('div', 'task-list');
+      for (const task of unvetted) {
+        qul.append(taskRow(task, { showProject: true }));
+        qul.append(unvetCard(task));
+      }
+      listEl.append(qul);
+    }
   }
 }
 
