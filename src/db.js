@@ -3,7 +3,7 @@
 // together with its schema_migrations insert; file-backed dbs are copied
 // aside (av-tasks.db.pre-NNN) before applying; failure -> named error.
 import { DatabaseSync } from 'node:sqlite';
-import { readdirSync, readFileSync, copyFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,7 +45,12 @@ export function open(path) {
       if (applied.has(version)) continue;
       const nnn = file.slice(0, 3);
       if (path !== ':memory:' && existsSync(path)) {
-        copyFileSync(path, `${path}.pre-${nnn}`); // pre-copy safety net
+        // pre-copy safety net — WAL-safe: a raw file copy would miss every
+        // transaction still sitting in the -wal sidecar, so snapshot through
+        // SQLite itself (same mechanism as scripts/db-snapshot.sh).
+        const dest = `${path}.pre-${nnn}`;
+        rmSync(dest, { force: true }); // VACUUM INTO refuses to overwrite
+        db.prepare('VACUUM INTO ?').run(dest);
       }
       const sql = readFileSync(join(dir, file), 'utf8');
       db.exec('BEGIN');

@@ -57,6 +57,44 @@ test('file-backed migrate pre-copies db file; failed migration is named + rolled
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('pre-copy is WAL-safe: opening the pre-NNN snapshot sees committed data', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'av-tasks.db');
+  const { db, migrate } = open(dbPath);
+  migrate(); // applies 001 — schema commits land in the -wal file, not the main db
+  db.prepare(`INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p1', 'Home', 't', 't')`).run();
+
+  const migDir = join(dir, 'migs');
+  mkdirSync(migDir);
+  writeFileSync(join(migDir, '002-noop.sql'), 'CREATE TABLE extra(x);');
+  migrate(migDir);
+  assert.ok(existsSync(`${dbPath}.pre-002`));
+
+  // the safety net must be restorable: tables AND committed rows present
+  const { db: snap } = open(`${dbPath}.pre-002`);
+  const tables = snap.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map(r => r.name);
+  assert.ok(tables.includes('projects'), `pre-copy has no tables: ${JSON.stringify(tables)}`);
+  assert.equal(snap.prepare('SELECT COUNT(*) c FROM projects').get().c, 1, 'pre-copy lost committed rows');
+  assert.ok(!tables.includes('extra'), 'pre-copy must predate the migration it guards');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('pre-copy overwrites a stale snapshot from an earlier failed attempt', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'av-tasks.db');
+  const { migrate } = open(dbPath);
+  migrate();
+  const migDir = join(dir, 'migs');
+  mkdirSync(migDir);
+  writeFileSync(join(migDir, '002-broken.sql'), 'INSERT INTO nope VALUES (1);');
+  assert.throws(() => migrate(migDir), MigrationError); // leaves a pre-002 behind
+  writeFileSync(join(migDir, '002-broken.sql'), 'CREATE TABLE fixed(x);');
+  migrate(migDir); // retry must not trip over the existing pre-002
+  const { db: snap } = open(`${dbPath}.pre-002`);
+  snap.prepare('SELECT COUNT(*) c FROM projects').get();
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('ulid: 26 chars, lexicographically time-ordered', () => {
   const a = ulid(1000), b = ulid(2000);
   assert.equal(a.length, 26);
