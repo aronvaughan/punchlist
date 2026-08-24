@@ -12,7 +12,10 @@ import { nextDue, spawn } from './recur.js';
 import { parse as quickParse } from './quickadd.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
-const CSP = "default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'";
+// data: in img-src/connect-src: Web Awesome's system icon library ships its
+// SVGs as data: URIs and wa-icon fetch()es them at runtime — same-origin-only
+// otherwise, no remote hosts allowed.
+const CSP = "default-src 'self'; script-src 'self'; connect-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'";
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
