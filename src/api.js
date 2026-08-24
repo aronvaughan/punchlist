@@ -27,7 +27,8 @@ const MIME = {
 const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20 };
 const MAX_BODY_BYTES = 262144; // 256KB — enforced BEFORE JSON.parse (413)
 const TASK_FIELDS = new Set(['title', 'notes', 'project_id', 'status', 'when_type', 'when_date',
-  'due_date', 'due_time', 'recur', 'tags', 'steps']);
+  'due_date', 'due_time', 'recur', 'tags', 'steps', 'assignee', 'auto_close']);
+const HUMAN = 'aron'; // the one human actor — approves reviews (delegation design)
 
 class ApiError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; this.extra = extra; }
@@ -43,6 +44,8 @@ function tx(db, fn) {
 }
 
 function validateTaskBody(body, { partial }) {
+  // report is owned by POST /tasks/:id/finish — never client-writable here
+  if ('report' in body) throw new ApiError(400, 'report is set by POST /api/v1/tasks/:id/finish');
   for (const k of Object.keys(body)) {
     if (!TASK_FIELDS.has(k)) throw new ApiError(400, `unknown field: ${k}`);
   }
@@ -76,7 +79,17 @@ function validateTaskBody(body, { partial }) {
   }
   if (body.status !== undefined) {
     if (body.status === 'done') throw new ApiError(400, "use POST /api/v1/tasks/:id/complete");
+    if (body.status === 'in_progress' || body.status === 'review') {
+      throw new ApiError(400, 'use POST /api/v1/tasks/:id/claim and /finish');
+    }
     if (!['active', 'archived'].includes(body.status)) throw new ApiError(400, 'status must be active|archived');
+  }
+  if (body.assignee !== undefined &&
+      (typeof body.assignee !== 'string' || !body.assignee.trim() || body.assignee.length > 100)) {
+    throw new ApiError(400, 'assignee must be a non-empty string (<=100 chars)');
+  }
+  if (body.auto_close !== undefined && ![0, 1, true, false].includes(body.auto_close)) {
+    throw new ApiError(400, 'auto_close must be boolean');
   }
   if (body.recur !== undefined && body.recur !== null) {
     try { nextDue(body.recur, '2000-01-01', '2000-01-01', '2000-01-01'); }
@@ -132,7 +145,8 @@ export function buildApp({ db, tokens, today: todayFn }) {
     validateTaskBody(fields, { partial: false });
     const t = today();
     const body = { notes: '', project_id: null, when_type: null, when_date: null,
-      due_date: null, due_time: null, recur: null, tags: [], steps: [], ...fields };
+      due_date: null, due_time: null, recur: null, tags: [], steps: [],
+      assignee: HUMAN, auto_close: 0, ...fields };
     if (body.status === 'archived') throw new ApiError(400, 'cannot create archived tasks');
     if (body.when_type === 'date' && !body.when_date) throw new ApiError(400, 'when_type=date requires when_date');
     if (body.when_type !== 'date' && body.when_date) throw new ApiError(400, 'when_date requires when_type=date');
@@ -146,11 +160,11 @@ export function buildApp({ db, tokens, today: todayFn }) {
       db.prepare(
         `INSERT INTO tasks (id, title, notes, project_id, status, when_type, when_date, due_date,
                             due_time, rank, today_rank, recur, spawned_from, created_by, completed_at,
-                            created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?)`
+                            created_at, updated_at, assignee, auto_close)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?)`
       ).run(id, body.title.trim(), body.notes, body.project_id, body.when_type, body.when_date,
             body.due_date, body.due_time, rank, body.recur ? JSON.stringify(body.recur) : null,
-            actor, now, now);
+            actor, now, now, body.assignee.trim(), body.auto_close ? 1 : 0);
       setTags(id, body.tags);
       const insStep = db.prepare('INSERT INTO steps (id, task_id, title, done, rank) VALUES (?, ?, ?, 0, ?)');
       body.steps.forEach((s, i) => insStep.run(ulid(), id, s.trim(), (i + 1) * 1024));
@@ -209,8 +223,9 @@ export function buildApp({ db, tokens, today: todayFn }) {
   }
 
   app.get('/api/v1/tasks', c => {
-    const { view, project, tag, q, limit, cursor, window: windowRaw } = c.req.query();
-    if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook'].includes(view)) {
+    const { view, project, tag, q, assignee, limit, cursor, window: windowRaw } = c.req.query();
+    if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook',
+      'review', 'delegated'].includes(view)) {
       throw new ApiError(400, `unknown view: ${view}`);
     }
     const lim = Math.min(Math.max(1, Number(limit) || 100), 500);
@@ -218,7 +233,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
     const soon = view === 'due_soon' ? soonFrom(t, windowRaw) : undefined;
     let res;
     try {
-      res = taskWhere(view ?? null, { today: t, soon, project, tag, q, limit: lim + 1, cursor });
+      res = taskWhere(view ?? null, { today: t, soon, project, tag, q, assignee, limit: lim + 1, cursor });
     } catch (e) { throw new ApiError(400, e.message); }
     const rows = db.prepare(res.sql).all(...res.args);
     const page = rows.slice(0, lim);
@@ -250,6 +265,13 @@ export function buildApp({ db, tokens, today: todayFn }) {
       throw new ApiError(400, 'project not found');
     }
     const merged = { ...task, ...body };
+    merged.auto_close = body.auto_close === undefined ? task.auto_close : (body.auto_close ? 1 : 0);
+    if (body.assignee !== undefined) merged.assignee = body.assignee.trim();
+    // reassigning a claimed task takes the work back: reset to active, clear claim
+    if (body.assignee !== undefined && merged.assignee !== task.assignee && task.status === 'in_progress') {
+      merged.status = 'active';
+      merged.claimed_at = null;
+    }
     if (body.when_type === 'someday' || body.when_type === null) merged.when_date = null;
     if (body.when_date !== undefined && body.when_date !== null && body.when_type === undefined) {
       merged.when_type = 'date';
@@ -266,8 +288,10 @@ export function buildApp({ db, tokens, today: todayFn }) {
     // manual Today order must not outlive Today membership: a task scheduled
     // out of the view would otherwise re-enter at its stale today_rank instead
     // of appending after manually-placed items (I11).
-    const inToday = (merged.when_type === 'date' && merged.when_date != null && merged.when_date <= t) ||
-                    (merged.due_date != null && merged.due_date <= t);
+    // …and Today is aron's lane: a task delegated away leaves the view too
+    const inToday = merged.assignee === HUMAN &&
+                    ((merged.when_type === 'date' && merged.when_date != null && merged.when_date <= t) ||
+                     (merged.due_date != null && merged.due_date <= t));
     const todayRank = inToday ? task.today_rank : null;
     return tx(db, () => {
       // rank is scoped to (project, section): a task moved to a new scope must
@@ -278,36 +302,112 @@ export function buildApp({ db, tokens, today: todayFn }) {
         : task.rank;
       db.prepare(
         `UPDATE tasks SET title=?, notes=?, project_id=?, status=?, when_type=?, when_date=?,
-                due_date=?, due_time=?, recur=?, today_rank=?, rank=?,
+                due_date=?, due_time=?, recur=?, today_rank=?, rank=?, assignee=?, auto_close=?,
+                claimed_at=?,
                 completed_at = CASE WHEN ? = 'active' THEN NULL ELSE completed_at END,
                 updated_at=? WHERE id=?`
       ).run(merged.title, merged.notes, merged.project_id, merged.status, merged.when_type,
             merged.when_date, merged.due_date, merged.due_time, recurVal, todayRank, rank,
+            merged.assignee, merged.auto_close, merged.claimed_at,
             merged.status, now, task.id);
       if (body.tags !== undefined) setTags(task.id, body.tags);
       return c.json(attach(getTask(task.id)));
     });
   });
 
+  // Guarded FINAL transition to done — the only place a recurrence spawns
+  // (delegation design: spawn on complete, approve or auto-close finish; never
+  // on entering review). Runs inside the caller's tx; only the call that
+  // actually flips the row (changes===1) spawns (review O4).
+  function toDone(task, fromStatuses, { report = null } = {}) {
+    const now = new Date().toISOString();
+    const t = today();
+    const { changes } = db.prepare(
+      `UPDATE tasks SET status='done', report=COALESCE(?, report), completed_at=?, updated_at=?
+       WHERE id=? AND status IN (${fromStatuses.map(() => '?').join(', ')})`
+    ).run(report, now, now, task.id, ...fromStatuses);
+    let spawned_id;
+    if (changes === 1 && task.recur) {
+      const next = nextDue(JSON.parse(task.recur), task.due_date, t, t);
+      spawned_id = spawn(db, task, next, t);
+    }
+    return spawned_id;
+  }
+
+  const doneResponse = (c, id, spawned_id) => {
+    const out = { task: attach(getTask(id)) };
+    if (spawned_id) out.spawned_id = spawned_id;
+    return c.json(out);
+  };
+
   app.post('/api/v1/tasks/:id/complete', c => {
     const id = c.req.param('id');
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
+      return doneResponse(c, id, toDone(task, ['active']));
+    });
+  });
+
+  // ---- delegation lifecycle (claim → finish → approve) ----
+  app.post('/api/v1/tasks/:id/claim', c => {
+    const id = c.req.param('id');
+    return tx(db, () => {
+      const task = getTask(id);
+      if (!task) throw new ApiError(404, 'task not found');
+      if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can claim');
       const now = new Date().toISOString();
-      const t = today();
-      // guarded transition (review O4): only active -> done spawns
+      // guarded: active -> in_progress; re-claiming your own in_progress task
+      // is an idempotent 200 (changes=0, claimed_at kept)
       const { changes } = db.prepare(
-        `UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=? AND status='active'`
+        `UPDATE tasks SET status='in_progress', claimed_at=?, updated_at=? WHERE id=? AND status='active'`
       ).run(now, now, id);
-      let spawned_id;
-      if (changes === 1 && task.recur) {
-        const next = nextDue(JSON.parse(task.recur), task.due_date, t, t);
-        spawned_id = spawn(db, task, next, t);
+      if (changes === 0 && task.status !== 'in_progress') {
+        throw new ApiError(409, `cannot claim a ${task.status} task`);
       }
-      const out = { task: attach(getTask(id)) };
-      if (spawned_id) out.spawned_id = spawned_id;
-      return c.json(out);
+      return c.json({ task: attach(getTask(id)) });
+    });
+  });
+
+  app.post('/api/v1/tasks/:id/finish', async c => {
+    const id = c.req.param('id');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (k !== 'report') throw new ApiError(400, `unknown field: ${k}`);
+    if (typeof body.report !== 'string' || !body.report.trim() || body.report.length > CAPS.notes) {
+      throw new ApiError(400, `report is required (<=${CAPS.notes} chars)`);
+    }
+    return tx(db, () => {
+      const task = getTask(id);
+      if (!task) throw new ApiError(404, 'task not found');
+      if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can finish');
+      if (task.status !== 'active' && task.status !== 'in_progress') {
+        throw new ApiError(409, `cannot finish a ${task.status} task`);
+      }
+      const now = new Date().toISOString();
+      // repeat finishes (after a reopen) append under a timestamped rule
+      const report = task.report
+        ? `${task.report}\n\n--- ${now}\n\n${body.report.trim()}`
+        : body.report.trim();
+      if (task.auto_close) {
+        // straight to done — the final transition, so recurrence spawns here
+        return doneResponse(c, id, toDone(task, ['active', 'in_progress'], { report }));
+      }
+      db.prepare(
+        `UPDATE tasks SET status='review', report=?, updated_at=? WHERE id=? AND status IN ('active', 'in_progress')`
+      ).run(report, now, id);
+      return c.json({ task: attach(getTask(id)) });
+    });
+  });
+
+  app.post('/api/v1/tasks/:id/approve', c => {
+    const id = c.req.param('id');
+    return tx(db, () => {
+      const task = getTask(id);
+      if (!task) throw new ApiError(404, 'task not found');
+      if (c.get('actor') !== HUMAN) throw new ApiError(403, 'only aron can approve');
+      if (task.status === 'done') return c.json({ task: attach(task) }); // idempotent
+      if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
+      return doneResponse(c, id, toDone(task, ['review']));
     });
   });
 
@@ -324,7 +424,8 @@ export function buildApp({ db, tokens, today: todayFn }) {
     const t = today();
     const col = list === 'today' ? 'today_rank' : 'rank';
 
-    const inTodayView = x => x.status === 'active' &&
+    // Today is aron's lane (delegation design) — must mirror views.js today
+    const inTodayView = x => x.status === 'active' && x.assignee === HUMAN &&
       ((x.when_type === 'date' && x.when_date <= t) || (x.due_date != null && x.due_date <= t));
     const inScope = list === 'today'
       ? inTodayView
@@ -354,8 +455,8 @@ export function buildApp({ db, tokens, today: todayFn }) {
     return tx(db, () => {
       const scope = list === 'today'
         ? { table: 'tasks', column: 'today_rank',
-            where: `status='active' AND ((when_type='date' AND when_date<=?) OR due_date<=?)`,
-            args: [t, t] }
+            where: `status='active' AND assignee=? AND ((when_type='date' AND when_date<=?) OR due_date<=?)`,
+            args: [HUMAN, t, t] }
         : { table: 'tasks', column: 'rank',
             where: `status='active' AND project_id IS ? AND
                     (CASE WHEN when_type='date' AND when_date<=? THEN 0
@@ -458,27 +559,32 @@ export function buildApp({ db, tokens, today: todayFn }) {
       return db.prepare(sql).get(...args).c;
     };
     const projects = {};
+    // open = still on the board: project rows must match the project view,
+    // which shows delegated in_progress/review work too
     for (const row of db.prepare(
       `SELECT project_id, COUNT(*) c FROM tasks
-       WHERE status = 'active' AND project_id IS NOT NULL GROUP BY project_id`).all()) {
+       WHERE status IN ('active', 'in_progress', 'review') AND project_id IS NOT NULL
+       GROUP BY project_id`).all()) {
       projects[row.project_id] = row.c;
     }
     return c.json({
       inbox: count('inbox'), today: count('today'), upcoming: count('upcoming'),
-      due_soon: count('due_soon'), projects,
+      due_soon: count('due_soon'), review: count('review'), delegated: count('delegated'),
+      projects,
       actor: c.get('actor'), // who this token belongs to (rail footer)
     });
   });
 
   // ---- tags ----
   app.get('/api/v1/tags', c => {
-    // nav listing: every tag with its open-task count (active tasks only).
+    // nav listing: every tag with its open-task count (open = the statuses the
+    // tag-filtered list view shows, delegated in-flight work included).
     // Small bounded set in practice — no pagination (unlike /tasks, /projects).
     const items = db.prepare(
       `SELECT g.id, g.name, COUNT(t.id) AS count
        FROM tags g
        LEFT JOIN task_tags tt ON tt.tag_id = g.id
-       LEFT JOIN tasks t ON t.id = tt.task_id AND t.status = 'active'
+       LEFT JOIN tasks t ON t.id = tt.task_id AND t.status IN ('active', 'in_progress', 'review')
        GROUP BY g.id
        ORDER BY g.name COLLATE NOCASE, g.id`
     ).all();

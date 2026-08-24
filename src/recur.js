@@ -89,8 +89,10 @@ export function nextDue(rule, oldDueISO, completedISO, todayISO) {
 
 // spawn(db, task, nextDueISO, todayISO?) -> newTaskId
 // Caller wraps in the completion transaction. Copies project, tags, steps
-// (unchecked); status active, when=nextDue (date), due=nextDue, rank at the
-// end of the target (UPCOMING) section, spawned_from = old id.
+// (unchecked) and the delegation shape (assignee + auto_close — a recurring
+// delegated chore stays delegated; claim/report start fresh); status active,
+// when=nextDue (date), due=nextDue, rank at the end of the target (UPCOMING)
+// section, spawned_from = old id.
 export function spawn(db, task, nextDueISO, todayISO = new Date().toISOString().slice(0, 10)) {
   const id = ulid();
   const now = new Date().toISOString();
@@ -103,10 +105,11 @@ export function spawn(db, task, nextDueISO, todayISO = new Date().toISOString().
   db.prepare(
     `INSERT INTO tasks (id, title, notes, project_id, status, when_type, when_date,
                         due_date, due_time, rank, today_rank, recur, spawned_from,
-                        created_by, completed_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'active', 'date', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?)`
+                        created_by, completed_at, created_at, updated_at, assignee, auto_close)
+     VALUES (?, ?, ?, ?, 'active', 'date', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?)`
   ).run(id, task.title, task.notes, task.project_id, nextDueISO, nextDueISO,
-        task.due_time, rank, task.recur, task.id, task.created_by, now, now);
+        task.due_time, rank, task.recur, task.id, task.created_by, now, now,
+        task.assignee, task.auto_close);
   const steps = db.prepare('SELECT title, rank FROM steps WHERE task_id = ? ORDER BY rank').all(task.id);
   const insStep = db.prepare('INSERT INTO steps (id, task_id, title, done, rank) VALUES (?, ?, ?, 0, ?)');
   for (const s of steps) insStep.run(ulid(), id, s.title, s.rank);

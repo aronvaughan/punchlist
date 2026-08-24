@@ -6,12 +6,14 @@ import { parseTokens, envPermWarning } from '../src/server.js';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
+const TOK_HERMES = 'h'.repeat(32);
 const TODAY = '2026-03-10';
 
 function makeApp() {
   const { db, migrate } = open(':memory:');
   migrate();
-  const app = buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE }, today: () => TODAY });
+  const app = buildApp({
+    db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES }, today: () => TODAY });
   const call = async (method, path, { body, token = TOK_ARON } = {}) => {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -474,6 +476,200 @@ test('POST /tags: creates (leading # stripped), NOCASE dup 409, validation, auth
   const list = await call('GET', '/api/v1/tags');
   assert.deepEqual(list.json.items.map(t => t.name), ['chores', 'Errands', 'home']);
   assert.equal(list.json.items.find(t => t.name === 'Errands').count, 0);
+});
+
+// ---- delegation lifecycle ----
+test('delegation happy path: POST assignee -> claim -> finish -> review -> approve -> done', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'sweep memories', assignee: 'claude' } })).json;
+  assert.equal(t.assignee, 'claude');
+  assert.equal(t.auto_close, 0);
+  assert.equal(t.created_by, 'aron'); // created_by = who asked; assignee = who must do it
+  const claimed = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.json.task.status, 'in_progress');
+  assert.ok(claimed.json.task.claimed_at);
+  const fin = await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'swept 12 stale entries' } });
+  assert.equal(fin.status, 200);
+  assert.equal(fin.json.task.status, 'review');
+  assert.equal(fin.json.task.report, 'swept 12 stale entries');
+  assert.equal(fin.json.task.completed_at, null, 'review is not done');
+  const ok = await call('POST', `/api/v1/tasks/${t.id}/approve`);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.task.status, 'done');
+  assert.ok(ok.json.task.completed_at);
+  assert.equal(ok.json.task.report, 'swept 12 stale entries', 'report survives approval');
+  // approve again: idempotent 200
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`)).status, 200);
+});
+
+test('claim: wrong actor 403; double-claim idempotent; claiming review/done 409; 404', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`)).status, 403, 'aron is not the assignee');
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_HERMES })).status, 403);
+  const first = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  const again = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(again.status, 200, 'claiming your own in_progress task is a 200');
+  assert.equal(again.json.task.claimed_at, first.json.task.claimed_at, 'claimed_at not re-stamped');
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'r' } });
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE })).status, 409);
+  assert.equal((await call('POST', '/api/v1/tasks/NOPE/claim', { token: TOK_CLAUDE })).status, 404);
+});
+
+test('finish: wrong actor 403; report required 400; finishing review/done 409; works from active (unclaimed)', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'hermes' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'r' } })).status, 403);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: {} })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: { report: '  ' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: { report: 'r', extra: 1 } })).status, 400);
+  // active -> review without an explicit claim is allowed
+  const fin = await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: { report: 'done it' } });
+  assert.equal(fin.status, 200);
+  assert.equal(fin.json.task.status, 'review');
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: { report: 'again' } })).status, 409);
+});
+
+test('approve: non-aron 403; approving active/in_progress 409; 404', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`, { token: TOK_CLAUDE })).status, 403);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`)).status, 409, 'not in review yet');
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`)).status, 409);
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'r' } });
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`, { token: TOK_HERMES })).status, 403);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`)).status, 200);
+  assert.equal((await call('POST', '/api/v1/tasks/NOPE/approve')).status, 404);
+});
+
+test('recurrence spawns ONLY at the final done: not on review finish, once on approve; auto_close finish spawns directly', async () => {
+  const { call, db } = makeApp();
+  const spawnsOf = id => db.prepare('SELECT * FROM tasks WHERE spawned_from = ?').all(id);
+  // review lane: finish must NOT spawn, approve must
+  const r = (await call('POST', '/api/v1/tasks', {
+    body: { title: 'weekly digest', assignee: 'claude', due_date: TODAY, recur: { freq: 'every', n: 7, anchor: 'due' } } })).json;
+  const fin = await call('POST', `/api/v1/tasks/${r.id}/finish`, { token: TOK_CLAUDE, body: { report: 'sent' } });
+  assert.equal(fin.json.spawned_id, undefined, 'entering review never spawns');
+  assert.equal(spawnsOf(r.id).length, 0);
+  const ok = await call('POST', `/api/v1/tasks/${r.id}/approve`);
+  assert.ok(ok.json.spawned_id, 'approval is the final transition');
+  assert.equal((await call('POST', `/api/v1/tasks/${r.id}/approve`)).json.spawned_id, undefined, 'repeat approve does not re-spawn');
+  assert.equal(spawnsOf(r.id).length, 1);
+  // spawn keeps the delegation shape, resets claim/report
+  const next = spawnsOf(r.id)[0];
+  assert.equal(next.assignee, 'claude');
+  assert.equal(next.status, 'active');
+  assert.equal(next.claimed_at, null);
+  assert.equal(next.report, null);
+  // auto_close lane: finish goes straight to done and spawns exactly once
+  const a = (await call('POST', '/api/v1/tasks', {
+    body: { title: 'daily sweep', assignee: 'hermes', auto_close: true, due_date: TODAY, recur: { freq: 'daily', anchor: 'due' } } })).json;
+  assert.equal(a.auto_close, 1);
+  const af = await call('POST', `/api/v1/tasks/${a.id}/finish`, { token: TOK_HERMES, body: { report: 'swept' } });
+  assert.equal(af.json.task.status, 'done');
+  assert.ok(af.json.task.completed_at);
+  assert.ok(af.json.spawned_id);
+  assert.equal(spawnsOf(a.id).length, 1);
+  assert.equal(spawnsOf(a.id)[0].auto_close, 1, 'spawn keeps auto_close');
+});
+
+test('reopen from review keeps the report; the next finish appends under a timestamped rule', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'draft', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'first pass' } });
+  const reopened = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'active' } });
+  assert.equal(reopened.status, 200);
+  assert.equal(reopened.json.status, 'active');
+  assert.equal(reopened.json.report, 'first pass', 'reopen keeps the report');
+  const fin2 = await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'second pass' } });
+  assert.match(fin2.json.task.report, /^first pass\n\n--- \d{4}-\d{2}-\d{2}T[\d:.]+Z\n\nsecond pass$/);
+});
+
+test('PATCH rules: in_progress/review/done not settable; report not client-patchable; assignee validated', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'x' } })).json;
+  for (const bad of ['in_progress', 'review']) {
+    const r = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: bad } });
+    assert.equal(r.status, 400, bad);
+    assert.match(r.json.error, /claim|finish/);
+  }
+  const rep = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { report: 'forged' } });
+  assert.equal(rep.status, 400);
+  assert.match(rep.json.error, /finish/);
+  assert.equal((await call('POST', '/api/v1/tasks', { body: { title: 'x', report: 'forged' } })).status, 400);
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { assignee: '' } })).status, 400);
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { assignee: 42 } })).status, 400);
+  assert.equal((await call('POST', '/api/v1/tasks', { body: { title: 'x', auto_close: 'yes' } })).status, 400);
+});
+
+test('reassigning an in_progress task resets it to active and clears the claim', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  const r = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { assignee: 'hermes' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.assignee, 'hermes');
+  assert.equal(r.json.status, 'active');
+  assert.equal(r.json.claimed_at, null);
+  // a non-assignee PATCH (title tweak) does NOT reset a claim
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_HERMES });
+  const keep = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { title: 'job 2' } });
+  assert.equal(keep.json.status, 'in_progress');
+  assert.notEqual(keep.json.claimed_at, null);
+  // re-asserting the SAME assignee is a no-op reset-wise
+  const same = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { assignee: 'hermes' } });
+  assert.equal(same.json.status, 'in_progress');
+});
+
+test("view scoping over HTTP: aron's today/inbox exclude delegated; review/delegated views + ?assignee= work", async () => {
+  const { call } = makeApp();
+  await call('POST', '/api/v1/tasks', { body: { title: 'mine today', when_type: 'date', when_date: TODAY } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'delegated today', assignee: 'claude', when_type: 'date', when_date: TODAY } });
+  const inReview = (await call('POST', '/api/v1/tasks', { body: { title: 'delegated inbox', assignee: 'hermes' } })).json;
+  await call('POST', `/api/v1/tasks/${inReview.id}/finish`, { token: TOK_HERMES, body: { report: 'r' } });
+  const today = await call('GET', '/api/v1/tasks?view=today');
+  assert.deepEqual(today.json.items.map(t => t.title), ['mine today']);
+  const inbox = await call('GET', '/api/v1/tasks?view=inbox');
+  assert.deepEqual(inbox.json.items.map(t => t.title), []);
+  const review = await call('GET', '/api/v1/tasks?view=review');
+  assert.deepEqual(review.json.items.map(t => t.title), ['delegated inbox']);
+  const delegated = await call('GET', '/api/v1/tasks?view=delegated');
+  assert.deepEqual(new Set(delegated.json.items.map(t => t.title)),
+    new Set(['delegated today', 'delegated inbox']));
+  const byAssignee = await call('GET', '/api/v1/tasks?assignee=claude');
+  assert.deepEqual(byAssignee.json.items.map(t => t.title), ['delegated today']);
+});
+
+test('GET /counts gains review + delegated; existing keys stay aron-scoped', async () => {
+  const { call } = makeApp();
+  await call('POST', '/api/v1/tasks', { body: { title: 'mine' } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'queued', assignee: 'claude' } });
+  const c1 = (await call('POST', '/api/v1/tasks', { body: { title: 'working', assignee: 'claude', when_type: 'date', when_date: TODAY } })).json;
+  await call('POST', `/api/v1/tasks/${c1.id}/claim`, { token: TOK_CLAUDE });
+  const h1 = (await call('POST', '/api/v1/tasks', { body: { title: 'checking', assignee: 'hermes' } })).json;
+  await call('POST', `/api/v1/tasks/${h1.id}/finish`, { token: TOK_HERMES, body: { report: 'r' } });
+  const res = await call('GET', '/api/v1/counts');
+  assert.equal(res.json.inbox, 1, "delegated tasks don't clutter aron's inbox");
+  assert.equal(res.json.today, 0, "claude's arrived task is not aron's today");
+  assert.equal(res.json.review, 1);
+  assert.equal(res.json.delegated, 3);
+});
+
+test('quickadd >assignee flows through to the created task', async () => {
+  const { call } = makeApp();
+  const r = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'sweep the queue >hermes #ops' } });
+  assert.equal(r.status, 201);
+  assert.equal(r.json.title, 'sweep the queue');
+  assert.equal(r.json.assignee, 'hermes');
+  assert.deepEqual(r.json.tags, ['ops']);
+  const me = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'call bank >me' }, token: TOK_CLAUDE });
+  assert.equal(me.json.assignee, 'aron');
+  assert.equal(me.json.created_by, 'claude');
+  const unknown = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'forward >bob the memo' } });
+  assert.equal(unknown.json.title, 'forward >bob the memo');
+  assert.equal(unknown.json.assignee, 'aron');
 });
 
 // ---- static / CSP ----
