@@ -12,6 +12,7 @@
 <body>
   <div id="shell">
     <header id="topbar">
+      <button id="nav-toggle" aria-label="Menu" aria-expanded="false">☰</button>
       <input id="quickadd" type="text" autocomplete="off" enterkeyhint="done"
              placeholder="New task…  #tag @project !due ^when  (n)" aria-label="Quick add">
       <input id="search" type="search" autocomplete="off" placeholder="Search (/)" aria-label="Search">
@@ -52,6 +53,7 @@
     <wa-button slot="footer" id="when-ok" variant="brand">Set</wa-button>
   </wa-dialog>
 
+  <div id="backdrop"></div>
   <div id="toasts" aria-live="assertive"></div>
 </body>
 </html>

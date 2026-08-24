@@ -27,6 +27,8 @@ test('GET / returns the app shell with CSP', async () => {
   assert.doesNotMatch(csp, /unsafe-inline/);
   const html = await res.text();
   assert.match(html, /id="rail"/);
+  assert.match(html, /id="nav-toggle"/); // mobile hamburger for the slide-in rail
+  assert.match(html, /id="backdrop"/);
   assert.match(html, /src="\/app\.js"/);
   assert.match(html, /data-webawesome="\/vendor\/webawesome"/);
   // favicon is an inline data: SVG (no extra request; CSP img-src allows data:)

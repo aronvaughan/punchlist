@@ -97,6 +97,21 @@ a { color: var(--accent); }
 }
 #topbar input:focus { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 0; }
 #topbar #search { flex: 0 1 260px; }
+#nav-toggle {
+  display: none; /* mobile only */
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 18px;
+  cursor: pointer;
+}
+#backdrop { display: none; }
 
 #rail {
   grid-area: rail;
@@ -130,7 +145,30 @@ a { color: var(--accent); }
   letter-spacing: .08em;
   color: var(--ink-faint);
 }
-.rail-child { padding-left: 26px !important; }
+/* project tree: explicit nesting — indent guide + disclosure carets */
+.rail-subtree {
+  list-style: none;
+  margin: 0 0 0 20px;
+  padding: 0 0 0 8px;
+  border-left: 1px solid var(--line);
+}
+.caret {
+  flex: none;
+  width: 28px;
+  height: 44px;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.caret::before { content: "▾"; display: inline-block; transition: transform .15s ease; }
+.caret.closed::before { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) { .caret::before { transition: none; } }
+.caret-spacer { flex: none; width: 28px; }
+.rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-project { padding-left: 4px; gap: 2px; }
 
 #main {
   grid-area: main;
@@ -333,30 +371,42 @@ wa-button[variant="brand"]::part(base) {
   width: min(480px, calc(100vw - 32px));
 }
 
-/* ---- mobile: rail becomes a top tab bar; thumb-sized everything ---- */
+/* ---- mobile: the SAME rail becomes a slide-in left nav behind a hamburger.
+   One rail element, two presentations — no duplicated markup or logic. ---- */
 @media (max-width: 700px) {
   #shell {
-    grid-template: "topbar" auto "rail" auto "main" 1fr / 1fr;
+    grid-template: "topbar" auto "main" 1fr / 1fr;
   }
+  #nav-toggle { display: flex; }
   #rail {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 6px 10px;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 85vw);
+    z-index: 900;
     background: var(--pane);
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-    -webkit-overflow-scrolling: touch;
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    padding: 16px 10px calc(16px + env(safe-area-inset-bottom));
+    transform: translateX(-105%);
+    visibility: hidden;
   }
-  #rail ul { display: flex; gap: 4px; }
-  #rail li, #rail a, .rail-project { flex: none; }
-  .rail-heading { margin: 0 4px; }
-  .rail-child { padding-left: 12px !important; }
+  body.nav-open #rail { transform: none; visibility: visible; }
+  #backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 850;
+    background: rgba(0, 0, 0, .35);
+  }
+  body:not(.nav-open) #backdrop { display: none; }
+  body.nav-open #backdrop { display: block; }
   #topbar #search { flex: 1 1 120px; }
   #main { padding: 14px 12px 120px; }
   wa-drawer { --size: 100vw; }
   .task-row .title { flex: 1 1 90px; }
   .task-row .chip { max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (max-width: 700px) and (prefers-reduced-motion: no-preference) {
+  #rail { transition: transform .25s ease, visibility .25s; }
 }

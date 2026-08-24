@@ -131,6 +131,7 @@ function onRoute() {
   const changed = next.view !== state.route.view || next.projectId !== state.route.projectId;
   state.route = next;
   if (changed) { state.tag = null; state.q = ''; document.getElementById('search').value = ''; }
+  closeNav();
   closeDetail();
   reload();
 }
@@ -164,6 +165,25 @@ export function setTagFilter(tag) {
   reload();
 }
 
+// ---- mobile nav drawer: same rail element, slid in behind a hamburger ----
+const navToggle = document.getElementById('nav-toggle');
+
+export function closeNav() {
+  document.body.classList.remove('nav-open');
+  navToggle.setAttribute('aria-expanded', 'false');
+}
+
+navToggle.addEventListener('click', () => {
+  const open = document.body.classList.toggle('nav-open');
+  navToggle.setAttribute('aria-expanded', String(open));
+});
+document.getElementById('backdrop').addEventListener('click', closeNav);
+// selecting anything in the rail closes the drawer (carets only toggle subtrees)
+document.getElementById('rail').addEventListener('click', e => {
+  if (e.target.closest('.caret')) return;
+  if (e.target.closest('a, .rail-project')) closeNav();
+});
+
 // ---- quick-add + search + keyboard ----
 const quickadd = document.getElementById('quickadd');
 const search = document.getElementById('search');
@@ -192,7 +212,7 @@ search.addEventListener('input', () => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeDetail(); return; }
+  if (e.key === 'Escape') { closeNav(); closeDetail(); return; }
   const t = e.target;
   if (t instanceof Element &&
       (t.closest('input, textarea, select, [contenteditable]') || t.closest('wa-dialog, wa-drawer'))) return;

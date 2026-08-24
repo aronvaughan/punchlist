@@ -29,13 +29,26 @@ function fmtDate(iso) {
 }
 
 // ---- rail ----
+const COLLAPSE_KEY = 'av-tasks-collapsed';
+function loadCollapsed() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || []); }
+  catch { return new Set(); }
+}
+function toggleCollapsed(id) {
+  const set = loadCollapsed();
+  set.has(id) ? set.delete(id) : set.add(id);
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set])); } catch { /* private mode */ }
+  renderRail();
+}
+
 export function renderRail() {
-  const ul = document.getElementById('rail-projects');
-  ul.replaceChildren();
+  const rootUl = document.getElementById('rail-projects');
+  rootUl.replaceChildren();
   for (const a of document.querySelectorAll('#rail-views a')) {
     a.classList.toggle('active',
       state.route.view === a.dataset.view && state.route.projectId === null);
   }
+  const collapsed = loadCollapsed();
   const live = state.projects.filter(p => !p.archived);
   const children = new Map();
   for (const p of live) {
@@ -43,10 +56,22 @@ export function renderRail() {
     if (!children.has(key)) children.set(key, []);
     children.get(key).push(p);
   }
-  const addRows = (parentKey, depth) => {
+  const addRows = (ul, parentKey) => {
     for (const p of children.get(parentKey) ?? []) {
       const li = el('li');
-      const row = el('div', 'rail-project' + (depth ? ' rail-child' : ''), p.name);
+      const row = el('div', 'rail-project');
+      const hasKids = children.has(p.id);
+      if (hasKids) {
+        // disclosure caret: toggles the subtree, never navigates
+        const caret = el('button', 'caret' + (collapsed.has(p.id) ? ' closed' : ''));
+        caret.setAttribute('aria-label', (collapsed.has(p.id) ? 'Expand ' : 'Collapse ') + p.name);
+        caret.setAttribute('aria-expanded', String(!collapsed.has(p.id)));
+        caret.addEventListener('click', e => { e.stopPropagation(); toggleCollapsed(p.id); });
+        row.append(caret);
+      } else {
+        row.append(el('span', 'caret-spacer'));
+      }
+      row.append(el('span', 'rail-name', p.name));
       row.dataset.projectId = p.id;
       row.tabIndex = 0;
       if (state.route.view === 'project' && state.route.projectId === p.id) row.classList.add('active');
@@ -70,11 +95,15 @@ export function renderRail() {
         },
       });
       li.append(row);
+      if (hasKids && !collapsed.has(p.id)) {
+        const sub = el('ul', 'rail-subtree');
+        addRows(sub, p.id);
+        li.append(sub);
+      }
       ul.append(li);
-      addRows(p.id, depth + 1);
     }
   };
-  addRows('', 0);
+  addRows(rootUl, '');
 }
 
 // ---- rows ----
