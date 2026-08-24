@@ -116,10 +116,15 @@ PATCH /api/v1/tasks/:id           sparse; unknown field=400; size caps:
                                   title<=500, notes<=64KB, steps<=100,
                                   tags<=20 (review O11)
 POST /api/v1/tasks/:id/complete   idempotent (above)
-POST /api/v1/tasks/:id/reorder    {before_id?, after_id?} — neighbor ids,
-                                  never raw ranks; validates neighbors
-                                  still in scope else 409 + current list;
-                                  renormalize in same tx (review M10)
+POST /api/v1/tasks/:id/reorder    {before_id?, after_id?, list?} —
+                                  neighbor ids, never raw ranks;
+                                  list: 'project' (default) reorders rank
+                                  within the (project, section) scope,
+                                  'today' reorders today_rank in the
+                                  global Today view (review C3);
+                                  validates neighbors still in scope else
+                                  409 + current list; renormalize in same
+                                  tx (review M10)
 POST /api/v1/tasks/:id/steps      create
 PATCH/DELETE /api/v1/tasks/:id/steps/:sid   title/done/rank; delete
 GET/POST/PATCH /api/v1/projects   tree via parent_id; cycle check walks
