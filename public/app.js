@@ -196,7 +196,7 @@ export function pickWhen(initial) {
 }
 
 // ---- routing ----
-const VIEWS = ['inbox', 'today', 'upcoming', 'logbook', 'agents'];
+const VIEWS = ['inbox', 'today', 'upcoming', 'logbook', 'review', 'agents'];
 
 function parseHash() {
   const h = location.hash || '#/today';
