@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parse } from '../src/quickadd.js';
 
 // parse(text, {projects, tags, today}) -> fields (pure)
-// tokens: #tag  @project (or @"multi word")  !due  ^when  *recur
+// tokens: #tag  @project (or @"multi word")  !due  ^when  *recur  >assignee
 const PROJECTS = [{ id: 'p1', name: 'Home' }, { id: 'p2', name: 'Deep Work' }];
 const OPTS = { projects: PROJECTS, tags: ['chore'], today: '2026-03-04' }; // a Wednesday
 
@@ -37,13 +37,23 @@ const CASES = [
     'task ^2026-03-11 ^someday', { title: 'task', when_type: 'someday' }],
   ['^date after ^someday wins cleanly too',
     'task ^someday ^2026-03-11', { title: 'task', when_type: 'date', when_date: '2026-03-11' }],
+  ['>claude delegates', 'tidy the queue >claude', { title: 'tidy the queue', assignee: 'claude' }],
+  ['>hermes delegates', '>hermes sweep memories', { title: 'sweep memories', assignee: 'hermes' }],
+  ['>me maps to aron', 'call bank >me', { title: 'call bank', assignee: 'aron' }],
+  ['assignee token is case-insensitive', 'ship it >Claude', { title: 'ship it', assignee: 'claude' }],
+  ['unknown >word stays in the title', 'forward >bob the memo', { title: 'forward >bob the memo' }],
+  ['bare > stays in the title', 'a > b', { title: 'a > b' }],
+  ['last > wins', 'task >claude >hermes', { title: 'task', assignee: 'hermes' }],
+  ['delegation combined with other tokens', 'water plants >hermes #garden *daily',
+    { title: 'water plants', assignee: 'hermes', tags: ['garden'],
+      recur: { freq: 'daily', anchor: 'due' }, due_date: '2026-03-04' }],
 ];
 
 for (const [name, text, expected] of CASES) {
   test(`quickadd: ${name}`, () => {
     const got = parse(text, OPTS);
     // compare only expected keys + title; absent keys must be undefined
-    for (const k of ['title', 'tags', 'project_id', 'when_type', 'when_date', 'due_date', 'recur']) {
+    for (const k of ['title', 'tags', 'project_id', 'when_type', 'when_date', 'due_date', 'recur', 'assignee']) {
       assert.deepEqual(got[k], expected[k], `field ${k}`);
     }
   });

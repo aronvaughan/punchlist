@@ -1,11 +1,14 @@
 // quickadd.js — pure token parser for POST /tasks/quickadd (the ONLY place
 // token parsing lives; email content never goes through here).
-// Tokens: #tag  @project  @"multi word"  !due  ^when  *recur
+// Tokens: #tag  @project  @"multi word"  !due  ^when  *recur  >assignee
 //   dates: YYYY-MM-DD | today | tomorrow | weekday name (strictly after today)
 //   recur: *daily | *every:N | *weekly:d1,d2 | *monthly:DOM  [+completion]
+//   assignee: >me | >claude | >hermes (case-insensitive; >me = aron) — an
+//   unknown >word stays in the title, like an unknown @project
 // A recurrence without an explicit !due defaults due=today (design C4).
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const ASSIGNEES = { me: 'aron', claude: 'claude', hermes: 'hermes' };
 
 function parseDate(word, todayISO) {
   const w = word.toLowerCase();
@@ -93,6 +96,8 @@ export function parse(text, { projects = [], today } = {}) {
       } else { out.when_type = 'date'; out.when_date = parseDate(v, todayISO); }
     } else if (tok.startsWith('*') && tok.length > 1) {
       out.recur = parseRecur(tok.slice(1));
+    } else if (tok.startsWith('>') && tok.length > 1 && ASSIGNEES[tok.slice(1).toLowerCase()]) {
+      out.assignee = ASSIGNEES[tok.slice(1).toLowerCase()]; // unknown >word falls through to title
     } else {
       titleParts.push(tok);
     }
