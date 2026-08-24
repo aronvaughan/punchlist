@@ -64,6 +64,13 @@ export function resolveAdmin(tokens, raw) {
   return admin;
 }
 
+// AV_TASKS_UNTRUSTED_ACTORS = comma list of actors whose task creations are
+// born vetted=0 (agent-security layer 1). Unset -> default "email"; set but
+// empty -> nobody is untrusted (explicit opt-out).
+export function parseUntrusted(raw) {
+  return (raw ?? 'email').split(',').map(s => s.trim()).filter(Boolean);
+}
+
 function toRequest(req) {
   const url = `http://${req.headers.host || 'localhost'}${req.url}`;
   const init = { method: req.method, headers: req.headers };
@@ -109,7 +116,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error(`av-tasks: FATAL: ${err.name}: ${err.message}`);
     process.exit(1);
   }
-  const app = buildApp({ db, tokens, admin });
+  const app = buildApp({ db, tokens, admin,
+    untrusted: parseUntrusted(process.env.AV_TASKS_UNTRUSTED_ACTORS) });
   const server = serve(app, { host: HOST, port: PORT });
   server.on('error', err => {
     if (err.code === 'EADDRINUSE') {

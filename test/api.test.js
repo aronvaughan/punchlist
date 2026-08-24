@@ -2,18 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
-import { parseTokens, envPermWarning, resolveAdmin } from '../src/server.js';
+import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted } from '../src/server.js';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
 const TOK_HERMES = 'h'.repeat(32);
+const TOK_EMAIL = 'e'.repeat(32);
 const TODAY = '2026-03-10';
 
 function makeApp() {
   const { db, migrate } = open(':memory:');
   migrate();
   const app = buildApp({
-    db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES }, today: () => TODAY });
+    db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    today: () => TODAY });
   const call = async (method, path, { body, token = TOK_ARON } = {}) => {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -729,6 +731,121 @@ test('quickadd >assignee flows through to the created task', async () => {
   const unknown = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'forward >bob the memo' } });
   assert.equal(unknown.json.title, 'forward >bob the memo');
   assert.equal(unknown.json.assignee, 'aron');
+});
+
+// ---- agent security (layer 1): provenance vetting ----
+test('creation vetting: trusted actors are born vetted=1, untrusted (email) vetted=0 — quickadd included', async () => {
+  const { call } = makeApp();
+  for (const token of [TOK_ARON, TOK_CLAUDE, TOK_HERMES]) {
+    const r = await call('POST', '/api/v1/tasks', { body: { title: 'trusted', assignee: 'claude' }, token });
+    assert.equal(r.json.vetted, 1);
+  }
+  const e = await call('POST', '/api/v1/tasks', { body: { title: 'from mail', assignee: 'claude' }, token: TOK_EMAIL });
+  assert.equal(e.json.vetted, 0);
+  assert.equal(e.json.created_by, 'email');
+  const q = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'ingested >hermes' }, token: TOK_EMAIL });
+  assert.equal(q.json.vetted, 0);
+});
+
+test('PATCH cannot set vetted (unknown field); vet door is the only way up', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'sly', assignee: 'claude' }, token: TOK_EMAIL })).json;
+  const patch = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { vetted: 1 } });
+  assert.equal(patch.status, 400);
+  assert.match(patch.json.error, /unknown field: vetted/);
+  const create = await call('POST', '/api/v1/tasks', { body: { title: 'x', vetted: 1 }, token: TOK_EMAIL });
+  assert.equal(create.status, 400);
+});
+
+test('unvetted task: claim and finish are 403 (server-enforced door, not view filtering)', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'evil?', assignee: 'claude' }, token: TOK_EMAIL })).json;
+  const claim = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(claim.status, 403);
+  assert.match(claim.json.error, /not vetted for agent execution/);
+  const finish = await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'did it' } });
+  assert.equal(finish.status, 403);
+  assert.match(finish.json.error, /not vetted for agent execution/);
+  // the human doors stay open: an unvetted task is quarantined from AGENTS only
+  const done = await call('POST', `/api/v1/tasks/${t.id}/complete`);
+  assert.equal(done.status, 200);
+});
+
+test('vet door: admin only, idempotent; PATCH-preserving', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'check me', assignee: 'claude' }, token: TOK_EMAIL })).json;
+  const agent = await call('POST', `/api/v1/tasks/${t.id}/vet`, { token: TOK_CLAUDE });
+  assert.equal(agent.status, 403, 'an agent cannot vet its own work');
+  assert.match(agent.json.error, /only the admin/);
+  const vet = await call('POST', `/api/v1/tasks/${t.id}/vet`);
+  assert.equal(vet.status, 200);
+  assert.equal(vet.json.task.vetted, 1);
+  const again = await call('POST', `/api/v1/tasks/${t.id}/vet`); // idempotent
+  assert.equal(again.status, 200);
+  assert.equal(again.json.task.vetted, 1);
+  assert.equal((await call('POST', '/api/v1/tasks/nope/vet')).status, 404);
+});
+
+test('queue view: server-side exclusion of unvetted work; delegated/project views still show it', async () => {
+  const { call } = makeApp();
+  await call('POST', '/api/v1/tasks', { body: { title: 'safe work', assignee: 'claude' } });
+  const claimed = (await call('POST', '/api/v1/tasks', { body: { title: 'claimed work', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${claimed.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', '/api/v1/tasks', { body: { title: 'suspect work', assignee: 'claude' }, token: TOK_EMAIL });
+  const queue = await call('GET', '/api/v1/tasks?view=queue&assignee=claude');
+  assert.deepEqual(queue.json.items.map(t => t.title), ['claimed work', 'safe work'],
+    'in_progress first, unvetted excluded');
+  // visibility is NOT filtered: the owner must see arrivals to vet them
+  const delegated = await call('GET', '/api/v1/tasks?view=delegated');
+  assert.ok(delegated.json.items.some(t => t.title === 'suspect work'));
+  const open = await call('GET', '/api/v1/tasks?assignee=claude');
+  assert.ok(open.json.items.some(t => t.title === 'suspect work'));
+});
+
+test('counts gains unvetted (assigned-to-agent AND vetted=0)', async () => {
+  const { call } = makeApp();
+  await call('POST', '/api/v1/tasks', { body: { title: 'a', assignee: 'claude' }, token: TOK_EMAIL });
+  await call('POST', '/api/v1/tasks', { body: { title: 'b', assignee: 'hermes' }, token: TOK_EMAIL });
+  await call('POST', '/api/v1/tasks', { body: { title: 'for aron', assignee: 'aron' }, token: TOK_EMAIL });
+  await call('POST', '/api/v1/tasks', { body: { title: 'fine', assignee: 'claude' } });
+  const c = await call('GET', '/api/v1/counts');
+  assert.equal(c.json.unvetted, 2, 'only agent-assigned unvetted tasks count');
+});
+
+test('happy path: email creates -> admin vets -> agent claims and finishes into review', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks',
+    { body: { title: 'summarize the newsletter', assignee: 'hermes' }, token: TOK_EMAIL })).json;
+  // invisible to the agent's queue until vetted
+  let queue = await call('GET', '/api/v1/tasks?view=queue&assignee=hermes');
+  assert.equal(queue.json.items.length, 0);
+  await call('POST', `/api/v1/tasks/${t.id}/vet`);
+  queue = await call('GET', '/api/v1/tasks?view=queue&assignee=hermes');
+  assert.deepEqual(queue.json.items.map(x => x.title), ['summarize the newsletter']);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_HERMES })).status, 200);
+  const fin = await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: { report: 'summary at ...' } });
+  assert.equal(fin.status, 200);
+  assert.equal(fin.json.task.status, 'review');
+  assert.equal((await call('GET', '/api/v1/counts')).json.unvetted, 0);
+});
+
+test('untrusted set is configurable: buildApp untrusted option + parseUntrusted env parsing', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const app = buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE },
+    untrusted: ['claude'], today: () => TODAY });
+  const post = async token => {
+    const res = await app.fetch(new Request('http://x/api/v1/tasks', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 't' }) }));
+    return res.json();
+  };
+  assert.equal((await post(TOK_CLAUDE)).vetted, 0, 'listed actor is untrusted');
+  assert.equal((await post(TOK_ARON)).vetted, 1, 'email default replaced by the explicit list');
+  // env parsing: unset -> default "email"; explicit empty -> nobody untrusted
+  assert.deepEqual(parseUntrusted(undefined), ['email']);
+  assert.deepEqual(parseUntrusted('email, sms ,'), ['email', 'sms']);
+  assert.deepEqual(parseUntrusted(''), []);
 });
 
 // ---- static / CSP ----
