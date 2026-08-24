@@ -82,6 +82,21 @@ test('size caps: title 500, notes 64KB, steps 100, tags 20', async () => {
   assert.equal((await call('POST', '/api/v1/tasks', { body: { title: 'x'.repeat(500), notes: 'n'.repeat(65536) } })).status, 201);
 });
 
+test('request bodies over 256KB are rejected 413 before JSON parsing', async () => {
+  const { call } = makeApp();
+  const big = await call('POST', '/api/v1/tasks', { body: { title: 'x', notes: 'n'.repeat(262144) } });
+  assert.equal(big.status, 413);
+  assert.match(big.json.error, /exceeds/);
+  // oversized garbage (not even JSON) is also a 413, not a 400 from the parser
+  const { app } = makeApp();
+  const res = await app.fetch(new Request('http://x/api/v1/tasks', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOK_ARON}`, 'Content-Type': 'application/json' },
+    body: '{'.repeat(300000),
+  }));
+  assert.equal(res.status, 413);
+});
+
 test('recur on POST requires/defaults due (C4) and validates the rule', async () => {
   const { call } = makeApp();
   const r = await call('POST', '/api/v1/tasks', { body: { title: 'water', recur: { freq: 'daily', anchor: 'due' } } });

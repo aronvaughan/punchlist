@@ -114,7 +114,9 @@ POST /api/v1/tasks/quickadd       {text} — token parsing lives here only
                                   parsing (review O11)
 PATCH /api/v1/tasks/:id           sparse; unknown field=400; size caps:
                                   title<=500, notes<=64KB, steps<=100,
-                                  tags<=20 (review O11)
+                                  tags<=20 (review O11); all JSON bodies
+                                  (every POST/PATCH) capped at 256KB
+                                  BEFORE parsing -> 413
 POST /api/v1/tasks/:id/complete   idempotent (above)
 POST /api/v1/tasks/:id/reorder    {before_id?, after_id?, list?} —
                                   neighbor ids, never raw ranks;

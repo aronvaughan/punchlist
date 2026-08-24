@@ -20,6 +20,7 @@ const MIME = {
 };
 
 const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20 };
+const MAX_BODY_BYTES = 262144; // 256KB — enforced BEFORE JSON.parse (413)
 const TASK_FIELDS = new Set(['title', 'notes', 'project_id', 'status', 'when_type', 'when_date',
   'due_date', 'due_time', 'recur', 'tags', 'steps']);
 
@@ -169,8 +170,20 @@ export function buildApp({ db, tokens, today: todayFn }) {
   });
 
   async function readJson(c) {
+    // byte cap before parsing: oversized payloads never reach JSON.parse
+    const declared = Number(c.req.header('Content-Length'));
+    if (declared > MAX_BODY_BYTES) throw new ApiError(413, `request body exceeds ${MAX_BODY_BYTES} bytes`);
     let body;
-    try { body = await c.req.json(); } catch { throw new ApiError(400, 'invalid JSON body'); }
+    try {
+      const text = await c.req.text();
+      if (Buffer.byteLength(text) > MAX_BODY_BYTES) {
+        throw new ApiError(413, `request body exceeds ${MAX_BODY_BYTES} bytes`);
+      }
+      body = JSON.parse(text);
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      throw new ApiError(400, 'invalid JSON body');
+    }
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw new ApiError(400, 'body must be a JSON object');
     }
