@@ -39,6 +39,10 @@ async function patch(fields) {
 
 export function openDetail(task) {
   current = task;
+  // eyebrow: the task's project name (or Inbox) as the drawer heading,
+  // styled small/muted in tokens.css via ::part(title); keeps the close X
+  const proj = state.projects.find(p => p.id === task.project_id);
+  drawer().label = proj ? proj.name : 'Inbox';
   const body = document.getElementById('detail-body');
   body.replaceChildren();
 

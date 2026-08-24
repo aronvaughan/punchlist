@@ -5,6 +5,7 @@ import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen }
 import { openDetail } from '/detail.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // mirrors src/views.js SECTION / api.js sectionOf
 export function sectionOf(task, today) {
@@ -47,8 +48,11 @@ export function renderRail() {
       const li = el('li');
       const row = el('div', 'rail-project' + (depth ? ' rail-child' : ''), p.name);
       row.dataset.projectId = p.id;
+      row.tabIndex = 0;
       if (state.route.view === 'project' && state.route.projectId === p.id) row.classList.add('active');
-      row.addEventListener('click', () => { location.hash = `#/project/${encodeURIComponent(p.id)}`; });
+      const go = () => { location.hash = `#/project/${encodeURIComponent(p.id)}`; };
+      row.addEventListener('click', go);
+      row.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
       // drop target: drag a task from any list onto a project to file it
       new Sortable(row, {
         group: { name: 'tasks', put: true, pull: false },
@@ -88,14 +92,21 @@ function taskRow(task, { showProject = false, logbook = false } = {}) {
     // optimistic: flip immediately, roll back on failure
     check.classList.toggle('checked');
     row.classList.toggle('done');
+    const completing = !(logbook || task.status === 'done');
     try {
-      if (logbook || task.status === 'done') await api('PATCH', `/tasks/${task.id}`, { status: 'active' });
-      else {
-        const res = await api('POST', `/tasks/${task.id}/complete`);
+      if (completing) {
+        // micro-interaction: fill, fade + collapse (~250ms), then remove;
+        // prefers-reduced-motion skips the animation entirely
+        const wait = reducedMotion() ? Promise.resolve()
+          : new Promise(r => { row.classList.add('removing'); setTimeout(r, 250); });
+        const [res] = await Promise.all([api('POST', `/tasks/${task.id}/complete`), wait]);
         if (res.spawned_id) toast('Done — next occurrence scheduled', 'success');
+      } else {
+        await api('PATCH', `/tasks/${task.id}`, { status: 'active' });
       }
       await reload();
     } catch (err) {
+      row.classList.remove('removing');
       await rollback(`Update failed: ${err.message}`);
     }
   });
@@ -118,7 +129,11 @@ function taskRow(task, { showProject = false, logbook = false } = {}) {
       `due ${fmtDate(task.due_date)}${task.due_time ? ' ' + task.due_time : ''}`);
     row.append(chip);
   }
+  row.tabIndex = 0;
   row.addEventListener('click', () => openDetail(task));
+  row.addEventListener('keydown', e => {
+    if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDetail(task); }
+  });
   return row;
 }
 
@@ -156,7 +171,10 @@ function sortableList(ul, { list, section } = {}) {
     animation: 150,
     delay: 150,
     delayOnTouchOnly: true,
+    // while a drag is live, empty project sections re-appear as drop targets
+    onStart: () => document.body.classList.add('drag-active'),
     onEnd: async evt => {
+      document.body.classList.remove('drag-active');
       if (evt.to !== evt.from) return; // cross-list handled by onAdd
       if (evt.oldIndex === evt.newIndex) return;
       await postReorder(evt.item, list);
@@ -194,8 +212,12 @@ export function renderMain() {
   const listEl = document.getElementById('list');
   const titleEl = document.getElementById('view-title');
   const chipsEl = document.getElementById('filter-chips');
+  const subEl = document.getElementById('view-sub');
   listEl.replaceChildren();
   chipsEl.replaceChildren();
+  subEl.textContent = state.route.view === 'today'
+    ? new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    : '';
 
   if (state.tag) {
     const chip = el('button', 'chip filter', `#${state.tag} ✕`);
@@ -232,10 +254,10 @@ export function renderMain() {
 
 function emptyNote(view) {
   return {
-    inbox: 'Inbox zero.',
-    today: 'Nothing scheduled for today.',
-    upcoming: 'Nothing scheduled.',
-    logbook: 'Nothing completed yet.',
+    inbox: 'Nothing to triage — add a task with n.',
+    today: 'Nothing scheduled today.',
+    upcoming: 'No scheduled tasks yet.',
+    logbook: 'Completed tasks land here.',
   }[view] ?? 'No tasks here yet.';
 }
 
@@ -259,11 +281,14 @@ function renderProject(listEl, tasks) {
   const bySection = [[], [], [], []];
   for (const task of tasks) bySection[sectionOf(task, t)].push(task);
   bySection.forEach((sectionTasks, i) => {
-    const head = el('div', 'section-head', SECTION_NAMES[i]);
-    listEl.append(head);
+    // empty sections hide (CSS) — except while a drag is active, when all
+    // four must be visible as drop targets
+    const block = el('div', 'section-block' + (sectionTasks.length ? '' : ' empty'));
+    block.append(el('div', 'section-head', SECTION_NAMES[i]));
     const ul = taskList(sectionTasks, {});
     if (i === 3) ul.classList.add('section-someday');
-    listEl.append(ul);
+    block.append(ul);
+    listEl.append(block);
     sortableList(ul, { list: 'project', section: i });
   });
 }
