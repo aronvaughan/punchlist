@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec "$(dirname "${BASH_SOURCE[0]}")/../../../shared/pl.sh" "$@"
+exec env PUNCHLIST_ENV_FILE="$HOME/.claude/secrets.local.env" "$(dirname "${BASH_SOURCE[0]}")/../../../shared/pl.sh" "$@"
