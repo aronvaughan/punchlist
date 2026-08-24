@@ -164,6 +164,10 @@ export function stepsEditorFor(task) {
   const stepRow = step => {
     const li = el('li', 'step-row');
     li.dataset.sid = step.id;
+    // grip: the ONLY drag handle — the rest of the row scrolls/edits normally
+    const grip = el('span', 'grip');
+    grip.setAttribute('aria-hidden', 'true');
+    li.append(grip);
     const check = el('button', 'check' + (step.done ? ' checked' : ''));
     check.setAttribute('aria-label', 'Toggle step');
     check.addEventListener('click', async () => {
@@ -193,7 +197,7 @@ export function stepsEditorFor(task) {
   const ranks = new Map((task.steps ?? []).map(s => [s.id, s.rank]));
   new Sortable(ul, {
     animation: 150,
-    handle: '.step-row',
+    handle: '.grip',
     onEnd: async evt => {
       const sid = evt.item.dataset.sid;
       const prev = evt.item.previousElementSibling?.dataset.sid;

@@ -8,6 +8,9 @@ import { expandRow } from '/inline.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+// coarse pointers (touch): task rows drag only from a grip so the list
+// scrolls normally; fine pointers keep whole-row dragging
+const COARSE = matchMedia('(pointer: coarse)').matches;
 
 // mirrors src/views.js SECTION / api.js sectionOf
 export function sectionOf(task, today) {
@@ -248,13 +251,18 @@ document.getElementById('project-name-input').addEventListener('keydown', e => {
 });
 
 // ---- rows ----
-function taskRow(task, { showProject = false, logbook = false } = {}) {
+function taskRow(task, { showProject = false, logbook = false, sortable = false } = {}) {
   const row = el('div', 'task-row');
   row.dataset.id = task.id;
   const t = todayISO();
   if (task.when_type === 'someday') row.classList.add('someday');
   if (task.status === 'done') row.classList.add('done');
 
+  if (COARSE && sortable && task.status === 'active') {
+    const grip = el('span', 'grip');
+    grip.setAttribute('aria-hidden', 'true');
+    row.append(grip);
+  }
   const check = el('button', 'check' + (task.status === 'done' ? ' checked' : ''));
   check.setAttribute('aria-label', task.status === 'done' ? 'Reopen' : 'Complete');
   check.addEventListener('click', async e => {
@@ -350,6 +358,7 @@ function sortableList(ul, { list, section } = {}) {
     delayOnTouchOnly: true,
     filter: '.expanded', // the expanded editing card must not drag
     preventOnFilter: false,
+    ...(COARSE ? { handle: '.grip' } : {}),
     // while a drag is live, empty project sections re-appear as drop targets
     onStart: () => document.body.classList.add('drag-active'),
     onEnd: async evt => {
@@ -425,7 +434,7 @@ export function renderMain() {
       listEl.append(block);
       listEl.append(el('div', 'section-head', 'Today'));
     }
-    const ul = taskList(tasks, { showProject: true });
+    const ul = taskList(tasks, { showProject: true, sortable: true });
     listEl.append(ul);
     sortableList(ul, { list: 'today' });
   } else if (r.view === 'tag') {
@@ -440,7 +449,7 @@ export function renderMain() {
       { showProject: true, logbook: true });
   } else {
     titleEl.textContent = 'Inbox';
-    const ul = taskList(tasks, {});
+    const ul = taskList(tasks, { sortable: true });
     listEl.append(ul);
     sortableList(ul, { list: 'project' });
   }
@@ -480,7 +489,7 @@ function renderProject(listEl, tasks) {
     // four must be visible as drop targets
     const block = el('div', 'section-block' + (sectionTasks.length ? '' : ' empty'));
     block.append(el('div', 'section-head', SECTION_NAMES[i]));
-    const ul = taskList(sectionTasks, {});
+    const ul = taskList(sectionTasks, { sortable: true });
     if (i === 3) ul.classList.add('section-someday');
     block.append(ul);
     listEl.append(block);

@@ -625,6 +625,24 @@ wa-button[variant="brand"]::part(base) {
 }
 .steps-list { list-style: none; margin: 0; padding: 0; }
 .step-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+
+/* grip: the only drag handle — two dotted columns, drawn in CSS */
+.grip {
+  flex: none;
+  width: 28px;
+  min-height: 44px;
+  align-self: stretch;
+  cursor: grab;
+  background-image: radial-gradient(circle, var(--ink-faint) 1.5px, transparent 1.6px);
+  background-size: 6px 7px;
+  background-repeat: repeat;
+  background-position: center;
+  background-clip: content-box;
+  padding: 12px 8px;
+  touch-action: none; /* the grip drags; everything else scrolls */
+}
+.grip:active { cursor: grabbing; }
+.task-row .grip { min-height: 36px; padding: 10px 9px; }
 .step-row input[type="text"] { border: none; background: transparent; flex: 1; min-height: 36px; }
 .step-row .del { border: none; background: none; color: var(--ink-faint); cursor: pointer; font-size: 16px; padding: 6px; }
 .notes-preview { border-top: 1px solid var(--line); padding-top: 8px; font-size: 14px; }
