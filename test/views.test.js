@@ -38,7 +38,7 @@ function seed() {
 }
 
 function run(db, view, params = {}) {
-  const { sql, args } = taskWhere(view, { today: TODAY, limit: 100, ...params });
+  const { sql, args } = taskWhere(view, { today: TODAY, admin: 'aron', limit: 100, ...params });
   return db.prepare(sql).all(...args);
 }
 
@@ -105,7 +105,7 @@ test('pagination: keyset cursor walks the whole view without dupes or gaps', () 
   const seen = [];
   let cursor;
   for (let i = 0; i < 10; i++) {
-    const { sql, args, keys } = taskWhere('today', { today: TODAY, limit: 2, cursor });
+    const { sql, args, keys } = taskWhere('today', { today: TODAY, admin: 'aron', limit: 2, cursor });
     const rows = db.prepare(sql).all(...args);
     if (rows.length === 0) break;
     seen.push(...rows.map(r => r.id));
@@ -162,10 +162,25 @@ test('?assignee= filter composes with views', () => {
   assert.deepEqual(run(db, 'logbook', { assignee: 'hermes' }), []);
 });
 
+test('admin is a parameter, not a literal: lanes follow whoever :admin names', () => {
+  const db = seed();
+  // as admin=claude, the aron rows become "delegated" and claude's lanes are his
+  const inbox = run(db, 'inbox', { admin: 'claude' }).map(r => r.id);
+  assert.ok(inbox.includes('del5'), "claude's projectless no-when task is HIS inbox");
+  assert.ok(!inbox.includes('inb1'), "aron's tasks stay out of claude's inbox");
+  const delegated = run(db, 'delegated', { admin: 'claude' }).map(r => r.id);
+  assert.ok(delegated.includes('tod1') && !delegated.includes('del5'));
+  // no 'aron' literal survives in the generated SQL — admin travels as an arg
+  const { sql, args } = taskWhere('delegated', { today: TODAY, admin: 'pat' });
+  assert.ok(!sql.includes('aron') && args.includes('pat'));
+  const c = taskCount('inbox', { today: TODAY, admin: 'claude' });
+  assert.equal(db.prepare(c.sql).get(...c.args).c, 2); // del5, del6
+});
+
 test('taskCount covers review and delegated', () => {
   const db = seed();
   const c = view => {
-    const { sql, args } = taskCount(view, { today: TODAY, soon: '2026-04-09' });
+    const { sql, args } = taskCount(view, { today: TODAY, soon: '2026-04-09', admin: 'aron' });
     return db.prepare(sql).get(...args).c;
   };
   assert.equal(c('review'), 1);

@@ -28,7 +28,9 @@ const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20 };
 const MAX_BODY_BYTES = 262144; // 256KB — enforced BEFORE JSON.parse (413)
 const TASK_FIELDS = new Set(['title', 'notes', 'project_id', 'status', 'when_type', 'when_date',
   'due_date', 'due_time', 'recur', 'tags', 'steps', 'assignee', 'auto_close']);
-const HUMAN = 'aron'; // the one human actor — approves reviews (delegation design)
+// The admin (human) actor — approves reviews, owns the Today/Inbox lanes
+// (delegation design). Resolved per app: buildApp's `admin` option, defaulting
+// to the first actor in `tokens` (server.js passes AV_TASKS_ADMIN through).
 
 class ApiError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; this.extra = extra; }
@@ -104,8 +106,10 @@ function sectionOf(task, today) {
   return 3;
 }
 
-export function buildApp({ db, tokens, today: todayFn }) {
+export function buildApp({ db, tokens, admin, today: todayFn }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
+  const HUMAN = admin || Object.keys(tokens)[0];
+  if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
   const byToken = new Map(Object.entries(tokens).map(([name, tok]) => [tok, name]));
   const app = new Hono();
 
@@ -233,7 +237,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
     const soon = view === 'due_soon' ? soonFrom(t, windowRaw) : undefined;
     let res;
     try {
-      res = taskWhere(view ?? null, { today: t, soon, project, tag, q, assignee, limit: lim + 1, cursor });
+      res = taskWhere(view ?? null, { today: t, soon, admin: HUMAN, project, tag, q, assignee, limit: lim + 1, cursor });
     } catch (e) { throw new ApiError(400, e.message); }
     const rows = db.prepare(res.sql).all(...res.args);
     const page = rows.slice(0, lim);
@@ -409,7 +413,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
-      if (c.get('actor') !== HUMAN) throw new ApiError(403, 'only aron can approve');
+      if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can approve`);
       if (task.status === 'done') return c.json({ task: attach(task) }); // idempotent
       if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
       return doneResponse(c, id, toDone(task, ['review']));
@@ -441,8 +445,8 @@ export function buildApp({ db, tokens, today: todayFn }) {
 
     const scopeRows = () => {
       const res = list === 'today'
-        ? taskWhere('today', { today: t, limit: 500 })
-        : taskWhere(null, { today: t, project: task.project_id ?? undefined, limit: 500 });
+        ? taskWhere('today', { today: t, admin: HUMAN, limit: 500 })
+        : taskWhere(null, { today: t, admin: HUMAN, project: task.project_id ?? undefined, limit: 500 });
       let rows = db.prepare(res.sql).all(...res.args);
       if (list === 'project' && task.project_id == null) rows = rows.filter(r => r.project_id === null);
       return rows;
@@ -475,7 +479,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
       // project sections renormalize by rank.
       const renorm = () => {
         if (list === 'today') {
-          const res = taskWhere('today', { today: t, limit: 500 });
+          const res = taskWhere('today', { today: t, admin: HUMAN, limit: 500 });
           // skip delegated rows: they show in Today (due-driven) but must not
           // be stamped into the human's manual order (2026-08-24 amendment)
           const rows = db.prepare(res.sql).all(...res.args).filter(r => r.assignee === HUMAN);
@@ -564,7 +568,7 @@ export function buildApp({ db, tokens, today: todayFn }) {
     const t = today();
     const soon = soonFrom(t, c.req.query('window'));
     const count = view => {
-      const { sql, args } = taskCount(view, { today: t, soon });
+      const { sql, args } = taskCount(view, { today: t, soon, admin: HUMAN });
       return db.prepare(sql).get(...args).c;
     };
     const projects = {};

@@ -19,11 +19,12 @@ const LIVE = `status = 'active'`;
 // search views show them (with assignee chips); logbook stays done-only.
 const OPEN = `status IN ('active', 'in_progress', 'review')`;
 // Inbox/Upcoming are the HUMAN's lanes (delegation design): when-driven
-// delegated work must not clutter aron's day. But DUE-DATES OVERRIDE ASSIGNEE
-// SCOPING (2026-08-24 amendment): a deadline is a deadline no matter whose
-// plate it sits on — today's due disjunct, due_soon, and overdue include ALL
-// assignees. Project/tag/search/logbook stay unscoped entirely.
-const MINE = `assignee = 'aron'`;
+// delegated work must not clutter the owner's day. But DUE-DATES OVERRIDE
+// ASSIGNEE SCOPING (2026-08-24 amendment): a deadline is a deadline no matter
+// whose plate it sits on — today's due disjunct, due_soon, and overdue include
+// ALL assignees. Project/tag/search/logbook stay unscoped entirely.
+// :admin = the admin (human) actor, bound at query time like :today.
+const MINE = `assignee = :admin`;
 // Agents view order inside one assignee: in_progress, then review, then queued
 const AGENT_STATUS = `CASE status WHEN 'in_progress' THEN 0 WHEN 'review' THEN 1 ELSE 2 END`;
 
@@ -60,15 +61,15 @@ const VIEWS = {
     where: `status = 'done'`,
     keys: [`COALESCE(completed_at, '')`], dir: 'DESC',
   },
-  // delegation: everything awaiting aron's approval, freshest finish first
+  // delegation: everything awaiting the admin's approval, freshest finish first
   review: {
     where: `status = 'review'`,
     keys: ['updated_at'], dir: 'DESC',
   },
-  // delegation: everything in flight off aron's plate, grouped by agent
+  // delegation: everything in flight off the admin's plate, grouped by agent
   // then status (in_progress → review → queued active)
   delegated: {
-    where: `assignee <> 'aron' AND ${OPEN}`,
+    where: `assignee <> :admin AND ${OPEN}`,
     keys: ['assignee', AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   // no view: open tasks; when scoped to a project, section-ordered
@@ -80,12 +81,15 @@ const VIEWS = {
 
 // COUNT(*) over a view's WHERE (no pagination cap) — single source for the
 // nav-count endpoint. Project/tag/q filters don't apply here.
-export function taskCount(view, { today, soon } = {}) {
+export function taskCount(view, { today, soon, admin } = {}) {
   const def = VIEWS[view];
   if (!def) throw new Error(`unknown view: ${view}`);
   const args = [];
   const sql = `SELECT COUNT(*) c FROM tasks WHERE ${def.where}`
-    .replace(/:today|:soon/g, m => { args.push(m === ':today' ? today : soon); return '?'; });
+    .replace(/:today|:soon|:admin/g, m => {
+      args.push(m === ':today' ? today : m === ':soon' ? soon : admin);
+      return '?';
+    });
   return { sql, args };
 }
 
@@ -109,10 +113,9 @@ export function decodeCursor(cursor, nKeys) {
   return vals;
 }
 
-export function taskWhere(view, { today, soon, project, tag, q, assignee, limit = 100, cursor } = {}) {
+export function taskWhere(view, { today, soon, admin, project, tag, q, assignee, limit = 100, cursor } = {}) {
   const def = view == null ? VIEWS._default : VIEWS[view];
   if (!def) throw new Error(`unknown view: ${view}`);
-  const named = { today };
   const wheres = [def.where];
   const posArgs = [];
 
@@ -150,12 +153,13 @@ export function taskWhere(view, { today, soon, project, tag, q, assignee, limit 
   posArgs.push(cappedLimit);
 
   // node:sqlite supports named parameters mixed with anonymous ones poorly;
-  // inline :today/:soon as positionals by substituting each marker in order.
+  // inline :today/:soon/:admin as positionals by substituting each marker in order.
   const args = [];
   let idx = 0;
-  const finalSql = sql.replace(/:today|:soon|\?/g, m => {
+  const finalSql = sql.replace(/:today|:soon|:admin|\?/g, m => {
     if (m === ':today') { args.push(today); return '?'; }
     if (m === ':soon') { args.push(soon); return '?'; }
+    if (m === ':admin') { args.push(admin); return '?'; }
     args.push(posArgs[idx++]);
     return '?';
   });

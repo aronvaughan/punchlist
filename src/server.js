@@ -53,6 +53,17 @@ export function parseTokens(raw) {
   return tokens;
 }
 
+// AV_TASKS_ADMIN names the admin (human) actor — approves reviews, owns the
+// Today/Inbox lanes. Defaults to the FIRST actor in AV_TASKS_TOKENS; if set
+// explicitly it must name an actor that has a token (fail closed).
+export function resolveAdmin(tokens, raw) {
+  const admin = (raw || '').trim() || Object.keys(tokens)[0];
+  if (!tokens[admin]) {
+    throw new Error(`AV_TASKS_ADMIN="${admin}" has no token in AV_TASKS_TOKENS — refusing to start`);
+  }
+  return admin;
+}
+
 function toRequest(req) {
   const url = `http://${req.headers.host || 'localhost'}${req.url}`;
   const init = { method: req.method, headers: req.headers };
@@ -82,9 +93,10 @@ export function serve(app, { host, port }) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   loadEnvFile();
-  let tokens;
+  let tokens, admin;
   try {
     tokens = parseTokens(process.env.AV_TASKS_TOKENS);
+    admin = resolveAdmin(tokens, process.env.AV_TASKS_ADMIN);
   } catch (err) {
     console.error(`av-tasks: FATAL: ${err.message}`);
     process.exit(1);
@@ -97,7 +109,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error(`av-tasks: FATAL: ${err.name}: ${err.message}`);
     process.exit(1);
   }
-  const app = buildApp({ db, tokens });
+  const app = buildApp({ db, tokens, admin });
   const server = serve(app, { host: HOST, port: PORT });
   server.on('error', err => {
     if (err.code === 'EADDRINUSE') {
@@ -109,6 +121,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   });
   server.on('listening', () => {
-    console.log(`av-tasks listening on http://${HOST}:${PORT} (actors: ${Object.keys(tokens).join(', ')})`);
+    console.log(`av-tasks listening on http://${HOST}:${PORT} (actors: ${Object.keys(tokens).join(', ')}; admin: ${admin})`);
   });
 }
