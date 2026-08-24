@@ -26,6 +26,9 @@
       </ul>
       <div id="rail-projects-head" class="rail-heading">Projects</div>
       <ul id="rail-projects"></ul>
+      <button id="rail-new-project" class="rail-project rail-new">+ New project</button>
+      <div id="rail-tags-head" class="rail-heading" hidden>Tags</div>
+      <ul id="rail-tags"></ul>
     </nav>
     <main id="main">
       <div id="list-head">
@@ -45,6 +48,20 @@
     <p>Enter your av-tasks API token. It is stored only in this browser.</p>
     <input id="token-input" type="password" autocomplete="off" aria-label="API token">
     <wa-button slot="footer" id="token-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="project-dialog" label="New project">
+    <div class="dialog-field">
+      <label for="project-name-input">Name</label>
+      <input id="project-name-input" type="text" autocomplete="off">
+    </div>
+    <div class="dialog-field">
+      <label for="project-parent-select">Parent</label>
+      <select id="project-parent-select"></select>
+    </div>
+    <p id="project-error" class="dialog-error" hidden></p>
+    <wa-button slot="footer" id="project-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="project-create" variant="brand">Create</wa-button>
   </wa-dialog>
 
   <wa-dialog id="when-dialog" label="Schedule for…">

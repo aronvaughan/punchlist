@@ -30,6 +30,17 @@ function fmtDate(iso) {
 
 // ---- rail ----
 const COLLAPSE_KEY = 'av-tasks-collapsed';
+const TAGS_OPEN_KEY = 'av-tasks-tags-open';
+
+function childrenMap(projects) {
+  const map = new Map();
+  for (const p of projects) {
+    const key = p.parent_id ?? '';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(p);
+  }
+  return map;
+}
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || []); }
   catch { return new Set(); }
@@ -50,12 +61,7 @@ export function renderRail() {
   }
   const collapsed = loadCollapsed();
   const live = state.projects.filter(p => !p.archived);
-  const children = new Map();
-  for (const p of live) {
-    const key = p.parent_id ?? '';
-    if (!children.has(key)) children.set(key, []);
-    children.get(key).push(p);
-  }
+  const children = childrenMap(live);
   const addRows = (ul, parentKey) => {
     for (const p of children.get(parentKey) ?? []) {
       const li = el('li');
@@ -72,6 +78,11 @@ export function renderRail() {
         row.append(el('span', 'caret-spacer'));
       }
       row.append(el('span', 'rail-name', p.name));
+      // per-parent shortcut: "+" on hover (desktop pointers only, via CSS)
+      const addChild = el('button', 'add-child', '+');
+      addChild.setAttribute('aria-label', `New project under ${p.name}`);
+      addChild.addEventListener('click', e => { e.stopPropagation(); openProjectDialog(p.id); });
+      row.append(addChild);
       row.dataset.projectId = p.id;
       row.tabIndex = 0;
       if (state.route.view === 'project' && state.route.projectId === p.id) row.classList.add('active');
@@ -104,7 +115,100 @@ export function renderRail() {
     }
   };
   addRows(rootUl, '');
+  renderRailTags();
 }
+
+// ---- rail: tags section ----
+function renderRailTags() {
+  const head = document.getElementById('rail-tags-head');
+  const ul = document.getElementById('rail-tags');
+  ul.replaceChildren();
+  head.replaceChildren();
+  const tags = state.tags ?? [];
+  head.hidden = tags.length === 0;
+  if (!tags.length) return;
+  // long lists (>8) sit behind a disclosure, collapsed by default
+  const long = tags.length > 8;
+  let open = true;
+  if (long) {
+    const stored = localStorage.getItem(TAGS_OPEN_KEY);
+    open = stored != null ? stored === '1' : false;
+    const caret = el('button', 'caret' + (open ? '' : ' closed'));
+    caret.setAttribute('aria-expanded', String(open));
+    caret.setAttribute('aria-label', open ? 'Collapse tags' : 'Expand tags');
+    caret.addEventListener('click', () => {
+      try { localStorage.setItem(TAGS_OPEN_KEY, open ? '0' : '1'); } catch { /* private mode */ }
+      renderRail();
+    });
+    head.append(caret);
+  }
+  head.append(document.createTextNode('Tags'));
+  if (!open) return;
+  for (const t of tags) {
+    const li = el('li');
+    const row = el('button', 'rail-tag');
+    row.append(el('span', 'rail-name', `#${t.name}`), el('span', 'tag-count', String(t.count)));
+    if (state.route.view === 'tag' && state.route.tag === t.name) row.classList.add('active');
+    row.addEventListener('click', () => { location.hash = `#/tag/${encodeURIComponent(t.name)}`; });
+    li.append(row);
+    ul.append(li);
+  }
+}
+
+// ---- project creation dialog ----
+const pdialog = () => document.getElementById('project-dialog');
+
+export function openProjectDialog(parentId = null) {
+  const name = document.getElementById('project-name-input');
+  const parent = document.getElementById('project-parent-select');
+  const err = document.getElementById('project-error');
+  name.value = '';
+  err.hidden = true;
+  parent.replaceChildren();
+  const none = el('option', null, '(none)');
+  none.value = '';
+  parent.append(none);
+  const children = childrenMap(state.projects.filter(p => !p.archived));
+  const walk = (key, depth) => {
+    for (const p of children.get(key) ?? []) {
+      const o = el('option', null, `${'   '.repeat(depth)}${depth ? '└ ' : ''}${p.name}`);
+      o.value = p.id;
+      parent.append(o);
+      walk(p.id, depth + 1);
+    }
+  };
+  walk('', 0);
+  parent.value = parentId ?? '';
+  pdialog().open = true;
+  setTimeout(() => name.focus(), 50);
+}
+
+async function createProject() {
+  const name = document.getElementById('project-name-input');
+  const parent = document.getElementById('project-parent-select');
+  const err = document.getElementById('project-error');
+  const value = name.value.trim();
+  if (!value) { err.textContent = 'Name is required.'; err.hidden = false; return; }
+  const body = { name: value };
+  if (parent.value) body.parent_id = parent.value;
+  try {
+    const p = await api('POST', '/projects', body);
+    pdialog().open = false;
+    const target = `#/project/${encodeURIComponent(p.id)}`;
+    if (location.hash === target) await reload();
+    else location.hash = target; // navigation triggers reload + tree update
+  } catch (e) {
+    err.textContent = e.status === 409 ? 'A project with that name already exists.' : `Create failed: ${e.message}`;
+    err.hidden = false;
+  }
+}
+
+document.getElementById('rail-new-project').addEventListener('click', () => openProjectDialog(null));
+document.getElementById('project-cancel').addEventListener('click', () => { pdialog().open = false; });
+document.getElementById('project-create').addEventListener('click', createProject);
+document.getElementById('project-name-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') createProject();
+});
 
 // ---- rows ----
 function taskRow(task, { showProject = false, logbook = false } = {}) {
@@ -265,6 +369,9 @@ export function renderMain() {
     const ul = taskList(tasks, { showProject: true });
     listEl.append(ul);
     sortableList(ul, { list: 'today' });
+  } else if (r.view === 'tag') {
+    titleEl.textContent = `#${r.tag}`;
+    listEl.append(taskList(tasks, { showProject: true }));
   } else if (r.view === 'upcoming') {
     titleEl.textContent = 'Upcoming';
     renderGrouped(listEl, tasks, t => t.when_date, { showProject: true });

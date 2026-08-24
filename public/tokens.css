@@ -169,6 +169,75 @@ a { color: var(--accent); }
 .caret-spacer { flex: none; width: 28px; }
 .rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-project { padding-left: 4px; gap: 2px; }
+.rail-heading .caret { height: 24px; }
+
+/* per-parent "+" shortcut: desktop hover pointers only */
+.add-child {
+  display: none;
+  flex: none;
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 16px;
+  cursor: pointer;
+}
+.add-child:hover { background: var(--chip-bg); color: var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .rail-project:hover .add-child, .rail-project:focus-within .add-child { display: block; }
+}
+
+/* rail: new-project row + tag rows */
+.rail-new {
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--ink-faint);
+  padding-left: 12px;
+}
+.rail-new:hover { color: var(--accent); }
+.rail-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rail-tag:hover { background: var(--hover); }
+.rail-tag.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.rail-tag .rail-name { flex: 1; }
+.tag-count { font-size: 12px; color: var(--ink-faint); }
+
+/* dialogs */
+.dialog-field { margin-bottom: 12px; }
+.dialog-field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-faint); margin-bottom: 4px; }
+.dialog-field input, .dialog-field select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+.dialog-error { color: var(--danger); font-size: 13px; margin: 4px 0 0; }
 
 #main {
   grid-area: main;

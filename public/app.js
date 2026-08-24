@@ -17,11 +17,12 @@ applyTheme();
 
 // ---- state ----
 export const state = {
-  route: { view: 'today', projectId: null },
+  route: { view: 'today', projectId: null, tag: null },
   tag: null,
   q: '',
   tasks: [],
   projects: [],
+  tags: [],
   nextCursor: null,
 };
 
@@ -121,14 +122,17 @@ const VIEWS = ['inbox', 'today', 'upcoming', 'logbook'];
 function parseHash() {
   const h = location.hash || '#/today';
   const m = /^#\/project\/([^/]+)$/.exec(h);
-  if (m) return { view: 'project', projectId: decodeURIComponent(m[1]) };
+  if (m) return { view: 'project', projectId: decodeURIComponent(m[1]), tag: null };
+  const tm = /^#\/tag\/([^/]+)$/.exec(h);
+  if (tm) return { view: 'tag', projectId: null, tag: decodeURIComponent(tm[1]) };
   const v = h.replace(/^#\//, '');
-  return { view: VIEWS.includes(v) ? v : 'today', projectId: null };
+  return { view: VIEWS.includes(v) ? v : 'today', projectId: null, tag: null };
 }
 
 function onRoute() {
   const next = parseHash();
-  const changed = next.view !== state.route.view || next.projectId !== state.route.projectId;
+  const changed = next.view !== state.route.view || next.projectId !== state.route.projectId ||
+    next.tag !== state.route.tag;
   state.route = next;
   if (changed) { state.tag = null; state.q = ''; document.getElementById('search').value = ''; }
   closeNav();
@@ -140,18 +144,21 @@ export async function reload() {
   const r = state.route;
   const params = new URLSearchParams();
   if (r.view === 'project') params.set('project', r.projectId);
+  else if (r.view === 'tag') params.set('tag', r.tag);
   else params.set('view', r.view);
-  if (state.tag) params.set('tag', state.tag);
+  if (state.tag && r.view !== 'tag') params.set('tag', state.tag);
   if (state.q) params.set('q', state.q);
   params.set('limit', '500');
   try {
-    const [tasksRes, projRes] = await Promise.all([
+    const [tasksRes, projRes, tagsRes] = await Promise.all([
       api('GET', `/tasks?${params}`),
       api('GET', '/projects?limit=500'),
+      api('GET', '/tags'),
     ]);
     state.tasks = tasksRes.items;
     state.nextCursor = tasksRes.next_cursor || null;
     state.projects = projRes.items;
+    state.tags = tagsRes.items;
   } catch (e) {
     toast(`Load failed: ${e.message}`);
     return;
@@ -180,8 +187,8 @@ navToggle.addEventListener('click', () => {
 document.getElementById('backdrop').addEventListener('click', closeNav);
 // selecting anything in the rail closes the drawer (carets only toggle subtrees)
 document.getElementById('rail').addEventListener('click', e => {
-  if (e.target.closest('.caret')) return;
-  if (e.target.closest('a, .rail-project')) closeNav();
+  if (e.target.closest('.caret, .add-child')) return;
+  if (e.target.closest('a, .rail-project, .rail-tag')) closeNav();
 });
 
 // ---- quick-add + search + keyboard ----
