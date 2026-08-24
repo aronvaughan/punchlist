@@ -6,7 +6,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ulid } from './db.js';
-import { taskWhere, encodeCursor } from './views.js';
+import { taskWhere, encodeCursor, decodeCursor } from './views.js';
 import { between, renormalize } from './rank.js';
 import { nextDue, spawn } from './recur.js';
 import { parse as quickParse } from './quickadd.js';
@@ -395,9 +395,25 @@ export function buildApp({ db, tokens, today: todayFn }) {
   const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived']);
 
   app.get('/api/v1/projects', c => {
+    // same list-endpoint contract as /tasks: ?limit= (default 100, max 500)
+    // + keyset ?cursor=; response {items, next_cursor?} (review O5)
+    const { limit, cursor } = c.req.query();
+    const lim = Math.min(Math.max(1, Number(limit) || 100), 500);
+    const args = [];
+    let where = '';
+    if (cursor) {
+      let vals;
+      try { vals = decodeCursor(cursor, 1); } catch (e) { throw new ApiError(400, e.message); }
+      where = 'WHERE (COALESCE(rank, 9.0e18), id) > (?, ?)';
+      args.push(...vals);
+    }
     const rows = db.prepare(
-      `SELECT * FROM projects ORDER BY COALESCE(rank, 9.0e18), id`).all();
-    return c.json({ items: rows });
+      `SELECT *, COALESCE(rank, 9.0e18) AS __k0 FROM projects ${where}
+       ORDER BY __k0, id LIMIT ?`).all(...args, lim + 1);
+    const page = rows.slice(0, lim);
+    const out = { items: page.map(({ __k0, ...p }) => p) };
+    if (rows.length > lim) out.next_cursor = encodeCursor(page[page.length - 1], ['__k0']);
+    return c.json(out);
   });
 
   app.post('/api/v1/projects', async c => {

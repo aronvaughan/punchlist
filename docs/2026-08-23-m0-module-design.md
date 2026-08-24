@@ -127,7 +127,9 @@ POST /api/v1/tasks/:id/reorder    {before_id?, after_id?, list?} —
                                   tx (review M10)
 POST /api/v1/tasks/:id/steps      create
 PATCH/DELETE /api/v1/tasks/:id/steps/:sid   title/done/rank; delete
-GET/POST/PATCH /api/v1/projects   tree via parent_id; cycle check walks
+GET/POST/PATCH /api/v1/projects   tree via parent_id; GET takes
+                                  &limit=&cursor= like every list
+                                  endpoint (review O5); cycle check walks
                                   ancestors on PATCH (review I12)
 GET  /api/v1/health               unauthenticated
 ```

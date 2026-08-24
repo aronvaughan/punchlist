@@ -285,6 +285,21 @@ test('projects: create/list/patch, duplicate name 409, parent cycle 400', async 
   assert.equal((await call('PATCH', '/api/v1/projects/NOPE', { body: { name: 'x' } })).status, 404);
 });
 
+test('projects list paginates: limit + keyset cursor, bad cursor 400', async () => {
+  const { call } = makeApp();
+  for (const n of ['A', 'B', 'C', 'D', 'E']) await call('POST', '/api/v1/projects', { body: { name: n } });
+  const p1 = await call('GET', '/api/v1/projects?limit=2');
+  assert.equal(p1.json.items.length, 2);
+  assert.ok(p1.json.next_cursor);
+  assert.ok(!('__k0' in p1.json.items[0]), 'internal sort key not leaked');
+  const p2 = await call('GET', `/api/v1/projects?limit=2&cursor=${p1.json.next_cursor}`);
+  const p3 = await call('GET', `/api/v1/projects?limit=2&cursor=${p2.json.next_cursor}`);
+  const names = [...p1.json.items, ...p2.json.items, ...p3.json.items].map(p => p.name);
+  assert.deepEqual(names, ['A', 'B', 'C', 'D', 'E']);
+  assert.equal(p3.json.next_cursor, undefined);
+  assert.equal((await call('GET', '/api/v1/projects?cursor=!!!')).status, 400);
+});
+
 // ---- static / CSP ----
 test('static UI: CSP header on static responses; traversal blocked; API 404 is JSON', async () => {
   const { app } = makeApp();
