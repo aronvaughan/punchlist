@@ -289,14 +289,16 @@ export function buildApp({ db, tokens, today: todayFn }) {
       : x => x.status === 'active' && x.project_id === task.project_id &&
              sectionOf(x, t) === sectionOf(task, t);
 
-    const currentList = () => {
+    const scopeRows = () => {
       const res = list === 'today'
         ? taskWhere('today', { today: t, limit: 500 })
         : taskWhere(null, { today: t, project: task.project_id ?? undefined, limit: 500 });
       let rows = db.prepare(res.sql).all(...res.args);
       if (list === 'project' && task.project_id == null) rows = rows.filter(r => r.project_id === null);
-      return rows.filter(r => inScope(r) || r.id === task.id).map(r => ({ id: r.id, title: r.title }));
+      return rows;
     };
+    const currentList = () =>
+      scopeRows().filter(r => inScope(r) || r.id === task.id).map(r => ({ id: r.id, title: r.title }));
 
     if (!inScope(task)) throw new ApiError(409, 'task is not in that list', { current: currentList() });
     const neighbors = {};
@@ -331,9 +333,23 @@ export function buildApp({ db, tokens, today: todayFn }) {
           renormalize(db, scope);
         }
       };
-      const rankOf = key => neighbors[key] ? getTask(neighbors[key].id)[col] : null;
+      // A single-neighbor reorder means "directly adjacent to that neighbor".
+      // Derive the missing bound from the row next to it in the visible order:
+      // with only one bound, between() returns neighbor±SPACING, which is
+      // exactly the adjacent row's own rank whenever ranks are evenly spaced
+      // (the state createTask and renormalize produce) — a silent collision.
+      const implicit = {};
+      if (!neighbors.after_id !== !neighbors.before_id) {
+        const rows = scopeRows().filter(r => inScope(r) && r.id !== task.id);
+        const given = neighbors.after_id ? 'after_id' : 'before_id';
+        const idx = rows.findIndex(r => r.id === neighbors[given].id);
+        const adj = given === 'after_id' ? rows[idx + 1] : rows[idx - 1];
+        if (adj) implicit[given === 'after_id' ? 'before_id' : 'after_id'] = adj;
+      }
+      const bound = key => neighbors[key] ?? implicit[key];
+      const rankOf = key => bound(key) ? getTask(bound(key).id)[col] : null;
       let val = between(rankOf('after_id'), rankOf('before_id'));
-      const anyNull = ['after_id', 'before_id'].some(k => neighbors[k] && rankOf(k) === null);
+      const anyNull = ['after_id', 'before_id'].some(k => bound(k) && rankOf(k) === null);
       if (val === null || anyNull) {
         renorm(); // same tx as the write (design M10)
         val = between(rankOf('after_id'), rankOf('before_id'));

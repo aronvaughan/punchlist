@@ -216,6 +216,28 @@ test('reorder by neighbors within a project section; renormalizes; stale neighbo
   assert.equal((await call('POST', `/api/v1/tasks/NOPE/reorder`, { body: { after_id: b.id } })).status, 404);
 });
 
+test('reorder with a single neighbor lands directly adjacent, not on the next row (evenly spaced ranks)', async () => {
+  const { call } = makeApp();
+  const p = (await call('POST', '/api/v1/projects', { body: { name: 'P' } })).json;
+  const mk = async n => (await call('POST', '/api/v1/tasks', { body: { title: n, project_id: p.id } })).json;
+  const a = await mk('a'); const b = await mk('b'); const c = await mk('c'); const d = await mk('d');
+  // ranks are evenly spaced (1024/2048/3072/4096): after_id-only used to
+  // compute a.rank + 1024 = b.rank, colliding with b and losing the position
+  const r = await call('POST', `/api/v1/tasks/${d.id}/reorder`, { body: { after_id: a.id } });
+  assert.equal(r.status, 200);
+  let list = await call('GET', `/api/v1/tasks?project=${p.id}`);
+  assert.deepEqual(list.json.items.map(t => t.title), ['a', 'd', 'b', 'c']);
+  // symmetric before_id-only case
+  assert.equal((await call('POST', `/api/v1/tasks/${a.id}/reorder`, { body: { before_id: c.id } })).status, 200);
+  list = await call('GET', `/api/v1/tasks?project=${p.id}`);
+  assert.deepEqual(list.json.items.map(t => t.title), ['d', 'b', 'a', 'c']);
+  // single neighbor at the list ends still works (move to very end / very start)
+  assert.equal((await call('POST', `/api/v1/tasks/${d.id}/reorder`, { body: { after_id: c.id } })).status, 200);
+  assert.equal((await call('POST', `/api/v1/tasks/${b.id}/reorder`, { body: { before_id: a.id } })).status, 200);
+  list = await call('GET', `/api/v1/tasks?project=${p.id}`);
+  assert.deepEqual(list.json.items.map(t => t.title), ['b', 'a', 'c', 'd']);
+});
+
 test('reorder in Today sets today_rank, not rank (C3); manual placement holds', async () => {
   const { call } = makeApp();
   const mk = async (n, extra) => (await call('POST', '/api/v1/tasks', { body: { title: n, ...extra } })).json;
