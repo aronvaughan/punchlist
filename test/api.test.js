@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
-import { parseTokens, envPermWarning } from '../src/server.js';
+import { parseTokens, envPermWarning, resolveAdmin } from '../src/server.js';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
@@ -63,6 +63,57 @@ test('data/.env permission check: warn on group/other-readable, silent on 600', 
   assert.equal(envPermWarning(0o100700), null);
   assert.match(envPermWarning(0o100644), /chmod 600/);
   assert.match(envPermWarning(0o100640), /group\/other/);
+});
+
+test('resolveAdmin: defaults to the FIRST actor; explicit must have a token (fail closed)', () => {
+  const tokens = { pat: 'p'.repeat(32), claude: TOK_CLAUDE };
+  assert.equal(resolveAdmin(tokens, undefined), 'pat');
+  assert.equal(resolveAdmin(tokens, ''), 'pat');
+  assert.equal(resolveAdmin(tokens, '  claude  '), 'claude');
+  assert.throws(() => resolveAdmin(tokens, 'aron'), /AV_TASKS_ADMIN.*no token/);
+});
+
+test('admin parameterization: approve gate, lanes, and default assignee follow the admin actor', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const TOK_PAT = 'p'.repeat(32);
+  // actor order deliberately puts the agent first: admin is EXPLICIT here
+  const app = buildApp({
+    db, tokens: { claude: TOK_CLAUDE, pat: TOK_PAT }, admin: 'pat', today: () => TODAY });
+  const call = async (method, path, { body, token = TOK_PAT } = {}) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    return { status: res.status, json: await res.json() };
+  };
+  // default assignee is the admin, not 'aron'
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'mine' } })).json;
+  assert.equal(t.assignee, 'pat');
+  // pat's projectless no-when task is in PAT's inbox
+  const inbox = (await call('GET', '/api/v1/tasks?view=inbox')).json.items.map(x => x.id);
+  assert.ok(inbox.includes(t.id));
+  // delegate to claude: leaves inbox, enters delegated; only pat can approve
+  const d = (await call('POST', '/api/v1/tasks', { body: { title: 'for claude', assignee: 'claude' } })).json;
+  assert.ok(!(await call('GET', '/api/v1/tasks?view=inbox')).json.items.some(x => x.id === d.id));
+  assert.ok((await call('GET', '/api/v1/tasks?view=delegated')).json.items.some(x => x.id === d.id));
+  await call('POST', `/api/v1/tasks/${d.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${d.id}/finish`, { token: TOK_CLAUDE, body: { report: 'did it' } });
+  const denied = await call('POST', `/api/v1/tasks/${d.id}/approve`, { token: TOK_CLAUDE });
+  assert.equal(denied.status, 403);
+  assert.match(denied.json.error, /admin \(pat\)/);
+  assert.equal((await call('POST', `/api/v1/tasks/${d.id}/approve`)).status, 200);
+  // counts run through taskCount(admin) without error
+  const counts = (await call('GET', '/api/v1/counts')).json;
+  assert.equal(counts.delegated, 0);
+});
+
+test('buildApp without an explicit admin falls back to the first token actor; unknown admin throws', () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  assert.throws(() => buildApp({ db, tokens: { claude: TOK_CLAUDE }, admin: 'ghost' }), /no token/);
+  // first-actor default: aron-first tokens behave exactly as before
+  buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE } });
 });
 
 // ---- tasks CRUD ----
