@@ -1,7 +1,7 @@
 // views.js — list rendering + drag & drop. All user content goes through
 // textContent (titles/tags/names) — never innerHTML.
 import Sortable from '/vendor/sortable.core.esm.js';
-import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow } from '/app.js';
+import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor } from '/app.js';
 import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { expandRow } from '/inline.js';
