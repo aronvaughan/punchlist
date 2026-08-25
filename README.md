@@ -7,4 +7,105 @@ workflows choreograph multi-step, multi-actor work by compiling to
 punchlist tasks. Markdown-first, Obsidian-curatable, mermaid-visualized,
 agent-agnostic.
 
-Status: design phase — see docs/.
+Shipped so far (P1): the template format, the `plt` CLI
+(validate/list/show), three core templates, and resolver skills for
+claude and hermes. Workflows land in P3 — see
+[docs/2026-08-25-prd.md](docs/2026-08-25-prd.md).
+
+## Quickstart
+
+```bash
+git clone <this-repo> punchlist-templates
+cd punchlist-templates
+
+bin/plt list                    # what templates exist (name, kind, tags, path)
+bin/plt show research-brief     # print a template — agents cat this into context
+bin/plt validate all            # check every template
+npm test                        # run the test suite (zero dependencies)
+```
+
+Install the resolver skill by copying the agent's directory from
+`skills/` into that agent's skill dir:
+
+```bash
+# claude (Claude Code)
+cp -r skills/claude/punchlist-templates ~/.claude/skills/
+
+# hermes (or any agent with a skills dir)
+cp -r skills/hermes/punchlist-templates <agent-skills-dir>/
+```
+
+The copied `scripts/plt.sh` forwards to the canonical resolver
+(`skills/shared/plt-resolve.sh`), which locates this repo via
+`$PUNCHLIST_TEMPLATES_DIR` or by walking up from its own real path — so
+a symlinked install needs nothing, and a plain copy just needs the env
+var set (or edit the shim to point at your checkout, as the reference
+installs do).
+
+## Format reference
+
+Full contract: [docs/2026-08-25-prd.md](docs/2026-08-25-prd.md). A
+template is markdown + frontmatter:
+
+```markdown
+---
+name: weekly-review          # must match the filename
+kind: template
+domain: personal             # optional
+inputs:                      # at least one, each WITH an exemplar
+  - name: week_notes
+    exemplar: "raw bullet notes, links, half-thoughts…"
+output: markdown             # or json|table|email
+tags: [review, writing]
+---
+## Output shape
+<the skeleton the output must follow>
+
+## Golden exemplar
+<a complete, real-quality example — REQUIRED, validation fails without it>
+```
+
+Frontmatter is a deliberate **simple subset of YAML** — exactly what
+`bin/plt` parses, nothing more:
+
+- `key: value` scalars (optionally quoted; `# comments` stripped when
+  unquoted)
+- inline lists: `tags: [a, b]`
+- one level of block lists of maps (`inputs:` with `- name:` /
+  `exemplar:` pairs)
+
+`## Golden exemplar` is by convention the **last** section and may
+contain its own `##` headings; every other section ends at the next
+`##` heading (headings inside code fences don't count).
+
+Files live at `templates/packs/<pack>/<name>.md` (shipped) and
+`templates/authored/<name>.md` (yours). On a name collision, authored
+wins.
+
+## Authoring rules
+
+1. **Golden exemplar required.** Write it as if a thoughtful person
+   produced it for real — validation rejects missing or thin exemplars.
+   Agents learn the quality bar from this section; it is the product.
+2. **Every input carries an exemplar** showing what the raw input
+   actually looks like, not a description of it.
+3. **`name` matches the filename**; `plt validate` enforces it.
+4. **Author under `templates/authored/`**, not in packs. Copy a pack
+   template there to customize it.
+5. Run `bin/plt validate all` before committing.
+
+## Layout
+
+```
+templates/{packs,authored}/   # what good OUTPUT looks like
+workflows/{packs,authored}/   # what happens in what ORDER, by WHOM (P3)
+runs/                         # (gitignored) per-run advancer state (P3)
+skills/{claude,hermes,shared} # resolver skills + canonical shim
+bin/plt                       # zero-dependency CLI
+docs/                         # product analysis, PRD
+test/                         # node:test suite
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
