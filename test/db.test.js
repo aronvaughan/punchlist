@@ -42,7 +42,7 @@ test('FK: task project must exist; steps cascade on task delete', () => {
 
 test('file-backed migrate pre-copies db file; failed migration is named + rolled back', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
-  const dbPath = join(dir, 'av-tasks.db');
+  const dbPath = join(dir, 'punchlist.db');
   const { db, migrate } = open(dbPath);
   migrate();
   assert.ok(existsSync(`${dbPath}.pre-001`));
@@ -59,7 +59,7 @@ test('file-backed migrate pre-copies db file; failed migration is named + rolled
 
 test('pre-copy is WAL-safe: opening the pre-NNN snapshot sees committed data', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
-  const dbPath = join(dir, 'av-tasks.db');
+  const dbPath = join(dir, 'punchlist.db');
   const { db, migrate } = open(dbPath);
   migrate(); // applies 001 — schema commits land in the -wal file, not the main db
   db.prepare(`INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p1', 'Home', 't', 't')`).run();
@@ -81,7 +81,7 @@ test('pre-copy is WAL-safe: opening the pre-NNN snapshot sees committed data', (
 
 test('pre-copy overwrites a stale snapshot from an earlier failed attempt', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
-  const dbPath = join(dir, 'av-tasks.db');
+  const dbPath = join(dir, 'punchlist.db');
   const { migrate } = open(dbPath);
   migrate();
   const migDir = join(dir, 'migs');
@@ -97,7 +97,7 @@ test('pre-copy overwrites a stale snapshot from an earlier failed attempt', () =
 
 test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old constraints survive; new columns land', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
-  const dbPath = join(dir, 'av-tasks.db');
+  const dbPath = join(dir, 'punchlist.db');
   // seed a database that only knows 001 (copy just that migration aside)
   const migDir001 = join(dir, 'migs-001');
   mkdirSync(migDir001);
@@ -156,7 +156,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
 
 test('003-vetting backfill: existing rows vetted=1 EXCEPT created_by=email -> 0 (regardless of assignee)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
-  const dbPath = join(dir, 'av-tasks.db');
+  const dbPath = join(dir, 'punchlist.db');
   // seed a database that only knows 001+002
   const migDirPre = join(dir, 'migs-pre');
   mkdirSync(migDirPre);
@@ -185,7 +185,7 @@ test('003-vetting backfill: existing rows vetted=1 EXCEPT created_by=email -> 0 
 
 test('a migration that breaks FK integrity is rolled back (foreign_key_check gate); FKs re-enabled after', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
-  const { db, migrate } = open(join(dir, 'av-tasks.db'));
+  const { db, migrate } = open(join(dir, 'punchlist.db'));
   migrate();
   const migDir = join(dir, 'migs');
   mkdirSync(migDir);

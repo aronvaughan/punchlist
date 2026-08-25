@@ -11,8 +11,8 @@ metadata:
 The punchlist service (default http://127.0.0.1:8600) is the task system
 shared by the owner and their agents. Every task has a `created_by` (set by
 the server from the auth token — never claim otherwise) and an `assignee`
-(who must do it). Actor names come from the server's `AV_TASKS_TOKENS`
-config; the admin actor (the owner) is the first one, or `AV_TASKS_ADMIN`.
+(who must do it). Actor names come from the server's `PUNCHLIST_TOKENS`
+config; the admin actor (the owner) is the first one, or `PUNCHLIST_ADMIN`.
 Agent work flows
 active → claim → in_progress → finish(report) → review → the owner
 approves → done.

@@ -29,7 +29,7 @@ git clone https://github.com/aronvaughan/punchlist && cd punchlist
 
 `./install.sh --actors "you,claude,hermes"` controls which actors get tokens —
 the **first** actor is the admin: the human who approves reviews and owns the
-Today/Inbox lanes (`AV_TASKS_ADMIN`). Tokens live in `data/.env` (chmod 600,
+Today/Inbox lanes (`PUNCHLIST_ADMIN`). Tokens live in `data/.env` (chmod 600,
 never in git); re-running install keeps them.
 
 Other commands: `./bin/punchlist serve` (foreground server),
@@ -75,15 +75,19 @@ as native tools in every MCP-speaking client — pick per agent, they coexist.
 ## Security posture
 
 - **Loopback by default.** The server binds `127.0.0.1:8600`
-  (`AV_TASKS_HOST`/`AV_TASKS_PORT` override). There is no TLS and no rate
+  (`PUNCHLIST_HOST`/`PUNCHLIST_PORT` override). There is no TLS and no rate
   limiting — it is designed to sit behind loopback or a private network.
 - **Expose over a tailnet/VPN, never publicly.** Tailscale
   (`tailscale serve --tcp 8600`), WireGuard, or an SSH tunnel are the intended
   remote paths. Do **not** put it on the open internet (no public funnel /
   port-forward / reverse proxy without auth in front).
 - **Fail-closed tokens.** Startup refuses without well-formed
-  `AV_TASKS_TOKENS` (min 32 chars per token); every API request needs a
+  `PUNCHLIST_TOKENS` (min 32 chars per token); every API request needs a
   bearer token; the server warns if `data/.env` is group/other-readable.
+  Note the plural/singular split: **`PUNCHLIST_TOKENS`** (server-side,
+  `data/.env`) is the full `name:token,name:token` roster, while
+  **`PUNCHLIST_TOKEN`** (client-side, each agent's own environment) is that
+  one agent's single token from the roster.
 - The API is the only write path; view SQL is parameter-bound only, and the
   UI is served with a strict CSP.
 

@@ -149,7 +149,7 @@ switch (cmd) {
     console.log(`
 Now give each agent its token (this tool never edits your env files):
   - Claude Code: add to ~/.claude/secrets.local.env (chmod 600):
-      PUNCHLIST_TOKEN=<that agent's token from data/.env AV_TASKS_TOKENS>
+      PUNCHLIST_TOKEN=<that agent's token from data/.env PUNCHLIST_TOKENS>
   - Hermes: add PUNCHLIST_TOKEN=<its token> to $HERMES_HOME/.env
   - Non-default server? Also export PUNCHLIST_URL (default http://127.0.0.1:8600)`);
     break;

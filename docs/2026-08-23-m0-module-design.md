@@ -11,7 +11,7 @@ src/db.js        open(path) -> {db, migrate()}     ; node:sqlite, WAL,
                  PRAGMA foreign_keys=ON + busy_timeout=5000; migrations:
                  each NNN-*.sql runs in ONE transaction together with its
                  schema_migrations(version) insert; before applying, copy
-                 db file aside (av-tasks.db.pre-NNN); on failure exit
+                 db file aside (punchlist.db.pre-NNN); on failure exit
                  with named error (no half-applied crash-loop)
 src/rank.js      between(a,b) -> REAL; renormalize(db, scope) — same
                  transaction as the write that triggered it
@@ -138,7 +138,7 @@ GET  /api/v1/health               unauthenticated
 
 ## Auth & headers (rev 2)
 
-- `AV_TASKS_TOKENS` = `name:token,name:token` (alex, claude, hermes,
+- `PUNCHLIST_TOKENS` = `name:token,name:token` (alex, claude, hermes,
   email) — middleware maps token → actor, **server sets created_by**;
   client-supplied created_by rejected (review O3). Rotation = add new,
   remove old; runbook line in kb/ops.
@@ -155,7 +155,7 @@ GET  /api/v1/health               unauthenticated
 ## Backup (rev 2 — review O2)
 
 restic must never read the live WAL db. server exposes nothing; instead
-`scripts/db-snapshot.sh` runs `VACUUM INTO data/backup/av-tasks-snapshot.db`
+`scripts/db-snapshot.sh` runs `VACUUM INTO data/backup/punchlist-snapshot.db`
 (atomic), and the restic set includes `data/backup/` + `data/.env`
 (caveat documented: token rotation assumes old backups burned).
 Cron: snapshot at 2:50, restic at 3:00.
