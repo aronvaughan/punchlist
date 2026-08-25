@@ -10,7 +10,8 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate();
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
-  assert.deepEqual(versions.map(v => v.version), ['001-init', '002-delegation', '003-vetting']);
+  assert.deepEqual(versions.map(v => v.version),
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -115,9 +116,9 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
   db.prepare(`INSERT INTO tags (id,name) VALUES ('g1','chore')`).run();
   db.prepare(`INSERT INTO task_tags (task_id,tag_id) VALUES ('t1','g1')`).run();
 
-  migrate(); // real migrations dir — applies 002 (rebuild) and 003 (vetting)
+  migrate(); // real migrations dir — applies 002 (rebuild), 003 (vetting), 004 (rebuild)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation', '003-vetting']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input']);
   // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
@@ -133,6 +134,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
   const ins = db.prepare(`INSERT INTO tasks (id,title,status,created_at,updated_at) VALUES (?,?,?,'t','t')`);
   ins.run('t3', 'x', 'review');
   ins.run('t4', 'x', 'in_progress');
+  ins.run('t4b', 'x', 'blocked'); // 004: needs-input state accepted
   assert.throws(() => ins.run('t5', 'x', 'inbox'));
   // old constraints survive the rebuild
   assert.throws(() => db.prepare(
@@ -180,6 +182,41 @@ test('003-vetting backfill: existing rows vetted=1 EXCEPT created_by=email -> 0 
   assert.equal(vetted('t2'), 1);
   assert.equal(vetted('t3'), 0);
   assert.equal(vetted('t4'), 0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('004-needs-input upgrades a lived-in 003 db: data/vetting survive the rebuild; blocked + question/answer land', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'punchlist.db');
+  // seed a database that only knows 001..003
+  const migDirPre = join(dir, 'migs-pre');
+  mkdirSync(migDirPre);
+  for (const f of ['001-init.sql', '002-delegation.sql', '003-vetting.sql']) {
+    writeFileSync(join(migDirPre, f), readFileSync(join(import.meta.dirname, '..', 'migrations', f)));
+  }
+  const { db, migrate } = open(dbPath);
+  migrate(migDirPre);
+  db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,vetted,report,created_at,updated_at)
+              VALUES ('t1','carried over','review','alex','claude',1,'the report','t','t')`).run();
+  db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,vetted,created_at,updated_at)
+              VALUES ('t2','quarantined','active','email','hermes',0,'t','t')`).run();
+  db.prepare(`INSERT INTO steps (id,task_id,title) VALUES ('s1','t1','step one')`).run();
+  migrate(); // real dir — applies 004 (rebuild)
+  const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
+  assert.equal(t1.report, 'the report');
+  assert.equal(t1.vetted, 1);
+  assert.equal(t1.question, null);
+  assert.equal(t1.answer, null);
+  assert.equal(db.prepare('SELECT vetted FROM tasks WHERE id = ?').get('t2').vetted, 0);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  // new state accepted; junk still rejected
+  db.prepare(`INSERT INTO tasks (id,title,status,question,created_at,updated_at)
+              VALUES ('t3','stuck','blocked','which vendor?','t','t')`).run();
+  assert.throws(() => db.prepare(
+    `INSERT INTO tasks (id,title,status,created_at,updated_at) VALUES ('t4','x','paused','t','t')`).run());
+  // steps still cascade
+  db.prepare(`DELETE FROM tasks WHERE id='t1'`).run();
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM steps').get().c, 0);
   rmSync(dir, { recursive: true, force: true });
 });
 

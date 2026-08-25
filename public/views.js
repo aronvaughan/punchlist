@@ -35,6 +35,8 @@ export function openNewTask() {
     ctx = 'Logbook';
   } else if (r.view === 'review') {
     ctx = 'Review';
+  } else if (r.view === 'needs-input') {
+    ctx = 'Needs input';
   } else if (r.view === 'agents') {
     ctx = 'Agents';
   }
@@ -128,11 +130,14 @@ export function renderRail() {
   for (const a of document.querySelectorAll('#rail-views a')) {
     a.querySelector('.nav-count')?.remove();
     if (a.dataset.view === 'logbook') continue;
-    const n = a.dataset.view === 'agents' ? (counts.delegated ?? 0) : (counts[a.dataset.view] ?? 0);
+    const n = a.dataset.view === 'agents' ? (counts.delegated ?? 0)
+      : a.dataset.view === 'needs-input' ? (counts.needs_input ?? 0)
+      : (counts[a.dataset.view] ?? 0);
     if (n > 0) {
       const badge = el('span', 'nav-count', String(n));
-      // reviews waiting on the human = accent/bold on both Review and Agents
-      if (a.dataset.view === 'review' ||
+      // work waiting on the human = accent/bold: reviews (Review + Agents)
+      // and blocked questions (Needs input)
+      if (a.dataset.view === 'review' || a.dataset.view === 'needs-input' ||
           (a.dataset.view === 'agents' && (counts.review ?? 0) > 0)) badge.classList.add('attention');
       a.append(badge);
     }
@@ -406,6 +411,14 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
       row.append(chip);
     }
   }
+  if (task.status === 'blocked') {
+    // needs-input: the agent is waiting on an answer — jump to the lane
+    const chip = el('button', 'chip blocked-chip', '❓ waiting');
+    chip.title = 'Blocked on a question — answer it in Needs input';
+    chip.setAttribute('aria-label', 'Waiting for your answer — open Needs input');
+    chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
+    row.append(chip);
+  }
   for (const tag of task.tags ?? []) {
     const chip = el('button', 'chip tag', `#${tag}`);
     chip.addEventListener('click', e => { e.stopPropagation(); setTagFilter(tag); });
@@ -569,6 +582,9 @@ export function renderMain() {
   } else if (r.view === 'review') {
     titleEl.textContent = 'Review';
     renderReview(listEl, tasks);
+  } else if (r.view === 'needs-input') {
+    titleEl.textContent = 'Needs input';
+    renderNeedsInput(listEl, tasks);
   } else if (r.view === 'agents') {
     titleEl.textContent = 'Agents';
     renderAgents(listEl, tasks);
@@ -588,6 +604,7 @@ function emptyNote(view) {
     upcoming: 'No scheduled tasks yet.',
     logbook: 'Completed tasks land here.',
     review: 'Nothing waiting on your review.',
+    'needs-input': 'No agent is waiting on an answer.',
     agents: 'Nothing delegated — assign a task to Claude or Hermes.',
   }[view] ?? 'No tasks here yet.';
 }
@@ -673,6 +690,52 @@ function reviewCard(task) {
   return card;
 }
 
+// needs-input: answer the agent's question — blocked -> active
+async function answerTask(id, answer) {
+  try {
+    await api('POST', `/tasks/${id}/answer`, { answer });
+    toast('Answer sent — the task is back in the agent\'s queue', 'success');
+  } catch (e) { toast(`Answer failed: ${e.message}`); }
+  await reload();
+}
+
+// question card under a blocked row: the agent's question (accent-left, like
+// report cards) + an inline answer box. Used in Needs input and Agents views.
+function questionCard(task) {
+  const card = el('div', 'question-card');
+  const body = el('div', 'report-body notes-preview');
+  body.innerHTML = mdToHtml(task.question || '(no question)'); // escaped by md.js
+  card.append(body);
+  const box = el('textarea', 'answer-input');
+  box.placeholder = 'Answer…';
+  box.rows = 2;
+  box.setAttribute('aria-label', `Answer ${task.assignee}'s question`);
+  const actions = el('div', 'review-actions');
+  const send = document.createElement('wa-button');
+  send.setAttribute('variant', 'brand');
+  send.setAttribute('size', 'small');
+  send.textContent = 'Send answer';
+  send.addEventListener('click', () => {
+    const v = box.value.trim();
+    if (!v) { toast('Type an answer first'); return; }
+    answerTask(task.id, v);
+  });
+  actions.append(send);
+  card.append(box, actions);
+  return card;
+}
+
+// Needs input view: every task here is status=blocked, oldest wait first —
+// row (with agent chip) + the question card with an inline answer box
+function renderNeedsInput(listEl, tasks) {
+  const ul = el('div', 'task-list');
+  for (const task of tasks) {
+    ul.append(taskRow(task, { showProject: true }));
+    ul.append(questionCard(task));
+  }
+  listEl.append(ul);
+}
+
 // Review view: every task here is status=review — row (with agent chip) + card
 function renderReview(listEl, tasks) {
   const ul = el('div', 'task-list');
@@ -711,8 +774,9 @@ function renderAgents(listEl, tasks) {
     const vetted = list.filter(t => t.vetted !== 0);
     const unvetted = list.filter(t => t.vetted === 0);
     const ul = el('div', 'task-list');
-    for (const task of vetted) { // server order: in_progress → review → queued
+    for (const task of vetted) { // server order: in_progress → blocked → review → queued
       ul.append(taskRow(task, { showProject: true, showClaimed: true }));
+      if (task.status === 'blocked') ul.append(questionCard(task));
       if (task.status === 'review') ul.append(reviewCard(task));
     }
     listEl.append(ul);

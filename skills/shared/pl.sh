@@ -8,12 +8,16 @@
 #                     [--steps "a;b;c"] [--auto-close]
 #   pl.sh quickadd "text"              server-side token parsing (#tag @project ...)
 #   pl.sh list [view] [--project P] [--tag T] [--assignee A] [--window N] [--limit N] [--q S]
-#              views: inbox today upcoming overdue due_soon logbook review delegated
+#              views: inbox today upcoming overdue due_soon logbook review delegated needs_input
 #   pl.sh queue                        open work assigned to ME (active + in_progress,
 #                                      vetted only — server-side view=queue)
 #   pl.sh show <id>                    one task, full JSON
 #   pl.sh claim <id>                   active -> in_progress (assignee only, vetted only)
 #   pl.sh finish <id> "report"         -> review (or done if auto_close); report required
+#   pl.sh block <id> "question"        stuck? -> blocked with ONE concrete question
+#                                      for the admin (assignee only); returns to the
+#                                      queue with the answer attached once answered
+#   pl.sh answer <id> "text"           blocked -> active with the answer (admin only)
 #   pl.sh complete <id>                human-style done (the owner's own tasks)
 #   pl.sh approve <id>                 review -> done (admin actor only)
 #   pl.sh vet <id>                     mark an unvetted task safe for agents (admin only)
@@ -87,6 +91,10 @@ ROWFMT='
     [ (if (.vetted // 1) == 0 then "[UNVETTED]" else empty end),
       (if .status != "active" then "[" + .status + "]" else empty end),
       ("@" + .assignee),
+      (if .status == "blocked" and .question then
+        "Q: " + ((.question | split("\n")[-1]) as $q
+                 | if ($q | length) > 60 then ($q[0:57] + "...") else $q end)
+       else empty end),
       (if .due_date then "due:" + .due_date + (if .due_time then "T" + .due_time else "" end) else empty end),
       (if .when_type == "someday" then "someday"
        elif .when_type == "date" then "when:" + .when_date else empty end),
@@ -110,7 +118,7 @@ resolve_project() { # name-or-id -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -190,6 +198,14 @@ case "$cmd" in
     [ $# -eq 2 ] || { echo "usage: pl.sh finish <id> \"report\"" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/finish" "$(jq -n --arg r "$2" '{report: $r}')"; one ;;
 
+  block)
+    [ $# -eq 2 ] || { echo "usage: pl.sh block <id> \"question\"" >&2; exit 2; }
+    api POST "/tasks/$(uri "$1")/block" "$(jq -n --arg q "$2" '{question: $q}')"; one ;;
+
+  answer)
+    [ $# -eq 2 ] || { echo "usage: pl.sh answer <id> \"text\"" >&2; exit 2; }
+    api POST "/tasks/$(uri "$1")/answer" "$(jq -n --arg a "$2" '{answer: $a}')"; one ;;
+
   complete)
     [ $# -eq 1 ] || { echo "usage: pl.sh complete <id>" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/complete" '{}'; one ;;
@@ -241,10 +257,11 @@ case "$cmd" in
       + " | upcoming: " + (.upcoming | tostring)
       + " | due_soon: " + (.due_soon | tostring)
       + " | review: " + (.review | tostring)
-      + " | delegated: " + (.delegated | tostring)' ;;
+      + " | delegated: " + (.delegated | tostring)
+      + " | needs_input: " + (.needs_input | tostring)' ;;
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac

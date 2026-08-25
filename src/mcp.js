@@ -78,6 +78,8 @@ function slim(t) {
   if (t.steps?.length) out.steps = t.steps.map(s => ({ title: s.title, done: !!s.done }));
   if (t.notes) out.notes = t.notes;
   if (t.report) out.report = t.report;
+  if (t.question) out.question = t.question; // needs-input: what the agent asked
+  if (t.answer) out.answer = t.answer;       // …and what the admin answered
   if (t.auto_close) out.auto_close = true;
   if (t.created_by) out.created_by = t.created_by;
   if (t.vetted === 0) out.unvetted = true; // quarantined: agents must not work it
@@ -167,13 +169,14 @@ const TOOLS = [
     name: 'punchlist_list',
     description: 'List tasks. Views: inbox (unplanned), today, upcoming, overdue, due_soon ' +
       '(within window days), logbook (done), review (finished agent work awaiting approval), ' +
-      'delegated (open work assigned to agents). No view = all open tasks. Filter by project ' +
+      'delegated (open work assigned to agents), needs_input (blocked on a question for the ' +
+      'admin). No view = all open tasks. Filter by project ' +
       '(name or id), tag, or assignee. Paginate with cursor from a previous result.',
     inputSchema: {
       type: 'object',
       properties: {
         view: { type: 'string', enum: ['inbox', 'today', 'upcoming', 'overdue', 'due_soon',
-          'logbook', 'review', 'delegated'] },
+          'logbook', 'review', 'delegated', 'needs_input'] },
         project: { type: 'string', description: 'Project name or id' },
         tag: { type: 'string', description: 'Tag name' },
         assignee: { type: 'string', description: 'Actor name' },
@@ -240,6 +243,30 @@ const TOOLS = [
       required: ['id', 'report'],
     },
     handler: async a => taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/finish`, { report: a.report })),
+  },
+  {
+    name: 'punchlist_block',
+    description: 'Block a task assigned to me on ONE concrete, answerable question for the ' +
+      'admin (active/in_progress -> blocked). Use this when stuck instead of guessing or ' +
+      'finishing with a question in the report; the task leaves my queue and returns to it ' +
+      'once answered, with the answer attached. Re-blocking with the same question is a no-op.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: ID, question: { type: 'string', description: 'One concrete question the admin can answer (markdown, <=2048 chars)' } },
+      required: ['id', 'question'],
+    },
+    handler: async a => taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/block`, { question: a.question })),
+  },
+  {
+    name: 'punchlist_answer',
+    description: 'Answer a blocked task\'s question (admin/human actor only). Moves it ' +
+      'blocked -> active so the assigned agent picks it back up with the answer attached.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: ID, answer: { type: 'string', description: 'The answer to the blocking question (markdown, <=8192 chars)' } },
+      required: ['id', 'answer'],
+    },
+    handler: async a => taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/answer`, { answer: a.answer })),
   },
   {
     name: 'punchlist_complete',
@@ -312,7 +339,7 @@ const TOOLS = [
   },
   {
     name: 'punchlist_counts',
-    description: 'Nav counts: inbox, today, upcoming, due_soon, review, delegated, per-project ' +
+    description: 'Nav counts: inbox, today, upcoming, due_soon, review, delegated, needs_input, per-project ' +
       'open counts — plus which actor this token authenticates as. Cheap situational overview.',
     inputSchema: { type: 'object', properties: {} },
     handler: async () => text(await api('GET', '/counts')),

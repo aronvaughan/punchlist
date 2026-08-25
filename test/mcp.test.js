@@ -24,8 +24,9 @@ const TOK_EMAIL = 'e'.repeat(32);
 const TODAY = '2026-03-10';
 
 const TOOL_NAMES = ['punchlist_add', 'punchlist_quickadd', 'punchlist_list', 'punchlist_show',
-  'punchlist_queue', 'punchlist_claim', 'punchlist_finish', 'punchlist_complete',
-  'punchlist_approve', 'punchlist_vet', 'punchlist_update', 'punchlist_projects', 'punchlist_counts'];
+  'punchlist_queue', 'punchlist_claim', 'punchlist_finish', 'punchlist_block', 'punchlist_answer',
+  'punchlist_complete', 'punchlist_approve', 'punchlist_vet', 'punchlist_update',
+  'punchlist_projects', 'punchlist_counts'];
 
 // minimal newline-delimited JSON-RPC client over a spawned mcp.js
 class McpClient {
@@ -119,7 +120,7 @@ test('initialize handshake reports the punchlist server', async () => {
   await extra.close();
 });
 
-test('tools/list exposes all thirteen tools with object schemas and descriptions', async () => {
+test('tools/list exposes all fifteen tools with object schemas and descriptions', async () => {
   const res = await admin.request('tools/list', {});
   const tools = res.result.tools;
   assert.deepEqual(tools.map(t => t.name).sort(), [...TOOL_NAMES].sort());
@@ -219,6 +220,36 @@ test('vetting over MCP: email-created work is unvetted, invisible to the queue, 
   const claimed = await agent.ok('punchlist_claim', { id });
   assert.equal(claimed.task.status, 'in_progress');
   await agent.ok('punchlist_finish', { id, report: 'handled the ingested request' });
+});
+
+test('needs-input over MCP: block with a question → needs_input lane → admin answers → back in the queue with the exchange', async () => {
+  const added = await admin.ok('punchlist_add', { title: 'buy the adapter', assignee: 'claude' });
+  const id = added.task.id;
+  await agent.ok('punchlist_claim', { id });
+  // stuck: block with ONE concrete question instead of guessing
+  const blocked = await agent.ok('punchlist_block', { id, question: 'USB-C or barrel jack?' });
+  assert.equal(blocked.task.status, 'blocked');
+  assert.equal(blocked.task.question, 'USB-C or barrel jack?');
+  // out of the agent's queue, in the owner's needs_input lane + counts
+  assert.ok(!(await agent.ok('punchlist_queue')).items.some(t => t.id === id));
+  const lane = await admin.ok('punchlist_list', { view: 'needs_input' });
+  assert.ok(lane.items.some(t => t.id === id));
+  assert.equal((await admin.ok('punchlist_counts')).needs_input, 1);
+  // the agent cannot answer its own question
+  const denied = await agent.call('punchlist_answer', { id, answer: 'USB-C' });
+  assert.equal(denied.isError, true);
+  assert.match(denied.text, /only the admin/);
+  // admin answers → active again, exchange attached in the slim shape
+  const answered = await admin.ok('punchlist_answer', { id, answer: 'USB-C, we have spare cables' });
+  assert.equal(answered.task.status, 'active');
+  assert.equal(answered.task.question, 'USB-C or barrel jack?');
+  assert.equal(answered.task.answer, 'USB-C, we have spare cables');
+  const queue = await agent.ok('punchlist_queue');
+  const back = queue.items.find(t => t.id === id);
+  assert.ok(back, 'answered task returns to the queue');
+  assert.equal(back.answer, 'USB-C, we have spare cables');
+  await agent.ok('punchlist_finish', { id, report: 'ordered the USB-C model' });
+  await admin.ok('punchlist_approve', { id });
 });
 
 test('quickadd, update (sparse + "none" clears), complete, filtered list', async () => {

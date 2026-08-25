@@ -177,6 +177,40 @@ test('admin is a parameter, not a literal: lanes follow whoever :admin names', (
   assert.equal(db.prepare(c.sql).get(...c.args).c, 2); // del5, del6
 });
 
+// ---- needs-input ----
+test('needs_input view: blocked only, oldest wait first; queue and admin lanes exclude blocked', () => {
+  const db = seed();
+  db.prepare(`UPDATE tasks SET status='blocked', question='which key?', updated_at='2026-03-10T11:00:00.000Z' WHERE id='del5'`).run();
+  db.prepare(`UPDATE tasks SET status='blocked', question='what budget?', updated_at='2026-03-10T09:00:00.000Z' WHERE id='del6'`).run();
+  assert.deepEqual(run(db, 'needs_input').map(r => r.id), ['del6', 'del5'], 'longest-waiting question first');
+  // queue is status-scoped: a blocked task leaves the agent's queue
+  assert.deepEqual(run(db, 'queue', { assignee: 'claude' }).map(r => r.id), ['del2', 'del1']);
+  // blocked stays OFF the admin's day even when due (it is waiting on the admin in ITS lane)
+  assert.ok(!run(db, 'today').map(r => r.id).includes('del6'));
+});
+
+test('delegated/project views include blocked; Agents ordering is in_progress → blocked → review → queued', () => {
+  const db = seed();
+  db.prepare(`UPDATE tasks SET status='blocked', question='q?' WHERE id='del5'`).run();
+  const ids = run(db, 'delegated').map(r => r.id);
+  assert.deepEqual(ids, ['del2', 'del5', 'del1', 'del6', 'del3'],
+    'claude: working, blocked, queued; then hermes review');
+  db.prepare(`UPDATE tasks SET status='blocked', question='q?' WHERE id='del2'`).run();
+  assert.ok(run(db, null, { project: 'p1' }).map(r => r.id).includes('del2'),
+    'project view keeps blocked tasks on the board');
+});
+
+test('taskCount covers needs_input', () => {
+  const db = seed();
+  const c = () => {
+    const { sql, args } = taskCount('needs_input', { today: TODAY, admin: 'alex' });
+    return db.prepare(sql).get(...args).c;
+  };
+  assert.equal(c(), 0);
+  db.prepare(`UPDATE tasks SET status='blocked', question='q?' WHERE id IN ('del5','del6')`).run();
+  assert.equal(c(), 2);
+});
+
 // ---- agent security (layer 1) ----
 test('queue view: active+in_progress, vetted only — the server-side agent-queue contract', () => {
   const db = seed();
