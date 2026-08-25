@@ -7,9 +7,11 @@ workflows choreograph multi-step, multi-actor work by compiling to
 punchlist tasks. Markdown-first, Obsidian-curatable, mermaid-visualized,
 agent-agnostic.
 
-Shipped so far (P1): the template format, the `plt` CLI
-(validate/list/show), three core templates, and resolver skills for
-claude and hermes. Workflows land in P3 — see
+Shipped so far (P1 + P3): the template format, the `plt` CLI
+(validate/list/show/render/launch/advance/runs), three core templates,
+resolver skills for claude and hermes, and the workflow runtime — the
+format, validator, mermaid renderer, compiler (`launch`) and advancer
+(`advance`), plus one shipped workflow (`research-and-buy`). See
 [docs/2026-08-25-prd.md](docs/2026-08-25-prd.md).
 
 ## Quickstart
@@ -18,9 +20,16 @@ claude and hermes. Workflows land in P3 — see
 git clone <this-repo> punchlist-templates
 cd punchlist-templates
 
-bin/plt list                    # what templates exist (name, kind, tags, path)
+bin/plt list                    # what templates/workflows exist (name, kind, tags, path)
 bin/plt show research-brief     # print a template — agents cat this into context
-bin/plt validate all            # check every template
+bin/plt validate all            # check every template and workflow
+bin/plt render research-and-buy # regenerate a workflow's mermaid diagram in-file
+
+# runtime (needs a punchlist server + $PUNCHLIST_TOKEN; see Workflows below)
+bin/plt launch research-and-buy --input item="label printer" --input budget='$150'
+bin/plt advance --all           # cron calls this; spawns next-step tasks
+bin/plt runs                    # list run states
+
 npm test                        # run the test suite (zero dependencies)
 ```
 
@@ -71,8 +80,10 @@ Frontmatter is a deliberate **simple subset of YAML** — exactly what
 - `key: value` scalars (optionally quoted; `# comments` stripped when
   unquoted)
 - inline lists: `tags: [a, b]`
+- inline maps: `when: { step: decide, outcome: approved }`
 - one level of block lists of maps (`inputs:` with `- name:` /
-  `exemplar:` pairs)
+  `exemplar:` pairs; a workflow's body-level `steps:` block follows the
+  same rules)
 
 `## Golden exemplar` is by convention the **last** section and may
 contain its own `##` headings; every other section ends at the next
@@ -101,7 +112,8 @@ workflow compiles to punchlist tasks — there is no engine.** Each step
 becomes a real task with an assignee; a small *advancer* watches for
 completed steps and spawns the next ones. Monitoring, review, security
 (vetting/screening), and notifications are all inherited from punchlist.
-(Ships in P3 — format is stable now so authoring can start.)
+(Shipped in P3: format, validator, mermaid renderer, `launch` compiler and
+`advance` advancer, plus the `research-and-buy` pack workflow.)
 
 A workflow is one markdown file, `workflows/{packs,authored}/<name>.md`:
 
@@ -120,6 +132,7 @@ steps:
   - id: decide
     assignee: owner                   # a human step = a plain task for you
     needs: [research]
+    outcomes: [approved, rejected]    # recorded as a check-one checklist
   - id: order                         # if …
     assignee: hermes
     when: { step: decide, outcome: approved }
@@ -141,9 +154,44 @@ The whole logic vocabulary, by design nothing more:
 | `repeat_until: <cond>` | loop the step until the condition holds |
 | `on_fail: {retry, then}` | error chain: retry N times, then hand to another step |
 
+Branching runs on **outcomes**: a step may declare
+`outcomes: [approved, rejected]`; its punchlist task gets one checklist
+item per outcome (`Outcome: approved` …) and whoever completes the task
+checks exactly one. That recorded value is what `when:` / `else_of` /
+`repeat_until` react to. A step without `outcomes` records the outcome
+`done` when its task completes. A step's task being *archived* without
+completing means the step **failed**: `on_fail` retries it (fresh task,
+same step) and then hands over to its `then` step; with no `on_fail` the
+run halts as failed and the admin gets a notification task — once.
+
 Diagrams are **generated, never drawn**: `plt render <workflow>` writes a
 mermaid block into the file between markers — it renders in Obsidian, on
 GitHub, and in web UIs. Hand-edited diagrams are invalid by rule.
+
+### Running workflows
+
+```bash
+bin/plt launch research-and-buy --input item="label printer" --input budget='$150'
+bin/plt advance --all        # apply edges: spawn next steps for every running run
+bin/plt runs                 # run id, status, per-step state
+```
+
+`launch` validates, creates the initial step task(s) in punchlist, and
+writes `runs/<run-id>.json`. `advance` is cron-friendly (see
+`scripts/advance-sweep.sh`): it reads each running run, checks its
+in-flight tasks (completed? outcome checked? archived?), and spawns the
+next tasks — the decision logic is a pure function with table-driven
+tests. Spawned tasks carry a machine-parseable trailer at the end of
+their notes (`plt: workflow=… run=… step=… template=… attempt=…`) so the
+advancer, agents, and searches can all find them.
+
+Auth matches punchlist's `pl.sh`: `$PUNCHLIST_URL` +
+`$PUNCHLIST_TOKEN`, with the same env-file fallbacks
+(`$PUNCHLIST_ENV_FILE`, `~/.claude/secrets.local.env`,
+`$HERMES_HOME/.env`). **Workflows that assign steps to `owner` require
+`$PUNCHLIST_OWNER`** (the punchlist actor name of the human admin,
+resolvable from the same env files) — `launch`/`advance` refuse to spawn
+an owner step without it.
 
 Agents that get stuck mid-step don't guess: they *block* their task with
 one concrete question, the owner answers from the punchlist "Needs input"
@@ -153,10 +201,11 @@ lane (or chat), and the step resumes with the answer in context.
 
 ```
 templates/{packs,authored}/   # what good OUTPUT looks like
-workflows/{packs,authored}/   # what happens in what ORDER, by WHOM (P3)
-runs/                         # (gitignored) per-run advancer state (P3)
+workflows/{packs,authored}/   # what happens in what ORDER, by WHOM
+runs/                         # (gitignored) per-run advancer state
 skills/{claude,hermes,shared} # resolver skills + canonical shim
 bin/plt                       # zero-dependency CLI
+scripts/advance-sweep.sh      # cron wrapper for `plt advance --all`
 docs/                         # product analysis, PRD
 test/                         # node:test suite
 ```

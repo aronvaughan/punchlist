@@ -167,11 +167,13 @@ test('cli: list --domain filters', () => {
   assert.ok(!stdout.includes('research-brief'));
 });
 
-test('cli: list --kind template keeps all three; unknown kind empties', () => {
-  const all = run(['list', '--kind', 'template']).stdout;
-  assert.ok(all.includes('weekly-review'));
-  const none = run(['list', '--kind', 'workflow']).stdout.trim().split('\n');
-  assert.strictEqual(none.length, 1); // header only
+test('cli: list --kind splits templates from workflows', () => {
+  const templates = run(['list', '--kind', 'template']).stdout;
+  assert.ok(templates.includes('weekly-review'));
+  assert.ok(!templates.includes('research-and-buy'));
+  const workflows = run(['list', '--kind', 'workflow']).stdout;
+  assert.ok(workflows.includes('research-and-buy'));
+  assert.ok(!workflows.includes('weekly-review'));
 });
 
 test('cli: list --tag with no matches prints only the header', () => {

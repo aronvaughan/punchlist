@@ -9,6 +9,7 @@
 !/workflows/
 !/skills/
 !/bin/
+!/scripts/
 !/test/
 # runs/ (per-run advancer state), .obsidian/ (vault config), and
 # node_modules stay ignored by /*
