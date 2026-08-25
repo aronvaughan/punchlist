@@ -64,7 +64,7 @@ export function openCreate(prefill = {}, contextName = 'Inbox') {
   createContext = contextName;
   current = { title: '', notes: '', project_id: null, when_type: null, when_date: null,
     due_date: null, due_time: null, recur: null, tags: [], steps: [],
-    assignee: 'aron', auto_close: 0, status: 'active', report: null, ...fields };
+    assignee: currentActor(), auto_close: 0, status: 'active', report: null, ...fields };
   renderDrawer();
   setTimeout(() => titleInput?.focus(), 60);
   if (__openWhenPicker) {
@@ -423,7 +423,7 @@ async function submitCreate() {
     if (!state.tasks.some(t => t.id === created.id)) {
       // landed outside the current view — say where
       const proj = state.projects.find(p => p.id === created.project_id);
-      const where = created.assignee !== 'aron'
+      const where = created.assignee !== currentActor()
         ? `${created.assignee}'s queue`
         : proj ? proj.name
         : created.when_type === 'someday' ? 'Someday'
@@ -462,7 +462,7 @@ function actions() {
   const complete = document.createElement('wa-button');
   complete.setAttribute('variant', 'brand');
   if (current.status === 'review') {
-    // review lane: aron approves (→ done) or reopens (→ active, report kept)
+    // review lane: the admin approves (→ done) or reopens (→ active, report kept)
     complete.textContent = 'Approve';
     complete.addEventListener('click', () => primaryDoor('/approve', 'Approved'));
     const reopen = document.createElement('wa-button');

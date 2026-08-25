@@ -88,6 +88,9 @@ export const state = {
 document.getElementById('brand-name').textContent = APP_NAME;
 document.title = APP_NAME.toLowerCase();
 
+// The signed-in actor (from /counts). Falls back to 'owner' before first load.
+export function currentActor() { return state.counts?.actor || 'owner'; }
+
 // rail footer: name + version (/health) + actor (/counts)
 function renderFoot() {
   const foot = document.getElementById('rail-foot');
