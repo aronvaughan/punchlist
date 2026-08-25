@@ -2,7 +2,7 @@
 // the list re-renders in the background. Titles/labels via textContent only;
 // notes preview goes through md.js (escaped).
 import Sortable from '/vendor/sortable.core.esm.js';
-import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
+import { api, state, reload, toast, todayISO, pickWhen, currentActor } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';

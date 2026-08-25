@@ -15,7 +15,7 @@ function el(tag, className, text) {
 // assignee: segmented [Me | Claude | Hermes] + auto-close toggle when
 // delegated. save(fields) -> Promise<boolean>; used by inline card + drawer.
 const AGENTS = ['claude', 'hermes'];
-import { currentActor } from './app.js';
+import { currentActor } from '/app.js';
 const HUMAN = () => currentActor();
 
 export function assigneeField(task, save) {
