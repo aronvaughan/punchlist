@@ -15,7 +15,8 @@ function el(tag, className, text) {
 // assignee: segmented [Me | Claude | Hermes] + auto-close toggle when
 // delegated. save(fields) -> Promise<boolean>; used by inline card + drawer.
 const AGENTS = ['claude', 'hermes'];
-const HUMAN = 'aron';
+import { currentActor } from './app.js';
+const HUMAN = () => currentActor();
 
 export function assigneeField(task, save) {
   const box = el('div');
@@ -26,13 +27,13 @@ export function assigneeField(task, save) {
   auto.append(check, el('span', null, 'close without my review'));
 
   const paint = () => {
-    const who = task.assignee ?? HUMAN;
+    const who = task.assignee ?? HUMAN();
     [...seg.children].forEach(b => b.classList.toggle('on', b.dataset.who === who));
-    auto.hidden = who === HUMAN;
+    auto.hidden = who === HUMAN();
     check.checked = !!task.auto_close;
   };
-  for (const who of [HUMAN, ...AGENTS]) {
-    const b = el('button', null, who === HUMAN ? 'Me' : who[0].toUpperCase() + who.slice(1));
+  for (const who of [HUMAN(), ...AGENTS]) {
+    const b = el('button', null, who === HUMAN() ? 'Me' : who[0].toUpperCase() + who.slice(1));
     b.dataset.who = who;
     b.addEventListener('click', async e => {
       e.stopPropagation();

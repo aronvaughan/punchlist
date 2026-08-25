@@ -393,7 +393,7 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
     row.append(chip);
   }
-  if (task.assignee && task.assignee !== 'aron') {
+  if (task.assignee && task.assignee !== currentActor()) {
     // agent chip: muted; accent outline while claimed (in_progress)
     row.append(el('span', 'chip agent' + (task.status === 'in_progress' ? ' working' : ''), task.assignee));
     if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
