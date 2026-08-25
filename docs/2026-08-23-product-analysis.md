@@ -33,7 +33,7 @@ onto someone else's product. Vikunja is the fallback if this stalls.
 
 ## Feasibility
 
-- **Stack fit:** the-home-server already runs node services under systemd user
+- **Stack fit:** the home server already runs node services under systemd user
   units with tailnet serve, restic backup, health checks, cron
   registration — av-tasks slots into every one of those patterns.
 - **Effort estimate:** M0 API ~1 session; M1 UI (list + dnd + quick-add)

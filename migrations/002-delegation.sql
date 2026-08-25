@@ -1,7 +1,7 @@
 -- 002-delegation: assignee model (delegation design 2026-08-24).
 -- tasks gains assignee/auto_close/claimed_at/report and the status CHECK
 -- extends to in_progress/review. SQLite can't ALTER a CHECK, so this is a
--- table rebuild: new table, copy rows (existing rows assignee='aron'),
+-- table rebuild: new table, copy rows (existing rows assignee='owner'),
 -- DROP + RENAME swap. The runner wraps this in one transaction with FKs
 -- suspended and verifies PRAGMA foreign_key_check before COMMIT, so
 -- steps/task_tags references survive intact (they re-bind to the renamed
@@ -25,7 +25,7 @@ CREATE TABLE tasks_new (
   completed_at TEXT NULL,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
-  assignee     TEXT NOT NULL DEFAULT 'aron',  -- actor names (aron|claude|hermes|email…)
+  assignee     TEXT NOT NULL DEFAULT 'owner',  -- actor names (owner|claude|hermes|email…)
   auto_close   INTEGER NOT NULL DEFAULT 0,    -- finish goes straight to done
   claimed_at   TEXT NULL,                     -- set on claim
   report       TEXT NULL,                     -- agent's outcome note (markdown, notes caps)
@@ -40,7 +40,7 @@ INSERT INTO tasks_new (id, title, notes, project_id, status, when_type, when_dat
   SELECT id, title, notes, project_id, status, when_type, when_date,
          due_date, due_time, rank, today_rank, recur, spawned_from,
          created_by, completed_at, created_at, updated_at,
-         'aron', 0, NULL, NULL
+         'owner', 0, NULL, NULL
   FROM tasks;
 
 DROP TABLE tasks;

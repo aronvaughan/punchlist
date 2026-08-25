@@ -138,7 +138,7 @@ GET  /api/v1/health               unauthenticated
 
 ## Auth & headers (rev 2)
 
-- `AV_TASKS_TOKENS` = `name:token,name:token` (aron, claude, hermes,
+- `AV_TASKS_TOKENS` = `name:token,name:token` (alex, claude, hermes,
   email) — middleware maps token → actor, **server sets created_by**;
   client-supplied created_by rejected (review O3). Rotation = add new,
   remove old; runbook line in kb/ops.

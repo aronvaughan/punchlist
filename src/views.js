@@ -35,7 +35,7 @@ const VIEWS = {
   },
   today: {
     // status filter covers BOTH disjuncts (C1). Assignee scoping covers only
-    // the WHEN disjunct: an arrived when-date is aron's plan, a due-date is a
+    // the WHEN disjunct: an arrived when-date is the admin's plan, a due-date is a
     // deadline for everyone (due overrides assignee — 2026-08-24 amendment).
     where: `${LIVE} AND ((${MINE} AND when_type = 'date' AND when_date <= :today) OR due_date <= :today)`,
     // manual today_rank first; arrivals (NULL) append after (C3, I11)

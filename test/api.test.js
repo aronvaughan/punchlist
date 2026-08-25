@@ -14,7 +14,7 @@ function makeApp() {
   const { db, migrate } = open(':memory:');
   migrate();
   const app = buildApp({
-    db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
     today: () => TODAY });
   const call = async (method, path, { body, token = TOK_ARON } = {}) => {
     const headers = {};
@@ -43,9 +43,9 @@ test('auth: 401 without/with bad token; health is open', async () => {
 
 test('per-token created_by is server-set; client-supplied created_by rejected', async () => {
   const { call } = makeApp();
-  const a = await call('POST', '/api/v1/tasks', { body: { title: 'from aron' } });
+  const a = await call('POST', '/api/v1/tasks', { body: { title: 'from alex' } });
   assert.equal(a.status, 201);
-  assert.equal(a.json.created_by, 'aron');
+  assert.equal(a.json.created_by, 'alex');
   const c = await call('POST', '/api/v1/tasks', { body: { title: 'from claude' }, token: TOK_CLAUDE });
   assert.equal(c.json.created_by, 'claude');
   const bad = await call('POST', '/api/v1/tasks', { body: { title: 'spoof', created_by: 'hermes' } });
@@ -54,10 +54,10 @@ test('per-token created_by is server-set; client-supplied created_by rejected', 
 
 test('fail-closed token parsing', () => {
   assert.throws(() => parseTokens(''), /refusing to start/);
-  assert.throws(() => parseTokens('aron:short'), /32/);
+  assert.throws(() => parseTokens('alex:short'), /32/);
   assert.throws(() => parseTokens('nocolon'), /malformed/);
-  assert.deepEqual(parseTokens(`aron:${TOK_ARON}, claude:${TOK_CLAUDE}`),
-    { aron: TOK_ARON, claude: TOK_CLAUDE });
+  assert.deepEqual(parseTokens(`alex:${TOK_ARON}, claude:${TOK_CLAUDE}`),
+    { alex: TOK_ARON, claude: TOK_CLAUDE });
 });
 
 test('data/.env permission check: warn on group/other-readable, silent on 600', () => {
@@ -72,7 +72,7 @@ test('resolveAdmin: defaults to the FIRST actor; explicit must have a token (fai
   assert.equal(resolveAdmin(tokens, undefined), 'pat');
   assert.equal(resolveAdmin(tokens, ''), 'pat');
   assert.equal(resolveAdmin(tokens, '  claude  '), 'claude');
-  assert.throws(() => resolveAdmin(tokens, 'aron'), /AV_TASKS_ADMIN.*no token/);
+  assert.throws(() => resolveAdmin(tokens, 'alex'), /AV_TASKS_ADMIN.*no token/);
 });
 
 test('admin parameterization: approve gate, lanes, and default assignee follow the admin actor', async () => {
@@ -89,7 +89,7 @@ test('admin parameterization: approve gate, lanes, and default assignee follow t
       method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
     return { status: res.status, json: await res.json() };
   };
-  // default assignee is the admin, not 'aron'
+  // default assignee is the admin, not 'alex'
   const t = (await call('POST', '/api/v1/tasks', { body: { title: 'mine' } })).json;
   assert.equal(t.assignee, 'pat');
   // pat's projectless no-when task is in PAT's inbox
@@ -114,8 +114,8 @@ test('buildApp without an explicit admin falls back to the first token actor; un
   const { db, migrate } = open(':memory:');
   migrate();
   assert.throws(() => buildApp({ db, tokens: { claude: TOK_CLAUDE }, admin: 'ghost' }), /no token/);
-  // first-actor default: aron-first tokens behave exactly as before
-  buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE } });
+  // first-actor default: alex-first tokens behave exactly as before
+  buildApp({ db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE } });
 });
 
 // ---- tasks CRUD ----
@@ -205,7 +205,7 @@ test('pagination over HTTP: limit + next_cursor, no dupes', async () => {
 test('pagination at the documented max limit=500 still emits next_cursor', async () => {
   const { call, db } = makeApp();
   const ins = db.prepare(
-    `INSERT INTO tasks (id, title, status, rank, created_at, updated_at) VALUES (?, ?, 'active', ?, 't', 't')`);
+    `INSERT INTO tasks (id, title, status, rank, assignee, created_at, updated_at) VALUES (?, ?, 'active', ?, 'alex', 't', 't')`);
   for (let i = 0; i < 501; i++) ins.run(String(i).padStart(26, '0'), `t${i}`, (i + 1) * 1024);
   const first = await call('GET', '/api/v1/tasks?view=inbox&limit=500');
   assert.equal(first.status, 200);
@@ -485,7 +485,7 @@ test('GET /counts: view counts + per-project open counts; zeroes included, auth 
   assert.equal(upcoming, 1);     // 'later'
   assert.equal(due_soon, 1);     // 'soon'
   assert.deepEqual(projects, { [proj.json.id]: 2 }); // done task excluded
-  assert.equal(res.json.actor, 'aron'); // rail footer: "signed in as …"
+  assert.equal(res.json.actor, 'alex'); // rail footer: "signed in as …"
   assert.equal((await call('GET', '/api/v1/counts', { token: null })).status, 401);
   assert.equal((await call('GET', '/api/v1/counts?window=0')).status, 400);
 });
@@ -537,7 +537,7 @@ test('delegation happy path: POST assignee -> claim -> finish -> review -> appro
   const t = (await call('POST', '/api/v1/tasks', { body: { title: 'sweep memories', assignee: 'claude' } })).json;
   assert.equal(t.assignee, 'claude');
   assert.equal(t.auto_close, 0);
-  assert.equal(t.created_by, 'aron'); // created_by = who asked; assignee = who must do it
+  assert.equal(t.created_by, 'alex'); // created_by = who asked; assignee = who must do it
   const claimed = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
   assert.equal(claimed.status, 200);
   assert.equal(claimed.json.task.status, 'in_progress');
@@ -559,7 +559,7 @@ test('delegation happy path: POST assignee -> claim -> finish -> review -> appro
 test('claim: wrong actor 403; double-claim idempotent; claiming review/done 409; 404', async () => {
   const { call } = makeApp();
   const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
-  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`)).status, 403, 'aron is not the assignee');
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`)).status, 403, 'alex is not the assignee');
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_HERMES })).status, 403);
   const first = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
   const again = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
@@ -584,7 +584,7 @@ test('finish: wrong actor 403; report required 400; finishing review/done 409; w
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_HERMES, body: { report: 'again' } })).status, 409);
 });
 
-test('approve: non-aron 403; approving active/in_progress 409; 404', async () => {
+test('approve: non-alex 403; approving active/in_progress 409; 404', async () => {
   const { call } = makeApp();
   const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`, { token: TOK_CLAUDE })).status, 403);
@@ -676,7 +676,7 @@ test('reassigning an in_progress task resets it to active and clears the claim',
   assert.equal(same.json.status, 'in_progress');
 });
 
-test("view scoping over HTTP: aron's today/inbox exclude delegated; review/delegated views + ?assignee= work", async () => {
+test("view scoping over HTTP: alex's today/inbox exclude delegated; review/delegated views + ?assignee= work", async () => {
   const { call } = makeApp();
   await call('POST', '/api/v1/tasks', { body: { title: 'mine today', when_type: 'date', when_date: TODAY } });
   await call('POST', '/api/v1/tasks', { body: { title: 'delegated today', assignee: 'claude', when_type: 'date', when_date: TODAY } });
@@ -699,7 +699,7 @@ test("view scoping over HTTP: aron's today/inbox exclude delegated; review/deleg
     new Set(['delegated today', 'delegated due']));
 });
 
-test('GET /counts gains review + delegated; when-driven keys aron-scoped, due-driven include everyone', async () => {
+test('GET /counts gains review + delegated; when-driven keys alex-scoped, due-driven include everyone', async () => {
   const { call } = makeApp();
   await call('POST', '/api/v1/tasks', { body: { title: 'mine' } });
   await call('POST', '/api/v1/tasks', { body: { title: 'queued', assignee: 'claude' } });
@@ -711,8 +711,8 @@ test('GET /counts gains review + delegated; when-driven keys aron-scoped, due-dr
   await call('POST', '/api/v1/tasks', { body: { title: 'agent deadline', assignee: 'claude', due_date: TODAY } });
   await call('POST', '/api/v1/tasks', { body: { title: 'agent soon', assignee: 'hermes', due_date: '2026-03-15' } });
   const res = await call('GET', '/api/v1/counts');
-  assert.equal(res.json.inbox, 1, "delegated tasks don't clutter aron's inbox");
-  assert.equal(res.json.today, 1, "claude's arrived WHEN is not aron's today; claude's DUE today is");
+  assert.equal(res.json.inbox, 1, "delegated tasks don't clutter alex's inbox");
+  assert.equal(res.json.today, 1, "claude's arrived WHEN is not alex's today; claude's DUE today is");
   assert.equal(res.json.due_soon, 1, 'delegated future due counts');
   assert.equal(res.json.review, 1);
   assert.equal(res.json.delegated, 5);
@@ -726,11 +726,11 @@ test('quickadd >assignee flows through to the created task', async () => {
   assert.equal(r.json.assignee, 'hermes');
   assert.deepEqual(r.json.tags, ['ops']);
   const me = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'call bank >me' }, token: TOK_CLAUDE });
-  assert.equal(me.json.assignee, 'aron');
+  assert.equal(me.json.assignee, 'alex');
   assert.equal(me.json.created_by, 'claude');
   const unknown = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'forward >bob the memo' } });
   assert.equal(unknown.json.title, 'forward >bob the memo');
-  assert.equal(unknown.json.assignee, 'aron');
+  assert.equal(unknown.json.assignee, 'alex');
 });
 
 // ---- agent security (layer 1): provenance vetting ----
@@ -806,7 +806,7 @@ test('counts gains unvetted (assigned-to-agent AND vetted=0)', async () => {
   const { call } = makeApp();
   await call('POST', '/api/v1/tasks', { body: { title: 'a', assignee: 'claude' }, token: TOK_EMAIL });
   await call('POST', '/api/v1/tasks', { body: { title: 'b', assignee: 'hermes' }, token: TOK_EMAIL });
-  await call('POST', '/api/v1/tasks', { body: { title: 'for aron', assignee: 'aron' }, token: TOK_EMAIL });
+  await call('POST', '/api/v1/tasks', { body: { title: 'for alex', assignee: 'alex' }, token: TOK_EMAIL });
   await call('POST', '/api/v1/tasks', { body: { title: 'fine', assignee: 'claude' } });
   const c = await call('GET', '/api/v1/counts');
   assert.equal(c.json.unvetted, 2, 'only agent-assigned unvetted tasks count');
@@ -832,7 +832,7 @@ test('happy path: email creates -> admin vets -> agent claims and finishes into 
 test('untrusted set is configurable: buildApp untrusted option + parseUntrusted env parsing', async () => {
   const { db, migrate } = open(':memory:');
   migrate();
-  const app = buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE },
+  const app = buildApp({ db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE },
     untrusted: ['claude'], today: () => TODAY });
   const post = async token => {
     const res = await app.fetch(new Request('http://x/api/v1/tasks', {

@@ -108,7 +108,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
   const now = '2026-08-01T00:00:00.000Z';
   db.prepare(`INSERT INTO projects (id,name,rank,created_at,updated_at) VALUES ('p1','Home',1,?,?)`).run(now, now);
   db.prepare(`INSERT INTO tasks (id,title,project_id,status,due_date,recur,created_by,created_at,updated_at)
-              VALUES ('t1','recurring','p1','active','2026-08-05','{"freq":"daily","anchor":"due"}','aron',?,?)`).run(now, now);
+              VALUES ('t1','recurring','p1','active','2026-08-05','{"freq":"daily","anchor":"due"}','alex',?,?)`).run(now, now);
   db.prepare(`INSERT INTO tasks (id,title,status,spawned_from,created_at,updated_at)
               VALUES ('t2','spawned','done','t1',?,?)`).run(now, now);
   db.prepare(`INSERT INTO steps (id,task_id,title) VALUES ('s1','t1','step one')`).run();
@@ -118,10 +118,10 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
   migrate(); // real migrations dir — applies 002 (rebuild) and 003 (vetting)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
     ['001-init', '002-delegation', '003-vetting']);
-  // data survived; existing rows got assignee='aron' and the new defaults
+  // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
-  assert.equal(t1.assignee, 'aron');
+  assert.equal(t1.assignee, 'owner');
   assert.equal(t1.auto_close, 0);
   assert.equal(t1.claimed_at, null);
   assert.equal(t1.report, null);
@@ -167,13 +167,13 @@ test('003-vetting backfill: existing rows vetted=1 EXCEPT created_by=email -> 0 
   migrate(migDirPre);
   const ins = db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,created_at,updated_at)
                           VALUES (?,?,'active',?,?,'t','t')`);
-  ins.run('t1', 'owner task', 'aron', 'aron');
+  ins.run('t1', 'owner task', 'alex', 'alex');
   ins.run('t2', 'agent-made', 'claude', 'hermes');
   ins.run('t3', 'from email for agent', 'email', 'hermes');
   // the noted live-db case: email-created but assigned to the human —
   // backfill keys on PROVENANCE, so this becomes unvetted too (acceptable:
   // complete/PATCH stay open, and the admin can vet it)
-  ins.run('t4', 'from email for aron', 'email', 'aron');
+  ins.run('t4', 'from email for alex', 'email', 'alex');
   migrate(); // real dir — applies 003 only
   const vetted = id => db.prepare('SELECT vetted FROM tasks WHERE id = ?').get(id).vetted;
   assert.equal(vetted('t1'), 1);
