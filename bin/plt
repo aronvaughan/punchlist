@@ -1,0 +1,392 @@
+#!/usr/bin/env node
+'use strict';
+// plt — punchlist-templates CLI. Zero dependencies, plain node.
+//
+// P1 subcommands:
+//   plt validate [path|all]   validate template files (default: all)
+//   plt list [--kind K] [--tag T] [--domain D]
+//   plt show <name>           print a template's full markdown
+//
+// Frontmatter is a documented SIMPLE SUBSET of YAML (see README
+// "Format reference"): scalar `key: value`, inline lists `key: [a, b]`,
+// and one level of block lists of maps:
+//   inputs:
+//     - name: foo
+//       exemplar: "..."
+// Nothing else is supported, by design.
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = process.env.PUNCHLIST_TEMPLATES_DIR
+  ? path.resolve(process.env.PUNCHLIST_TEMPLATES_DIR)
+  : path.resolve(__dirname, '..');
+
+// Authored dirs first: on a name collision the owner's copy wins.
+const SEARCH_DIRS = [
+  'templates/authored',
+  'templates/packs',
+  'workflows/authored',
+  'workflows/packs',
+];
+
+// ---------------------------------------------------------------- frontmatter
+
+function stripQuotes(s) {
+  if (s.length >= 2 && ((s[0] === '"' && s.endsWith('"')) || (s[0] === "'" && s.endsWith("'")))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function parseScalar(raw) {
+  let v = raw.trim();
+  if (!v.startsWith('"') && !v.startsWith("'")) {
+    v = v.replace(/\s+#.*$/, '').trim(); // trailing comment
+  }
+  if (v.startsWith('[') && v.endsWith(']')) {
+    return v
+      .slice(1, -1)
+      .split(',')
+      .map((s) => stripQuotes(s.trim()))
+      .filter((s) => s.length > 0);
+  }
+  return stripQuotes(v);
+}
+
+// Parse the frontmatter block of `text`. Returns:
+//   { fm, fmStart, fmEnd, bodyStart, body, errors: [{line, msg}] }
+// fm is null when no frontmatter block exists at all.
+function parseFrontmatter(text) {
+  const lines = text.split(/\r?\n/);
+  const errors = [];
+  if (lines[0] !== '---') {
+    return { fm: null, errors: [{ line: 1, msg: 'missing frontmatter (file must start with ---)' }] };
+  }
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === '---') { close = i; break; }
+  }
+  if (close === -1) {
+    return { fm: null, errors: [{ line: 1, msg: 'unterminated frontmatter (no closing ---)' }] };
+  }
+
+  const fm = {};
+  const fmLines = {}; // key -> line number (1-based) where it was defined
+  let listKey = null;   // key of the block list being filled
+  let listItems = null;
+  let current = null;   // current map item within the block list
+  for (let i = 1; i < close; i++) {
+    const raw = lines[i];
+    const ln = i + 1;
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    let m;
+    if ((m = raw.match(/^([A-Za-z_][\w-]*):\s*(.*)$/))) {
+      const key = m[1];
+      const val = m[2].replace(/\s+#.*$/, '');
+      if (val.trim() === '') {
+        listItems = [];
+        fm[key] = listItems;
+        fmLines[key] = ln;
+        listKey = key;
+        current = null;
+      } else {
+        fm[key] = parseScalar(val);
+        fmLines[key] = ln;
+        listKey = null;
+        current = null;
+      }
+    } else if (listKey && (m = raw.match(/^\s+-\s+([\w-]+):\s*(.*)$/))) {
+      current = { [m[1]]: parseScalar(m[2]) };
+      current.__line = ln;
+      listItems.push(current);
+    } else if (listKey && (m = raw.match(/^\s+-\s+(.+)$/))) {
+      listItems.push(parseScalar(m[1]));
+      current = null;
+    } else if (current && (m = raw.match(/^\s+([\w-]+):\s*(.*)$/))) {
+      current[m[1]] = parseScalar(m[2]);
+    } else {
+      errors.push({ line: ln, msg: `unparseable frontmatter line: ${raw.trim()}` });
+    }
+  }
+  return {
+    fm,
+    fmLines,
+    fmStart: 1,
+    fmEnd: close + 1,
+    bodyStart: close + 2,
+    body: lines.slice(close + 1).join('\n'),
+    bodyLines: lines.slice(close + 1),
+    errors,
+  };
+}
+
+// -------------------------------------------------------------------- corpus
+
+function isTemplateFile(file) {
+  const base = path.basename(file);
+  return base.endsWith('.md') && base !== 'README.md';
+}
+
+function walk(dir, out) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walk(p, out);
+    else if (e.isFile() && isTemplateFile(p)) out.push(p);
+  }
+  return out;
+}
+
+// All template/workflow files under the repo, in resolution order.
+function collectFiles(root = ROOT) {
+  const out = [];
+  for (const d of SEARCH_DIRS) walk(path.join(root, d), out);
+  return out;
+}
+
+// ---------------------------------------------------------------- validation
+
+// Find a `## Heading` in the body. Returns {line, content} or null.
+// line is 1-based within the whole file. Content runs from the heading to
+// the next `## ` heading outside a fenced code block — or to EOF when
+// `toEnd` is set (used for `## Golden exemplar`, which is by convention
+// the LAST section and may itself contain `##` headings).
+function findSection(bodyLines, bodyStart, heading, { toEnd = false } = {}) {
+  const want = heading.toLowerCase();
+  let fenced = false;
+  for (let i = 0; i < bodyLines.length; i++) {
+    if (/^\s*```/.test(bodyLines[i])) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    const m = bodyLines[i].match(/^##\s+(.*?)\s*$/);
+    if (m && m[1].toLowerCase() === want) {
+      let end = bodyLines.length;
+      if (!toEnd) {
+        let innerFenced = false;
+        for (let j = i + 1; j < bodyLines.length; j++) {
+          if (/^\s*```/.test(bodyLines[j])) { innerFenced = !innerFenced; continue; }
+          if (!innerFenced && /^##\s+/.test(bodyLines[j])) { end = j; break; }
+        }
+      }
+      return {
+        line: bodyStart + i,
+        content: bodyLines.slice(i + 1, end).join('\n').trim(),
+      };
+    }
+  }
+  return null;
+}
+
+const MIN_EXEMPLAR_CHARS = 200;
+
+// Validate one file. Returns array of {line, msg}; empty means valid.
+function validateFile(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return [{ line: 1, msg: `cannot read file: ${e.message}` }];
+  }
+  const parsed = parseFrontmatter(text);
+  if (!parsed.fm) return parsed.errors;
+  const errors = [...parsed.errors];
+  const { fm, fmLines, bodyStart, bodyLines } = parsed;
+  const at = (key) => (fmLines && fmLines[key]) || 1;
+
+  if (!fm.kind) {
+    errors.push({ line: 1, msg: 'missing `kind` in frontmatter' });
+    return errors;
+  }
+  if (fm.kind === 'workflow') {
+    return { skipped: 'workflow validation lands in P3' };
+  }
+  if (fm.kind !== 'template') {
+    errors.push({ line: at('kind'), msg: `unknown kind \`${fm.kind}\` (expected: template)` });
+    return errors;
+  }
+
+  const expectedName = path.basename(file, '.md');
+  if (!fm.name) {
+    errors.push({ line: 1, msg: 'missing `name` in frontmatter' });
+  } else if (fm.name !== expectedName) {
+    errors.push({ line: at('name'), msg: `name \`${fm.name}\` does not match filename \`${expectedName}.md\`` });
+  }
+
+  if (!Array.isArray(fm.inputs) || fm.inputs.length === 0) {
+    errors.push({ line: at('inputs'), msg: 'template must declare at least one input under `inputs:`' });
+  } else {
+    fm.inputs.forEach((input, idx) => {
+      const line = (input && input.__line) || at('inputs');
+      if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+        errors.push({ line, msg: `inputs[${idx}] must be a map with \`name\` and \`exemplar\`` });
+        return;
+      }
+      if (!input.name) errors.push({ line, msg: `inputs[${idx}] is missing \`name\`` });
+      if (!input.exemplar || String(input.exemplar).trim() === '') {
+        errors.push({ line, msg: `input \`${input.name || idx}\` is missing an \`exemplar\`` });
+      }
+    });
+  }
+
+  const shape = findSection(bodyLines, bodyStart, 'Output shape');
+  if (!shape) {
+    errors.push({ line: bodyStart, msg: 'missing `## Output shape` section' });
+  } else if (shape.content === '') {
+    errors.push({ line: shape.line, msg: '`## Output shape` section is empty' });
+  }
+
+  const golden = findSection(bodyLines, bodyStart, 'Golden exemplar', { toEnd: true });
+  if (!golden) {
+    errors.push({ line: bodyStart, msg: 'missing `## Golden exemplar` section (REQUIRED — templates teach by example)' });
+  } else if (golden.content.length < MIN_EXEMPLAR_CHARS) {
+    errors.push({
+      line: golden.line,
+      msg: `\`## Golden exemplar\` is too thin (${golden.content.length} chars, need >= ${MIN_EXEMPLAR_CHARS}) — write a complete, real-quality example`,
+    });
+  }
+
+  return errors;
+}
+
+// ------------------------------------------------------------------ commands
+
+function rel(file) {
+  return path.relative(ROOT, file);
+}
+
+function cmdValidate(args) {
+  const target = args[0] || 'all';
+  let files;
+  if (target === 'all') {
+    files = collectFiles();
+    if (files.length === 0) {
+      process.stderr.write('plt validate: no template files found under templates/ or workflows/\n');
+      return 1;
+    }
+  } else {
+    const p = path.resolve(target);
+    if (!fs.existsSync(p)) {
+      process.stderr.write(`plt validate: no such file: ${target}\n`);
+      return 1;
+    }
+    files = fs.statSync(p).isDirectory() ? walk(p, []) : [p];
+  }
+
+  let failed = 0;
+  for (const file of files) {
+    const result = validateFile(file);
+    const shown = file.startsWith(ROOT + path.sep) ? rel(file) : file;
+    if (!Array.isArray(result)) {
+      process.stdout.write(`SKIP  ${shown} — ${result.skipped}\n`);
+      continue;
+    }
+    if (result.length === 0) {
+      process.stdout.write(`OK    ${shown}\n`);
+    } else {
+      failed++;
+      for (const e of result) process.stdout.write(`FAIL  ${shown}:${e.line}: ${e.msg}\n`);
+    }
+  }
+  if (failed > 0) {
+    process.stdout.write(`\n${failed} of ${files.length} file(s) failed validation\n`);
+    return 1;
+  }
+  return 0;
+}
+
+function loadCorpus() {
+  return collectFiles().map((file) => {
+    const parsed = parseFrontmatter(fs.readFileSync(file, 'utf8'));
+    return { file, fm: parsed.fm || {}, };
+  });
+}
+
+function cmdList(args) {
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--kind') opts.kind = args[++i];
+    else if (args[i] === '--tag') opts.tag = args[++i];
+    else if (args[i] === '--domain') opts.domain = args[++i];
+    else {
+      process.stderr.write(`plt list: unknown option ${args[i]}\n`);
+      return 2;
+    }
+  }
+  let rows = loadCorpus();
+  if (opts.kind) rows = rows.filter((r) => r.fm.kind === opts.kind);
+  if (opts.domain) rows = rows.filter((r) => r.fm.domain === opts.domain);
+  if (opts.tag) rows = rows.filter((r) => Array.isArray(r.fm.tags) && r.fm.tags.includes(opts.tag));
+
+  const table = rows.map((r) => [
+    r.fm.name || '?',
+    r.fm.kind || '?',
+    Array.isArray(r.fm.tags) ? r.fm.tags.join(',') : '',
+    rel(r.file),
+  ]);
+  const header = ['NAME', 'KIND', 'TAGS', 'PATH'];
+  const widths = header.map((h, c) => Math.max(h.length, ...table.map((row) => row[c].length)));
+  const fmt = (row) => row.map((cell, c) => cell.padEnd(widths[c])).join('  ').trimEnd() + '\n';
+  process.stdout.write(fmt(header));
+  for (const row of table) process.stdout.write(fmt(row));
+  return 0;
+}
+
+function cmdShow(args) {
+  const name = args[0];
+  if (!name) {
+    process.stderr.write('usage: plt show <name>\n');
+    return 2;
+  }
+  for (const file of collectFiles()) {
+    const text = fs.readFileSync(file, 'utf8');
+    const parsed = parseFrontmatter(text);
+    if ((parsed.fm && parsed.fm.name === name) || path.basename(file, '.md') === name) {
+      process.stdout.write(text.endsWith('\n') ? text : text + '\n');
+      return 0;
+    }
+  }
+  process.stderr.write(`plt show: no template or workflow named \`${name}\`\n`);
+  return 1;
+}
+
+const USAGE = `plt — punchlist-templates CLI
+
+usage:
+  plt validate [path|all]                   validate templates (default: all)
+  plt list [--kind K] [--tag T] [--domain D]  list templates and workflows
+  plt show <name>                           print a template's full markdown
+
+Repo root: $PUNCHLIST_TEMPLATES_DIR, else the checkout containing this script.
+`;
+
+function main(argv) {
+  const [cmd, ...rest] = argv;
+  switch (cmd) {
+    case 'validate': return cmdValidate(rest);
+    case 'list': return cmdList(rest);
+    case 'show': return cmdShow(rest);
+    default:
+      process.stderr.write(USAGE);
+      return 2;
+  }
+}
+
+if (require.main === module) {
+  process.exit(main(process.argv.slice(2)));
+}
+
+module.exports = {
+  ROOT,
+  parseFrontmatter,
+  parseScalar,
+  findSection,
+  validateFile,
+  collectFiles,
+  main,
+  MIN_EXEMPLAR_CHARS,
+};
