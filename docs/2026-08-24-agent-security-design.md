@@ -35,7 +35,7 @@ Every task carries `vetted INT NOT NULL DEFAULT 1`.
   still `complete` it, and the admin can vet it with one tap.)
 - **Create-time rule** (api.js): `vetted = trusted(actor) ? 1 : 0`.
   Trusted = every actor EXCEPT those named in
-  `AV_TASKS_UNTRUSTED_ACTORS` (comma list, default `email`). server.js
+  `PUNCHLIST_UNTRUSTED_ACTORS` (comma list, default `email`). server.js
   parses the env and passes the set to `buildApp({ untrusted })`.
 - **Agent queue excludes unvetted, server-side**: a new `queue` view
   (`status IN ('active','in_progress') AND vetted = 1`, combined with the

@@ -5,7 +5,7 @@
 #
 # --actors     comma-separated actor names to mint bearer tokens for. The
 #              FIRST actor is the admin (approves reviews, owns the
-#              Today/Inbox lanes) — written as AV_TASKS_ADMIN.
+#              Today/Inbox lanes) — written as PUNCHLIST_ADMIN.
 #              Default: owner,claude,hermes,email
 # --no-service install everything but do not start/register the service.
 #
@@ -13,8 +13,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="${AV_TASKS_DATA:-$REPO/data}"
-PORT="${AV_TASKS_PORT:-8600}"
+DATA_DIR="${PUNCHLIST_DATA:-$REPO/data}"
+PORT="${PUNCHLIST_PORT:-8600}"
 ACTORS="owner,claude,hermes,email"
 SERVICE=1
 
@@ -50,8 +50,8 @@ else
   [ -n "$FIRST" ] || { echo "install: --actors produced no actors" >&2; exit 2; }
   umask 077
   {
-    echo "AV_TASKS_TOKENS=$PAIRS"
-    echo "AV_TASKS_ADMIN=$FIRST"
+    echo "PUNCHLIST_TOKENS=$PAIRS"
+    echo "PUNCHLIST_ADMIN=$FIRST"
   } >"$DATA_DIR/.env"
   chmod 600 "$DATA_DIR/.env"
   echo "   minted tokens for: $ACTORS (admin/approver: $FIRST)"

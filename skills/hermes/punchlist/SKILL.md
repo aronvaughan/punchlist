@@ -14,7 +14,7 @@ metadata:
 The punchlist service (default http://127.0.0.1:8600, override with
 `PUNCHLIST_URL`) is the task list shared by the owner and their agents.
 Tasks carry `created_by` (set from the auth token) and `assignee` (who must
-do it). Actor names come from the server's `AV_TASKS_TOKENS` config; the
+do it). Actor names come from the server's `PUNCHLIST_TOKENS` config; the
 admin actor (the owner) approves reviews. Your delegated work flows:
 active → `claim` → in_progress → `finish` (with report) → review → the
 owner approves → done.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Idempotent: run punchlist as a systemd user unit bound to 127.0.0.1:8600.
-# Tokens come from data/.env (AV_TASKS_TOKENS, chmod 600 — generated at
+# Tokens come from data/.env (PUNCHLIST_TOKENS, chmod 600 — generated at
 # deploy time, never in git). Tailnet exposure is handled separately via
 # `tailscale serve --tcp 8600` (agentic-hermes2 scripts/install/setup-tailscale.sh).
 #
@@ -9,7 +9,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 command -v node >/dev/null || { echo "node not installed"; exit 1; }
-[ -f "$REPO/data/.env" ] || { echo "missing $REPO/data/.env (AV_TASKS_TOKENS) — generate tokens first"; exit 1; }
+[ -f "$REPO/data/.env" ] || { echo "missing $REPO/data/.env (PUNCHLIST_TOKENS) — generate tokens first"; exit 1; }
 
 UNIT_DIR="$HOME/.config/systemd/user"
 mkdir -p "$UNIT_DIR"
@@ -20,7 +20,7 @@ After=network-online.target
 StartLimitBurst=4
 
 [Service]
-Environment=AV_TASKS_DATA=$REPO/data
+Environment=PUNCHLIST_DATA=$REPO/data
 WorkingDirectory=$REPO
 ExecStart=$(command -v node) $REPO/src/server.js
 Restart=on-failure

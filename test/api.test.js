@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
-import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted } from '../src/server.js';
+import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted, migrateLegacyDb } from '../src/server.js';
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
@@ -67,12 +70,46 @@ test('data/.env permission check: warn on group/other-readable, silent on 600', 
   assert.match(envPermWarning(0o100640), /group\/other/);
 });
 
+test('migrateLegacyDb: fresh data dir — no rename, nothing created', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'punchlist-'));
+  assert.equal(migrateLegacyDb(dir, () => {}), false);
+  assert.ok(!existsSync(join(dir, 'punchlist.db')));
+  assert.ok(!existsSync(join(dir, 'av-tasks.db')));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('migrateLegacyDb: legacy av-tasks.db (+ sidecars) is renamed once, data intact, and logged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'punchlist-'));
+  const legacy = join(dir, 'av-tasks.db');
+  { // build a real legacy db with a row in it
+    const { db, migrate } = open(legacy);
+    migrate();
+    db.prepare(`INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p1', 'Home', 't', 't')`).run();
+    db.close();
+  }
+  writeFileSync(`${legacy}-wal`, ''); // stale sidecar must follow the rename
+  const logs = [];
+  assert.equal(migrateLegacyDb(dir, m => logs.push(m)), true);
+  assert.ok(!existsSync(legacy));
+  assert.ok(!existsSync(`${legacy}-wal`));
+  assert.ok(existsSync(join(dir, 'punchlist.db-wal')));
+  assert.match(logs.join('\n'), /migrated legacy database/);
+  const { db } = open(join(dir, 'punchlist.db'));
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM projects').get().c, 1, 'rows survived the rename');
+
+  // second boot: punchlist.db already exists — never rename again
+  writeFileSync(legacy, 'stray');
+  assert.equal(migrateLegacyDb(dir, () => {}), false);
+  assert.ok(existsSync(legacy), 'must not touch av-tasks.db when punchlist.db exists');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('resolveAdmin: defaults to the FIRST actor; explicit must have a token (fail closed)', () => {
   const tokens = { pat: 'p'.repeat(32), claude: TOK_CLAUDE };
   assert.equal(resolveAdmin(tokens, undefined), 'pat');
   assert.equal(resolveAdmin(tokens, ''), 'pat');
   assert.equal(resolveAdmin(tokens, '  claude  '), 'claude');
-  assert.throws(() => resolveAdmin(tokens, 'alex'), /AV_TASKS_ADMIN.*no token/);
+  assert.throws(() => resolveAdmin(tokens, 'alex'), /PUNCHLIST_ADMIN.*no token/);
 });
 
 test('admin parameterization: approve gate, lanes, and default assignee follow the admin actor', async () => {

@@ -6,10 +6,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="${AV_TASKS_DATA:-$ROOT/data}"
-DB="$DATA_DIR/av-tasks.db"
+DATA_DIR="${PUNCHLIST_DATA:-$ROOT/data}"
+DB="$DATA_DIR/punchlist.db"
 BACKUP_DIR="$DATA_DIR/backup"
-SNAP="$BACKUP_DIR/av-tasks-snapshot.db"
+SNAP="$BACKUP_DIR/punchlist-snapshot.db"
 
 [ -f "$DB" ] || { echo "db-snapshot: no database at $DB" >&2; exit 1; }
 mkdir -p "$BACKUP_DIR"

@@ -13,7 +13,7 @@ UI and agents' skills. Boring on purpose.
 - **Runtime:** Node 26 (already on the box), single process.
 - **HTTP:** Hono (one small dep) serving both `/api/v1/*` and static UI.
 - **Storage:** `node:sqlite` (built-in, zero native deps — same engine the
-  hermes sweep reads), WAL mode, one file `data/av-tasks.db`.
+  hermes sweep reads), WAL mode, one file `data/punchlist.db`.
 - **Frontend:** vanilla ES modules + **Web Awesome** free core (the
   Shoelace successor — Shoelace archived 2026-05; wa- components, vendored
   ESM, no build) for inputs/drawer/toasts, + SortableJS (vendored, no CDN,
@@ -68,7 +68,7 @@ so agents and UI share it.
 
 ## Auth & deploy
 
-- Single shared secret: `AV_TASKS_TOKEN` in `data/.env` (gitignored).
+- Single shared secret: `PUNCHLIST_TOKEN` in `data/.env` (gitignored).
   Browser: token pasted once into localStorage via a login prompt; agents:
   env/secrets.local.env. Single-user by design.
 - Bind 127.0.0.1:8600; expose via `tailscale serve --tcp 8600` (same

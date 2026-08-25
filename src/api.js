@@ -30,7 +30,7 @@ const TASK_FIELDS = new Set(['title', 'notes', 'project_id', 'status', 'when_typ
   'due_date', 'due_time', 'recur', 'tags', 'steps', 'assignee', 'auto_close']);
 // The admin (human) actor — approves reviews, owns the Today/Inbox lanes
 // (delegation design). Resolved per app: buildApp's `admin` option, defaulting
-// to the first actor in `tokens` (server.js passes AV_TASKS_ADMIN through).
+// to the first actor in `tokens` (server.js passes PUNCHLIST_ADMIN through).
 
 class ApiError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; this.extra = extra; }
@@ -112,7 +112,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
   // agent-security layer 1: tasks created by an untrusted actor are born
   // vetted=0 — quarantined from agent queues and the claim/finish doors
-  // until the admin vets them (AV_TASKS_UNTRUSTED_ACTORS, default "email")
+  // until the admin vets them (PUNCHLIST_UNTRUSTED_ACTORS, default "email")
   const UNTRUSTED = new Set(untrusted ?? ['email']);
   const byToken = new Map(Object.entries(tokens).map(([name, tok]) => [tok, name]));
   const app = new Hono();

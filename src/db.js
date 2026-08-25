@@ -1,7 +1,7 @@
 // db.js — open(path) -> {db, migrate()}. node:sqlite, WAL, FKs on,
 // busy_timeout 5000. Migrations: each NNN-*.sql runs in ONE transaction
 // together with its schema_migrations insert; file-backed dbs are copied
-// aside (av-tasks.db.pre-NNN) before applying; failure -> named error.
+// aside (punchlist.db.pre-NNN) before applying; failure -> named error.
 import { DatabaseSync } from 'node:sqlite';
 import { readdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
