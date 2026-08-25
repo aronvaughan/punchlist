@@ -68,9 +68,41 @@ or `PUNCHLIST_ENV_FILE`, or `~/.claude/secrets.local.env`, or
 (a bash CLI any agent with a shell can run), while MCP surfaces the same API
 as native tools in every MCP-speaking client — pick per agent, they coexist.
 
-## Screenshots
+## A tour, by use case
 
-*(coming soon — Today view, the review lane, and the Agents board)*
+**Your day.** Today shows what you planned plus anything with an arriving
+deadline — including deadlines you delegated, so nothing goes dark:
+
+![Today view](docs/screenshots/today.png)
+
+**Delegate a task to an agent.** Click any row to edit it in place — set
+the assignee to one of your agents, optionally allow it to close without
+your review:
+
+![Inline editor with assignee control](docs/screenshots/assign-inline.png)
+
+**Watch the work happen.** The Agents board shows what each agent has
+claimed (with timestamps), what's waiting in your review with the agent's
+full report, and what's still queued:
+
+![Agents board](docs/screenshots/agents-view.png)
+
+**Approve the results.** Finished agent work lands in Review with a
+written report — approve it or reopen it with one click:
+
+![Review lane](docs/screenshots/review.png)
+
+**Security, visibly.** Tasks that arrive from untrusted sources (like the
+email intake) are quarantined — agents will not execute them until you vet
+them — and anything an agent's screening flags is parked in Review with
+the reason instead of being executed:
+
+![Quarantine and screening](docs/screenshots/security-quarantine.png)
+
+**Make it yours.** Seventeen themes, grouped and previewed:
+
+![Theme picker](docs/screenshots/theme-picker.png)
+![Spruce theme](docs/screenshots/theme-spruce.png)
 
 ## Security posture
 
