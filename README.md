@@ -94,6 +94,61 @@ wins.
    template there to customize it.
 5. Run `bin/plt validate all` before committing.
 
+## Workflows
+
+Workflows choreograph multi-step, multi-actor work. The core bet: **a
+workflow compiles to punchlist tasks — there is no engine.** Each step
+becomes a real task with an assignee; a small *advancer* watches for
+completed steps and spawns the next ones. Monitoring, review, security
+(vetting/screening), and notifications are all inherited from punchlist.
+(Ships in P3 — format is stable now so authoring can start.)
+
+A workflow is one markdown file, `workflows/{packs,authored}/<name>.md`:
+
+```yaml
+---
+name: research-and-buy
+kind: workflow
+inputs: [item, budget]
+actors: [hermes, owner]
+---
+steps:
+  - id: research
+    assignee: hermes
+    template: research-brief          # steps may reference templates
+    title: "Research {item} under {budget}"
+  - id: decide
+    assignee: owner                   # a human step = a plain task for you
+    needs: [research]
+  - id: order                         # if …
+    assignee: hermes
+    when: { step: decide, outcome: approved }
+    on_fail: { retry: 2, then: escalate }
+  - id: shelve                        # … else
+    else_of: decide
+  - id: escalate
+    assignee: owner
+    title: "Ordering failed twice — take over"
+```
+
+The whole logic vocabulary, by design nothing more:
+
+| Edge | Meaning |
+|---|---|
+| `needs: [ids]` | run after those steps complete (sequence / join) |
+| `when: {step, outcome}` | branch: run if that step recorded that outcome ("if") |
+| `else_of: <step>` | run when none of that step's `when` branches matched ("else") |
+| `repeat_until: <cond>` | loop the step until the condition holds |
+| `on_fail: {retry, then}` | error chain: retry N times, then hand to another step |
+
+Diagrams are **generated, never drawn**: `plt render <workflow>` writes a
+mermaid block into the file between markers — it renders in Obsidian, on
+GitHub, and in web UIs. Hand-edited diagrams are invalid by rule.
+
+Agents that get stuck mid-step don't guess: they *block* their task with
+one concrete question, the owner answers from the punchlist "Needs input"
+lane (or chat), and the step resumes with the answer in context.
+
 ## Layout
 
 ```
