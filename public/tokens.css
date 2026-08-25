@@ -779,6 +779,30 @@ body.drag-active .section-block.empty .task-list {
   border-radius: 0 8px 8px 0;
   font-size: 14px;
 }
+/* needs-input: the agent's question (accent-left like report cards) + chip */
+.chip.blocked-chip { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
+.question-card {
+  margin: 0 8px 8px 42px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--chip-bg);
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+}
+.answer-input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.answer-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .review-actions { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
 @media (max-width: 700px) {
   .review-actions wa-button::part(base) { min-height: 44px; }

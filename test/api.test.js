@@ -885,6 +885,140 @@ test('untrusted set is configurable: buildApp untrusted option + parseUntrusted 
   assert.deepEqual(parseUntrusted(''), []);
 });
 
+// ---- needs-input (block → answer) ----
+test('needs-input round-trip: claim → block → answer → re-claim with question+answer in the payload', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'order the part', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  const claimedAt = (await call('GET', `/api/v1/tasks?view=queue&assignee=claude`)).json.items[0].claimed_at;
+  const blocked = await call('POST', `/api/v1/tasks/${t.id}/block`,
+    { token: TOK_CLAUDE, body: { question: 'Which vendor: A or B?' } });
+  assert.equal(blocked.status, 200);
+  assert.equal(blocked.json.task.status, 'blocked');
+  assert.equal(blocked.json.task.question, 'Which vendor: A or B?');
+  assert.equal(blocked.json.task.claimed_at, claimedAt, 'blocking preserves the claim');
+  // blocked leaves the agent's queue but shows in needs_input (and counts)
+  assert.equal((await call('GET', '/api/v1/tasks?view=queue&assignee=claude')).json.items.length, 0);
+  const lane = await call('GET', '/api/v1/tasks?view=needs_input');
+  assert.deepEqual(lane.json.items.map(x => x.id), [t.id]);
+  assert.equal((await call('GET', '/api/v1/counts')).json.needs_input, 1);
+  // admin answers -> back to active, question and answer both kept
+  const ans = await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'Vendor B — cheaper shipping' } });
+  assert.equal(ans.status, 200);
+  assert.equal(ans.json.task.status, 'active');
+  assert.equal(ans.json.task.question, 'Which vendor: A or B?');
+  assert.equal(ans.json.task.answer, 'Vendor B — cheaper shipping');
+  assert.equal((await call('GET', '/api/v1/counts')).json.needs_input, 0);
+  // back in the queue; re-claim works and the payload carries the exchange
+  const queue = await call('GET', '/api/v1/tasks?view=queue&assignee=claude');
+  assert.deepEqual(queue.json.items.map(x => x.id), [t.id]);
+  const re = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(re.status, 200);
+  assert.equal(re.json.task.question, 'Which vendor: A or B?');
+  assert.equal(re.json.task.answer, 'Vendor B — cheaper shipping');
+});
+
+test('block guards: wrong actor 403; review/done 409; idempotent same-question 200; new question while blocked 409; 404', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { body: { question: 'q' } })).status, 403, 'admin is not the assignee');
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_HERMES, body: { question: 'q' } })).status, 403);
+  // blocking from active (unclaimed) is allowed, like finish
+  const b1 = await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'what scope?' } });
+  assert.equal(b1.status, 200);
+  // idempotent retry with the same question: 200, question not duplicated
+  const again = await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'what scope?' } });
+  assert.equal(again.status, 200);
+  assert.equal(again.json.task.question, 'what scope?');
+  // a different question while already blocked is a conflict
+  const other = await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'something else?' } });
+  assert.equal(other.status, 409);
+  // review/done states refuse
+  await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'full scope' } });
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'r' } });
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q2' } })).status, 409);
+  assert.equal((await call('POST', '/api/v1/tasks/NOPE/block', { token: TOK_CLAUDE, body: { question: 'q' } })).status, 404);
+});
+
+test('answer guards: admin only; non-blocked 409; required + caps; unknown fields', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'a' } })).status, 409, 'not blocked yet');
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
+  const agent = await call('POST', `/api/v1/tasks/${t.id}/answer`, { token: TOK_CLAUDE, body: { answer: 'a' } });
+  assert.equal(agent.status, 403, 'the assignee cannot answer its own question');
+  assert.match(agent.json.error, /only the admin/);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { token: TOK_HERMES, body: { answer: 'a' } })).status, 403);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: {} })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: '  ' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'a', extra: 1 } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'a'.repeat(8193) } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'a'.repeat(8192) } })).status, 200);
+  assert.equal((await call('POST', '/api/v1/tasks/NOPE/answer', { body: { answer: 'a' } })).status, 404);
+});
+
+test('block size caps and validation: question required, <=2KB, no unknown fields', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: {} })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: '  ' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q', extra: 1 } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q'.repeat(2049) } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q'.repeat(2048) } })).status, 200);
+});
+
+test('PATCH cannot set blocked/question/answer — pointed errors to the doors', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'x' } })).json;
+  const st = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'blocked' } });
+  assert.equal(st.status, 400);
+  assert.match(st.json.error, /block/);
+  const q = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { question: 'forged?' } });
+  assert.equal(q.status, 400);
+  assert.match(q.json.error, /block/);
+  const a = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { answer: 'forged' } });
+  assert.equal(a.status, 400);
+  assert.match(a.json.error, /answer/);
+  assert.equal((await call('POST', '/api/v1/tasks', { body: { title: 'x', question: 'q' } })).status, 400);
+  assert.equal((await call('POST', '/api/v1/tasks', { body: { title: 'x', answer: 'a' } })).status, 400);
+});
+
+test('repeat needs-input rounds: question and answer both append under the timestamped rule', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'multi-round', assignee: 'hermes' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_HERMES, body: { question: 'round one?' } });
+  await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'first answer' } });
+  const b2 = await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_HERMES, body: { question: 'round two?' } });
+  assert.equal(b2.status, 200);
+  assert.match(b2.json.task.question, /^round one\?\n\n--- \d{4}-\d{2}-\d{2}T[\d:.]+Z\n\nround two\?$/);
+  // idempotent retry still recognises the LATEST round
+  const retry = await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_HERMES, body: { question: 'round two?' } });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.json.task.question, b2.json.task.question, 'no duplicate round appended');
+  const a2 = await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'second answer' } });
+  assert.match(a2.json.task.answer, /^first answer\n\n--- \d{4}-\d{2}-\d{2}T[\d:.]+Z\n\nsecond answer$/);
+  assert.equal(a2.json.task.status, 'active');
+});
+
+test('vetting guards the block door like claim; blocked tasks stay visible in project/delegated views and can be archived', async () => {
+  const { call } = makeApp();
+  const unv = (await call('POST', '/api/v1/tasks', { body: { title: 'sly', assignee: 'claude' }, token: TOK_EMAIL })).json;
+  const blk = await call('POST', `/api/v1/tasks/${unv.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
+  assert.equal(blk.status, 403);
+  assert.match(blk.json.error, /not vetted/);
+  // a vetted blocked task shows on the board (project + delegated views)
+  const p = (await call('POST', '/api/v1/projects', { body: { name: 'P' } })).json;
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'stuck work', assignee: 'hermes', project_id: p.id } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_HERMES, body: { question: 'q?' } });
+  assert.ok((await call('GET', `/api/v1/tasks?project=${p.id}`)).json.items.some(x => x.id === t.id));
+  assert.ok((await call('GET', '/api/v1/tasks?view=delegated')).json.items.some(x => x.id === t.id));
+  assert.equal((await call('GET', '/api/v1/counts')).json.projects[p.id], 1, 'blocked counts as open project work');
+  // owner cleanup: PATCH to archived is allowed from blocked
+  const arch = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'archived' } });
+  assert.equal(arch.status, 200);
+  assert.equal(arch.json.status, 'archived');
+});
+
 // ---- static / CSP ----
 test('static UI: CSP header on static responses; traversal blocked; API 404 is JSON', async () => {
   const { app } = makeApp();

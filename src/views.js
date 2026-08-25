@@ -15,9 +15,9 @@ const SECTION = `CASE
   ELSE 3 END`;
 
 const LIVE = `status = 'active'`;
-// delegation: in_progress/review tasks are still open work — project/tag/
-// search views show them (with assignee chips); logbook stays done-only.
-const OPEN = `status IN ('active', 'in_progress', 'review')`;
+// delegation: in_progress/blocked/review tasks are still open work — project/
+// tag/search views show them (with assignee chips); logbook stays done-only.
+const OPEN = `status IN ('active', 'in_progress', 'blocked', 'review')`;
 // Inbox/Upcoming are the HUMAN's lanes (delegation design): when-driven
 // delegated work must not clutter the owner's day. But DUE-DATES OVERRIDE
 // ASSIGNEE SCOPING (2026-08-24 amendment): a deadline is a deadline no matter
@@ -25,8 +25,9 @@ const OPEN = `status IN ('active', 'in_progress', 'review')`;
 // ALL assignees. Project/tag/search/logbook stay unscoped entirely.
 // :admin = the admin (human) actor, bound at query time like :today.
 const MINE = `assignee = :admin`;
-// Agents view order inside one assignee: in_progress, then review, then queued
-const AGENT_STATUS = `CASE status WHEN 'in_progress' THEN 0 WHEN 'review' THEN 1 ELSE 2 END`;
+// Agents view order inside one assignee: in_progress, then blocked (needs
+// input), then review, then queued
+const AGENT_STATUS = `CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'review' THEN 2 ELSE 3 END`;
 
 const VIEWS = {
   inbox: {
@@ -72,10 +73,17 @@ const VIEWS = {
     where: `assignee <> :admin AND ${OPEN}`,
     keys: ['assignee', AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
+  // needs-input: everything blocked on a question for the admin, oldest wait
+  // first (updated_at is stamped when the task blocks)
+  needs_input: {
+    where: `status = 'blocked'`,
+    keys: ['updated_at'], dir: 'ASC',
+  },
   // agent work queue (agent-security layer 1): what an agent may pick up.
   // vetted=0 rows are EXCLUDED server-side — combined with the ?assignee=
   // filter this is the whole queue contract for pl.sh queue / MCP
-  // punchlist_queue; the claim/finish doors enforce the same gate.
+  // punchlist_queue; the claim/finish doors enforce the same gate. Status-
+  // scoped: blocked tasks stay out until the admin's answer re-activates them.
   queue: {
     where: `status IN ('active', 'in_progress') AND vetted = 1`,
     keys: [AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',

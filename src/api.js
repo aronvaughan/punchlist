@@ -24,7 +24,7 @@ const MIME = {
   '.json': 'application/json', '.woff2': 'font/woff2',
 };
 
-const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20 };
+const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20, question: 2048, answer: 8192 };
 const MAX_BODY_BYTES = 262144; // 256KB — enforced BEFORE JSON.parse (413)
 const TASK_FIELDS = new Set(['title', 'notes', 'project_id', 'status', 'when_type', 'when_date',
   'due_date', 'due_time', 'recur', 'tags', 'steps', 'assignee', 'auto_close']);
@@ -48,6 +48,9 @@ function tx(db, fn) {
 function validateTaskBody(body, { partial }) {
   // report is owned by POST /tasks/:id/finish — never client-writable here
   if ('report' in body) throw new ApiError(400, 'report is set by POST /api/v1/tasks/:id/finish');
+  // question/answer are owned by the block/answer doors — same rule as report
+  if ('question' in body) throw new ApiError(400, 'question is set by POST /api/v1/tasks/:id/block');
+  if ('answer' in body) throw new ApiError(400, 'answer is set by POST /api/v1/tasks/:id/answer');
   for (const k of Object.keys(body)) {
     if (!TASK_FIELDS.has(k)) throw new ApiError(400, `unknown field: ${k}`);
   }
@@ -83,6 +86,9 @@ function validateTaskBody(body, { partial }) {
     if (body.status === 'done') throw new ApiError(400, "use POST /api/v1/tasks/:id/complete");
     if (body.status === 'in_progress' || body.status === 'review') {
       throw new ApiError(400, 'use POST /api/v1/tasks/:id/claim and /finish');
+    }
+    if (body.status === 'blocked') {
+      throw new ApiError(400, 'use POST /api/v1/tasks/:id/block (and /answer to unblock)');
     }
     if (!['active', 'archived'].includes(body.status)) throw new ApiError(400, 'status must be active|archived');
   }
@@ -234,7 +240,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
   app.get('/api/v1/tasks', c => {
     const { view, project, tag, q, assignee, limit, cursor, window: windowRaw } = c.req.query();
     if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook',
-      'review', 'delegated', 'queue', 'unvetted'].includes(view)) {
+      'review', 'delegated', 'queue', 'unvetted', 'needs_input'].includes(view)) {
       throw new ApiError(400, `unknown view: ${view}`);
     }
     const lim = Math.min(Math.max(1, Number(limit) || 100), 500);
@@ -363,6 +369,13 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     });
   });
 
+  // Repeat rounds of report/question/answer append under one timestamped
+  // rule; lastRound recovers the most recent segment (idempotency checks).
+  const ROUND_SEP = /\n\n--- \d{4}-\d{2}-\d{2}T[\d:.]+Z\n\n/;
+  const appendRound = (existing, next, now) =>
+    existing ? `${existing}\n\n--- ${now}\n\n${next}` : next;
+  const lastRound = s => (s == null ? null : s.split(ROUND_SEP).pop());
+
   // ---- delegation lifecycle (claim → finish → approve) ----
   app.post('/api/v1/tasks/:id/claim', c => {
     const id = c.req.param('id');
@@ -403,9 +416,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
       }
       const now = new Date().toISOString();
       // repeat finishes (after a reopen) append under a timestamped rule
-      const report = task.report
-        ? `${task.report}\n\n--- ${now}\n\n${body.report.trim()}`
-        : body.report.trim();
+      const report = appendRound(task.report, body.report.trim(), now);
       if (task.auto_close) {
         // straight to done — the final transition, so recurrence spawns here
         return doneResponse(c, id, toDone(task, ['active', 'in_progress'], { report }));
@@ -426,6 +437,64 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
       if (task.status === 'done') return c.json({ task: attach(task) }); // idempotent
       if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
       return doneResponse(c, id, toDone(task, ['review']));
+    });
+  });
+
+  // ---- needs-input (block → answer → back to active) ----
+  // An agent that gets stuck asks ONE concrete question instead of guessing
+  // or finishing-with-a-question. The task leaves the agent's queue until the
+  // admin answers; the answer travels with the task when it is re-claimed.
+  app.post('/api/v1/tasks/:id/block', async c => {
+    const id = c.req.param('id');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (k !== 'question') throw new ApiError(400, `unknown field: ${k}`);
+    if (typeof body.question !== 'string' || !body.question.trim() || body.question.length > CAPS.question) {
+      throw new ApiError(400, `question is required (<=${CAPS.question} chars)`);
+    }
+    return tx(db, () => {
+      const task = getTask(id);
+      if (!task) throw new ApiError(404, 'task not found');
+      // same gate as claim/finish: unvetted work cannot be touched by agents
+      if (!task.vetted) throw new ApiError(403, 'task not vetted for agent execution');
+      if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can block');
+      const q = body.question.trim();
+      if (task.status === 'blocked') {
+        // idempotent re-block: the same question again is a 200 no-op
+        if (lastRound(task.question) === q) return c.json({ task: attach(task) });
+        throw new ApiError(409, 'task is already blocked on a different question — wait for the answer');
+      }
+      if (task.status !== 'active' && task.status !== 'in_progress') {
+        throw new ApiError(409, `cannot block a ${task.status} task`);
+      }
+      const now = new Date().toISOString();
+      // repeat rounds (block → answer → block again) append like report does;
+      // claimed_at is preserved — blocking pauses the claim, not the work
+      db.prepare(`UPDATE tasks SET status='blocked', question=?, updated_at=?
+                  WHERE id=? AND status IN ('active', 'in_progress')`)
+        .run(appendRound(task.question, q, now), now, id);
+      return c.json({ task: attach(getTask(id)) });
+    });
+  });
+
+  app.post('/api/v1/tasks/:id/answer', async c => {
+    const id = c.req.param('id');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (k !== 'answer') throw new ApiError(400, `unknown field: ${k}`);
+    if (typeof body.answer !== 'string' || !body.answer.trim() || body.answer.length > CAPS.answer) {
+      throw new ApiError(400, `answer is required (<=${CAPS.answer} chars)`);
+    }
+    return tx(db, () => {
+      const task = getTask(id);
+      if (!task) throw new ApiError(404, 'task not found');
+      if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can answer`);
+      if (task.status !== 'blocked') throw new ApiError(409, `cannot answer a ${task.status} task`);
+      const now = new Date().toISOString();
+      // blocked → active; question kept alongside the answer so a re-claim
+      // sees the full exchange. Repeat rounds append (same rule as report).
+      db.prepare(`UPDATE tasks SET status='active', answer=?, updated_at=?
+                  WHERE id=? AND status='blocked'`)
+        .run(appendRound(task.answer, body.answer.trim(), now), now, id);
+      return c.json({ task: attach(getTask(id)) });
     });
   });
 
@@ -599,7 +668,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     // which shows delegated in_progress/review work too
     for (const row of db.prepare(
       `SELECT project_id, COUNT(*) c FROM tasks
-       WHERE status IN ('active', 'in_progress', 'review') AND project_id IS NOT NULL
+       WHERE status IN ('active', 'in_progress', 'blocked', 'review') AND project_id IS NOT NULL
        GROUP BY project_id`).all()) {
       projects[row.project_id] = row.c;
     }
@@ -607,6 +676,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
       inbox: count('inbox'), today: count('today'), upcoming: count('upcoming'),
       due_soon: count('due_soon'), review: count('review'), delegated: count('delegated'),
       unvetted: count('unvetted'), // quarantined agent work awaiting the admin's vet
+      needs_input: count('needs_input'), // blocked on a question for the admin
       projects,
       actor: c.get('actor'), // who this token belongs to (rail footer)
     });
@@ -621,7 +691,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
       `SELECT g.id, g.name, COUNT(t.id) AS count
        FROM tags g
        LEFT JOIN task_tags tt ON tt.tag_id = g.id
-       LEFT JOIN tasks t ON t.id = tt.task_id AND t.status IN ('active', 'in_progress', 'review')
+       LEFT JOIN tasks t ON t.id = tt.task_id AND t.status IN ('active', 'in_progress', 'blocked', 'review')
        GROUP BY g.id
        ORDER BY g.name COLLATE NOCASE, g.id`
     ).all();

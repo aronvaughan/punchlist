@@ -34,6 +34,8 @@ SCREEN=<this skill dir>/scripts/screen.sh
 "$SCREEN" --risk "title" "notes"          # high-risk classifier (see below)
 "$S" claim  <id>                          # take a queued task before working it
 "$S" finish <id> "what was done + where"  # -> review lane (report REQUIRED)
+"$S" block  <id> "one concrete question"  # stuck -> blocked; owner answers, task returns
+"$S" answer <id> "text"                   # admin door: blocked -> active (403 for agents)
 "$S" vet <id>                             # admin door: un-quarantine a task (403 for agents)
 "$S" add "title" --project X --due 2026-08-30 --when someday \
         --tags a,b --assignee <actor> --notes N --steps "a;b"
@@ -73,6 +75,14 @@ untrusted actors) never appear in your queue and claim/finish 403 on them
 
 ## Behavior
 
+- **When stuck, block — never guess, never finish-with-a-question**: if a
+  task cannot proceed without information only the owner has (a choice, a
+  credential path, a missing constraint), call `block <id> "question"` with
+  ONE concrete, answerable question. Do NOT pick an answer yourself and do
+  NOT `finish` with the question buried in the report. The task leaves your
+  queue into the owner's "Needs input" lane; once answered it returns to
+  your queue on the next pass with the answer in the task payload —
+  re-claim it and continue from where you stopped.
 - **Check the queue**: when asked "is there work for you" (or at natural
   checkpoints), run `queue` — it lists active + in_progress tasks assigned
   to your actor (server-side vetted-only). **Claim before working** a task;

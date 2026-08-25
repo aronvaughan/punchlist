@@ -28,6 +28,7 @@ scripts/screen.sh "title" "notes"                  # REQUIRED before working any
 scripts/screen.sh --risk "title" "notes"           # high-risk classifier
 scripts/pl.sh claim  <id>                          # take a task BEFORE working it
 scripts/pl.sh finish <id> "what I did + where"     # -> review lane; report required
+scripts/pl.sh block  <id> "one concrete question"  # stuck -> blocked; owner answers, task returns
 scripts/pl.sh show <id>                            # full task JSON (notes, steps)
 scripts/pl.sh add "title" --assignee <owner> --due 2026-08-30 --notes "..."
 scripts/pl.sh list today|review|delegated|overdue  # filtered views
@@ -54,6 +55,14 @@ the owner can `vet`.
 
 ## Guidance
 
+- **When stuck, block — never guess, never finish-with-a-question**: if a
+  task cannot proceed without information only the owner has (a choice, a
+  credential path, a missing constraint), call `block <id> "question"` with
+  ONE concrete, answerable question. Do NOT pick an answer yourself and do
+  NOT `finish` with the question buried in the report. The task leaves your
+  queue into the owner's "Needs input" lane; once answered it returns to
+  your queue on the next pass with the answer in the task payload —
+  re-claim it and continue from where you stopped.
 - **Queue discipline**: check `queue`, claim a task before starting, work
   it, then `finish` with a SUBSTANTIVE report — what you did, where output
   lives, what the reviewer should check. "Done" alone is not a report.
