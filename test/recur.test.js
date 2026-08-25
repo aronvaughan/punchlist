@@ -64,7 +64,7 @@ test('spawn copies project/tags/steps(unchecked), sets when=nextDue, spawned_fro
   db.prepare(`INSERT INTO projects (id,name,rank,created_at,updated_at) VALUES ('p1','Home',1,?,?)`).run(now, now);
   db.prepare(`INSERT INTO tags (id,name) VALUES ('g1','chore')`).run();
   db.prepare(`INSERT INTO tasks (id,title,notes,project_id,status,when_type,when_date,due_date,rank,recur,created_by,created_at,updated_at)
-              VALUES ('t1','water plants','note',  'p1','done','date','2026-03-01','2026-03-01',1,'{"freq":"daily","anchor":"due"}','aron',?,?)`).run(now, now);
+              VALUES ('t1','water plants','note',  'p1','done','date','2026-03-01','2026-03-01',1,'{"freq":"daily","anchor":"due"}','alex',?,?)`).run(now, now);
   db.prepare(`INSERT INTO task_tags (task_id,tag_id) VALUES ('t1','g1')`).run();
   db.prepare(`INSERT INTO steps (id,task_id,title,done,rank) VALUES ('s1','t1','fill can',1,1)`).run();
   // an existing upcoming task in the same project, to test end-of-section rank
@@ -81,7 +81,7 @@ test('spawn copies project/tags/steps(unchecked), sets when=nextDue, spawned_fro
   assert.equal(spawned.project_id, 'p1');
   assert.equal(spawned.recur, old.recur);
   assert.equal(spawned.spawned_from, 't1');
-  assert.equal(spawned.created_by, 'aron');
+  assert.equal(spawned.created_by, 'alex');
   assert.equal(spawned.completed_at, null);
   assert.equal(spawned.today_rank, null);
   assert.ok(spawned.rank > 5, 'rank appended after existing upcoming task');

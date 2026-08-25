@@ -32,7 +32,7 @@ tasks(id, title, notes, project_id NULL, status TEXT
       due_date TEXT NULL, due_time TEXT NULL,
       rank REAL,                    -- manual order within its section
       recur JSON NULL,              -- {freq, days?, dom?, n?, anchor:'due'|'completion'}
-      created_by TEXT,              -- aron|claude|hermes|email
+      created_by TEXT,              -- alex|claude|hermes|email
       completed_at NULL, created_at, updated_at)
 steps(id, task_id, title, done INT, rank REAL)
 tags(id, name UNIQUE);  task_tags(task_id, tag_id)

@@ -11,7 +11,7 @@ const TOK = 'a'.repeat(32);
 function makeApp() {
   const { db, migrate } = open(':memory:');
   migrate();
-  const app = buildApp({ db, tokens: { aron: TOK }, today: () => '2026-03-10' });
+  const app = buildApp({ db, tokens: { alex: TOK }, today: () => '2026-03-10' });
   const get = path => app.fetch(new Request(`http://x${path}`));
   return { app, get };
 }

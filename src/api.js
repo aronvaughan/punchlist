@@ -259,7 +259,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     for (const k of Object.keys(body)) if (k !== 'text') throw new ApiError(400, `unknown field: ${k}`);
     const projects = db.prepare('SELECT id, name FROM projects WHERE archived = 0').all();
     let fields;
-    try { fields = quickParse(body.text, { projects, today: today() }); } catch (e) { throw new ApiError(400, e.message); }
+    try { fields = quickParse(body.text, { projects, today: today(), admin: HUMAN }); } catch (e) { throw new ApiError(400, e.message); }
     if (!fields.title) throw new ApiError(400, 'quickadd text has no title');
     return c.json(createTask(fields, c.get('actor')), 201);
   });
@@ -297,7 +297,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     // manual Today order must not outlive Today membership: a task scheduled
     // out of the view would otherwise re-enter at its stale today_rank instead
     // of appending after manually-placed items (I11).
-    // …and only aron's own tasks hold a manual Today position. A delegated
+    // …and only the admin's own tasks hold a manual Today position. A delegated
     // task can legitimately sit in Today when its DUE date arrives (due
     // overrides assignee scoping — 2026-08-24 amendment), but delegating
     // still clears today_rank ON PURPOSE: its slot in the human's manual
@@ -456,7 +456,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     const t = today();
     const col = list === 'today' ? 'today_rank' : 'rank';
 
-    // Manual Today ordering is for aron's own rows only: delegated tasks may
+    // Manual Today ordering is for the admin's own rows only: delegated tasks may
     // APPEAR in Today (due-driven — 2026-08-24 amendment) but never hold a
     // today_rank, so they can't be dragged or used as reorder neighbors.
     const inTodayView = x => x.status === 'active' && x.assignee === HUMAN &&

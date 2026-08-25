@@ -88,7 +88,7 @@ let server, url, admin, agent, tmp;
 before(async () => {
   const { db, migrate } = open(':memory:');
   migrate();
-  const app = buildApp({ db, tokens: { aron: TOK_ARON, claude: TOK_CLAUDE, email: TOK_EMAIL },
+  const app = buildApp({ db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, email: TOK_EMAIL },
     today: () => TODAY });
   server = serve(app, { host: '127.0.0.1', port: 0 });
   await new Promise(resolve => server.on('listening', resolve));
@@ -146,7 +146,7 @@ test('delegation flow: add → today → queue → claim → finish → review �
     tags: ['infra'], assignee: 'claude', notes: 'use the snapshot script',
     steps: ['snapshot', 'verify'] });
   const id = added.task.id;
-  assert.equal(added.task.created_by, 'aron');
+  assert.equal(added.task.created_by, 'alex');
   assert.equal(added.task.assignee, 'claude');
   assert.equal(added.task.project_id, proj.id);
   assert.equal(added.task.due, TODAY);
@@ -182,7 +182,7 @@ test('delegation flow: add → today → queue → claim → finish → review �
   assert.equal(shown.report, 'rotated; verified checksums');
 
   const counts = await admin.ok('punchlist_counts');
-  assert.equal(counts.actor, 'aron');
+  assert.equal(counts.actor, 'alex');
   assert.equal(counts.review, 0);
   assert.equal(counts.delegated, 0);
 });

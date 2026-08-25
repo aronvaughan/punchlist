@@ -3,12 +3,13 @@
 // Tokens: #tag  @project  @"multi word"  !due  ^when  *recur  >assignee
 //   dates: YYYY-MM-DD | today | tomorrow | weekday name (strictly after today)
 //   recur: *daily | *every:N | *weekly:d1,d2 | *monthly:DOM  [+completion]
-//   assignee: >me | >claude | >hermes (case-insensitive; >me = aron) — an
+//   assignee: >me | >claude | >hermes (case-insensitive; >me = the admin) — an
 //   unknown >word stays in the title, like an unknown @project
 // A recurrence without an explicit !due defaults due=today (design C4).
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-const ASSIGNEES = { me: 'aron', claude: 'claude', hermes: 'hermes' };
+// '>me' resolves to the configured admin actor (passed by the API layer).
+const AGENT_ASSIGNEES = { claude: 'claude', hermes: 'hermes' };
 
 function parseDate(word, todayISO) {
   const w = word.toLowerCase();
@@ -71,7 +72,8 @@ function parseRecur(spec) {
   }
 }
 
-export function parse(text, { projects = [], today } = {}) {
+export function parse(text, { projects = [], today, admin = 'owner' } = {}) {
+  const ASSIGNEES = { me: admin, ...AGENT_ASSIGNEES };
   const todayISO = today || new Date().toISOString().slice(0, 10);
   const out = {};
   const tags = [];

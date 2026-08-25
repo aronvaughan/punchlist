@@ -15,18 +15,18 @@ function seed() {
     `INSERT INTO tasks (id,title,notes,project_id,status,when_type,when_date,due_date,rank,today_rank,assignee,completed_at,created_at,updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   //        id      title            notes      proj  status    wtype     wdate         due           rank today_rank assignee  completed
-  ins.run('inb1', 'triage me',       '',        null, 'active', null,     null,         null,         1,   null, 'aron',   null, now, now);
-  ins.run('inb2', 'note about 100%', 'a_b c',   null, 'active', null,     null,         null,         2,   null, 'aron',   null, now, now);
-  ins.run('tod1', 'arrived when',    '',        'p1', 'active', 'date',   '2026-03-10', null,         1,   null, 'aron',   null, now, now);
-  ins.run('tod2', 'manual first',    '',        null, 'active', 'date',   '2026-03-08', null,         2,   5,    'aron',   null, now, now);
-  ins.run('tod3', 'due today only',  '',        'p1', 'active', null,     null,         '2026-03-10', 3,   null, 'aron',   null, now, now);
-  ins.run('smd1', 'someday but due', '',        'p1', 'active', 'someday', null,        '2026-03-09', 4,   null, 'aron',   null, now, now);
-  ins.run('smd2', 'someday parked',  '',        'p1', 'active', 'someday', null,        null,         5,   null, 'aron',   null, now, now);
-  ins.run('up1',  'future when',     '',        'p1', 'active', 'date',   '2026-03-15', null,         1,   null, 'aron',   null, now, now);
-  ins.run('ovr1', 'was due yesterday','',       null, 'active', null,     null,         '2026-03-09', 6,   null, 'aron',   null, now, now);
-  ins.run('done1','finished due today','',      null, 'done',   null,     null,         '2026-03-10', 7,   null, 'aron',   '2026-03-09T10:00:00.000Z', now, now);
-  ins.run('done2','finished later',  '',        null, 'done',   null,     null,         null,         8,   null, 'aron',   '2026-03-10T10:00:00.000Z', now, now);
-  // delegated (assignee != aron) — must stay OUT of aron's lanes
+  ins.run('inb1', 'triage me',       '',        null, 'active', null,     null,         null,         1,   null, 'alex',   null, now, now);
+  ins.run('inb2', 'note about 100%', 'a_b c',   null, 'active', null,     null,         null,         2,   null, 'alex',   null, now, now);
+  ins.run('tod1', 'arrived when',    '',        'p1', 'active', 'date',   '2026-03-10', null,         1,   null, 'alex',   null, now, now);
+  ins.run('tod2', 'manual first',    '',        null, 'active', 'date',   '2026-03-08', null,         2,   5,    'alex',   null, now, now);
+  ins.run('tod3', 'due today only',  '',        'p1', 'active', null,     null,         '2026-03-10', 3,   null, 'alex',   null, now, now);
+  ins.run('smd1', 'someday but due', '',        'p1', 'active', 'someday', null,        '2026-03-09', 4,   null, 'alex',   null, now, now);
+  ins.run('smd2', 'someday parked',  '',        'p1', 'active', 'someday', null,        null,         5,   null, 'alex',   null, now, now);
+  ins.run('up1',  'future when',     '',        'p1', 'active', 'date',   '2026-03-15', null,         1,   null, 'alex',   null, now, now);
+  ins.run('ovr1', 'was due yesterday','',       null, 'active', null,     null,         '2026-03-09', 6,   null, 'alex',   null, now, now);
+  ins.run('done1','finished due today','',      null, 'done',   null,     null,         '2026-03-10', 7,   null, 'alex',   '2026-03-09T10:00:00.000Z', now, now);
+  ins.run('done2','finished later',  '',        null, 'done',   null,     null,         null,         8,   null, 'alex',   '2026-03-10T10:00:00.000Z', now, now);
+  // delegated (assignee != alex) — must stay OUT of alex's lanes
   ins.run('del1', 'agent when today','',        null, 'active', 'date',   '2026-03-10', '2026-03-12', 9,   null, 'claude', null, now, now);
   ins.run('del2', 'agent working',   '',        'p1', 'in_progress', null, null,        null,         9,   null, 'claude', null, now, '2026-03-10T09:00:00.000Z');
   ins.run('del3', 'awaiting review', '',        null, 'review', null,     null,         null,         10,  null, 'hermes', null, now, '2026-03-10T11:00:00.000Z');
@@ -38,7 +38,7 @@ function seed() {
 }
 
 function run(db, view, params = {}) {
-  const { sql, args } = taskWhere(view, { today: TODAY, admin: 'aron', limit: 100, ...params });
+  const { sql, args } = taskWhere(view, { today: TODAY, admin: 'alex', limit: 100, ...params });
   return db.prepare(sql).all(...args);
 }
 
@@ -105,7 +105,7 @@ test('pagination: keyset cursor walks the whole view without dupes or gaps', () 
   const seen = [];
   let cursor;
   for (let i = 0; i < 10; i++) {
-    const { sql, args, keys } = taskWhere('today', { today: TODAY, admin: 'aron', limit: 2, cursor });
+    const { sql, args, keys } = taskWhere('today', { today: TODAY, admin: 'alex', limit: 2, cursor });
     const rows = db.prepare(sql).all(...args);
     if (rows.length === 0) break;
     seen.push(...rows.map(r => r.id));
@@ -132,7 +132,7 @@ test('due-dates override assignee scoping; when-dates do not (2026-08-24 amendme
   assert.ok(run(db, 'overdue').map(r => r.id).includes('del5'));
 });
 
-test("aron's when-driven lanes exclude delegated work: inbox/upcoming are assignee='aron'", () => {
+test("alex's when-driven lanes exclude delegated work: inbox/upcoming are assignee='alex'", () => {
   const db = seed();
   assert.ok(!run(db, 'inbox').map(r => r.id).includes('del5'), 'delegated projectless task stays out of Inbox');
   db.prepare(`UPDATE tasks SET when_date='2026-03-18' WHERE id='del1'`).run();
@@ -146,11 +146,11 @@ test('review view: status=review only, freshest finish first', () => {
   assert.deepEqual(ids, ['del5', 'del3']);
 });
 
-test('delegated view: open work off aron\'s plate, grouped by agent then in_progress→review→active', () => {
+test('delegated view: open work off alex\'s plate, grouped by agent then in_progress→review→active', () => {
   const ids = run(seed(), 'delegated').map(r => r.id);
   assert.deepEqual(ids, ['del2', 'del1', 'del5', 'del6', 'del3']); // claude (working, queued...), then hermes
   assert.ok(!ids.includes('del4'), 'archived delegated task is not in flight');
-  assert.ok(!ids.includes('tod1'), "aron's own tasks are not delegated");
+  assert.ok(!ids.includes('tod1'), "alex's own tasks are not delegated");
 });
 
 test('?assignee= filter composes with views', () => {
@@ -164,15 +164,15 @@ test('?assignee= filter composes with views', () => {
 
 test('admin is a parameter, not a literal: lanes follow whoever :admin names', () => {
   const db = seed();
-  // as admin=claude, the aron rows become "delegated" and claude's lanes are his
+  // as admin=claude, the alex rows become "delegated" and claude's lanes are his
   const inbox = run(db, 'inbox', { admin: 'claude' }).map(r => r.id);
   assert.ok(inbox.includes('del5'), "claude's projectless no-when task is HIS inbox");
-  assert.ok(!inbox.includes('inb1'), "aron's tasks stay out of claude's inbox");
+  assert.ok(!inbox.includes('inb1'), "alex's tasks stay out of claude's inbox");
   const delegated = run(db, 'delegated', { admin: 'claude' }).map(r => r.id);
   assert.ok(delegated.includes('tod1') && !delegated.includes('del5'));
-  // no 'aron' literal survives in the generated SQL — admin travels as an arg
+  // no 'alex' literal survives in the generated SQL — admin travels as an arg
   const { sql, args } = taskWhere('delegated', { today: TODAY, admin: 'pat' });
-  assert.ok(!sql.includes('aron') && args.includes('pat'));
+  assert.ok(!sql.includes('alex') && args.includes('pat'));
   const c = taskCount('inbox', { today: TODAY, admin: 'claude' });
   assert.equal(db.prepare(c.sql).get(...c.args).c, 2); // del5, del6
 });
@@ -191,22 +191,22 @@ test('queue view: active+in_progress, vetted only — the server-side agent-queu
 
 test('unvetted view: open agent-assigned vetted=0 rows; taskCount agrees', () => {
   const db = seed();
-  db.prepare(`UPDATE tasks SET vetted=0 WHERE id IN ('del5', 'inb1')`).run(); // inb1 is aron's
+  db.prepare(`UPDATE tasks SET vetted=0 WHERE id IN ('del5', 'inb1')`).run(); // inb1 is alex's
   const ids = run(db, 'unvetted').map(r => r.id);
-  assert.deepEqual(ids, ['del5'], "only agent-assigned quarantine counts; aron's own row does not");
-  const { sql, args } = taskCount('unvetted', { today: TODAY, admin: 'aron' });
+  assert.deepEqual(ids, ['del5'], "only agent-assigned quarantine counts; alex's own row does not");
+  const { sql, args } = taskCount('unvetted', { today: TODAY, admin: 'alex' });
   assert.equal(db.prepare(sql).get(...args).c, 1);
 });
 
 test('taskCount covers review and delegated', () => {
   const db = seed();
   const c = view => {
-    const { sql, args } = taskCount(view, { today: TODAY, soon: '2026-04-09', admin: 'aron' });
+    const { sql, args } = taskCount(view, { today: TODAY, soon: '2026-04-09', admin: 'alex' });
     return db.prepare(sql).get(...args).c;
   };
   assert.equal(c('review'), 1);
   assert.equal(c('delegated'), 5);
-  assert.equal(c('today'), 6, 'when-scoped to aron but due-driven del6 counts; when-only del1 does not');
+  assert.equal(c('today'), 6, 'when-scoped to alex but due-driven del6 counts; when-only del1 does not');
   assert.equal(c('due_soon'), 1, 'delegated future due (del1) counts');
-  assert.equal(c('inbox'), 3, 'aron-scoped: del5 not counted'); // inb1 inb2 ovr1
+  assert.equal(c('inbox'), 3, 'alex-scoped: del5 not counted'); // inb1 inb2 ovr1
 });
