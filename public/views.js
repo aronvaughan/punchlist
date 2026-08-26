@@ -390,6 +390,20 @@ function toggleRowTags(task, row, tagsWrap) {
   setTimeout(() => box.querySelector('input')?.focus(), 30);
 }
 
+// status marker: one small themed glyph per agent in-flight state, shown where
+// the checkbox sits. active/queued and done use the checkbox itself.
+const STATUS_GLYPH = { in_progress: '◐', blocked: '❓', review: '✓' };
+const STATUS_LABEL = {
+  in_progress: 'In progress', blocked: 'Blocked — waiting on a human', review: 'In review — awaiting approval',
+};
+function statusMarker(task) {
+  const m = el('span', `status-marker st-${task.status}`, STATUS_GLYPH[task.status] ?? '');
+  m.setAttribute('role', 'img');
+  m.setAttribute('aria-label', STATUS_LABEL[task.status] ?? task.status);
+  m.title = STATUS_LABEL[task.status] ?? '';
+  return m;
+}
+
 function taskRow(task, { showProject = false, logbook = false, sortable = false, showClaimed = false } = {}) {
   const row = el('div', 'task-row');
   row.dataset.id = task.id;
@@ -402,32 +416,39 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     grip.setAttribute('aria-hidden', 'true');
     row.append(grip);
   }
-  const check = el('button', 'check' + (task.status === 'done' ? ' checked' : ''));
-  check.setAttribute('aria-label', task.status === 'done' ? 'Reopen' : 'Complete');
-  check.addEventListener('click', async e => {
-    e.stopPropagation();
-    // optimistic: flip immediately, roll back on failure
-    check.classList.toggle('checked');
-    row.classList.toggle('done');
-    const completing = !(logbook || task.status === 'done');
-    try {
-      if (completing) {
-        // micro-interaction: fill, fade + collapse (~250ms), then remove;
-        // prefers-reduced-motion skips the animation entirely
-        const wait = reducedMotion() ? Promise.resolve()
-          : new Promise(r => { row.classList.add('removing'); setTimeout(r, 250); });
-        const [res] = await Promise.all([api('POST', `/tasks/${task.id}/complete`), wait]);
-        if (res.spawned_id) toast('Done — next occurrence scheduled', 'success');
-      } else {
-        await api('PATCH', `/tasks/${task.id}`, { status: 'active' });
+  // one status vocabulary: active/queued and done keep the checkbox; the agent
+  // in-flight states (in_progress, blocked, review) show a status marker in its
+  // place so board state reads at a glance across every view.
+  if (task.status === 'in_progress' || task.status === 'blocked' || task.status === 'review') {
+    row.append(statusMarker(task));
+  } else {
+    const check = el('button', 'check' + (task.status === 'done' ? ' checked' : ''));
+    check.setAttribute('aria-label', task.status === 'done' ? 'Reopen' : 'Complete');
+    check.addEventListener('click', async e => {
+      e.stopPropagation();
+      // optimistic: flip immediately, roll back on failure
+      check.classList.toggle('checked');
+      row.classList.toggle('done');
+      const completing = !(logbook || task.status === 'done');
+      try {
+        if (completing) {
+          // micro-interaction: fill, fade + collapse (~250ms), then remove;
+          // prefers-reduced-motion skips the animation entirely
+          const wait = reducedMotion() ? Promise.resolve()
+            : new Promise(r => { row.classList.add('removing'); setTimeout(r, 250); });
+          const [res] = await Promise.all([api('POST', `/tasks/${task.id}/complete`), wait]);
+          if (res.spawned_id) toast('Done — next occurrence scheduled', 'success');
+        } else {
+          await api('PATCH', `/tasks/${task.id}`, { status: 'active' });
+        }
+        await reload();
+      } catch (err) {
+        row.classList.remove('removing');
+        await rollback(`Update failed: ${err.message}`);
       }
-      await reload();
-    } catch (err) {
-      row.classList.remove('removing');
-      await rollback(`Update failed: ${err.message}`);
-    }
-  });
-  row.append(check);
+    });
+    row.append(check);
+  }
 
   // two-line layout: title (+ status/due chips) on top; project pill + tag
   // chips move to a muted subline beneath, so long titles read on a phone

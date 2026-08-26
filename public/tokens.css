@@ -795,6 +795,27 @@ body.drag-active .section-block.empty .task-list {
   transform: rotate(45deg);
 }
 
+/* status markers: one themed glyph vocabulary for agent in-flight states,
+   shown in the checkbox slot. in_progress = accent ring; review = filled
+   accent; blocked = danger ring (waiting on a human). */
+.status-marker {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1;
+  font-family: var(--font);
+}
+.status-marker.st-review { background: var(--accent); color: var(--on-accent); }
+.status-marker.st-blocked { border-color: var(--danger); color: var(--danger); }
+
 .chip {
   flex: none;
   font-size: 12px;

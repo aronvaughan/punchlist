@@ -100,6 +100,16 @@ test('task rows: project/tag pills move to a muted subline (phone readability)',
   assert.match(views, /toggleRowTags/); // inline tag editor from the subline
 });
 
+test('status markers: themed glyphs for agent in-flight states', async () => {
+  const { get } = makeApp();
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.status-marker\s*\{/);
+  assert.match(css, /\.status-marker\.st-review\s*\{[^}]*var\(--accent\)/);
+  assert.match(css, /\.status-marker\.st-blocked\s*\{[^}]*var\(--danger\)/);
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /function statusMarker/);
+});
+
 test('CSP permits data: for icons but stays same-origin for scripts', async () => {
   const { get } = makeApp();
   const csp = (await get('/')).headers.get('Content-Security-Policy');
