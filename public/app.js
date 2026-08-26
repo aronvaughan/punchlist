@@ -208,6 +208,9 @@ function parseHash() {
   const tm = /^#\/tag\/([^/]+)$/.exec(h);
   if (tm) return { view: 'tag', projectId: null, tag: decodeURIComponent(tm[1]) };
   const v = h.replace(/^#\//, '');
+  // #/human is an alias for the needs-input lane (relabelled "Human");
+  // #/needs-input keeps working unchanged
+  if (v === 'human') return { view: 'needs-input', projectId: null, tag: null };
   return { view: VIEWS.includes(v) ? v : 'today', projectId: null, tag: null };
 }
 
