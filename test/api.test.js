@@ -568,6 +568,29 @@ test('POST /tags: creates (leading # stripped), NOCASE dup 409, validation, auth
   assert.equal(list.json.items.find(t => t.name === 'Errands').count, 0);
 });
 
+test('DELETE /tags/:id: admin-only, drops task_tags, tasks survive', async () => {
+  const { call } = makeApp();
+  const a = await call('POST', '/api/v1/tasks', { body: { title: 'one', tags: ['home', 'urgent'] } });
+  await call('POST', '/api/v1/tasks', { body: { title: 'two', tags: ['home'] } });
+  const home = (await call('GET', '/api/v1/tags')).json.items.find(t => t.name === 'home');
+  // non-admin (an agent) may not delete
+  assert.equal((await call('DELETE', `/api/v1/tags/${home.id}`, { token: TOK_CLAUDE })).status, 403);
+  // auth required
+  assert.equal((await call('DELETE', `/api/v1/tags/${home.id}`, { token: null })).status, 401);
+  // admin deletes: removes the two task_tags rows
+  const del = await call('DELETE', `/api/v1/tags/${home.id}`);
+  assert.equal(del.status, 200);
+  assert.equal(del.json.removed, 2);
+  // tag is gone from the listing; the other tag remains
+  assert.deepEqual((await call('GET', '/api/v1/tags')).json.items.map(t => t.name), ['urgent']);
+  // the task still exists — it just lost #home (kept #urgent)
+  const t = await call('GET', `/api/v1/tasks?view=inbox`);
+  const kept = t.json.items.find(x => x.id === a.json.id);
+  assert.deepEqual(kept.tags, ['urgent']);
+  // unknown id -> 404
+  assert.equal((await call('DELETE', `/api/v1/tags/nope`)).status, 404);
+});
+
 // ---- delegation lifecycle ----
 test('delegation happy path: POST assignee -> claim -> finish -> review -> approve -> done', async () => {
   const { call } = makeApp();

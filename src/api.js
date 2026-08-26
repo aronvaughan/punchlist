@@ -714,6 +714,20 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     return c.json({ id, name, count: 0 }, 201);
   });
 
+  // admin-only: delete a tag and its task_tags rows. Tasks are untouched —
+  // they simply lose the tag. Returns {ok, removed} (task_tags rows deleted).
+  app.delete('/api/v1/tags/:id', c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can delete tags`);
+    const id = c.req.param('id');
+    const tag = db.prepare('SELECT id FROM tags WHERE id = ?').get(id);
+    if (!tag) throw new ApiError(404, 'tag not found');
+    return tx(db, () => {
+      const { changes } = db.prepare('DELETE FROM task_tags WHERE tag_id = ?').run(id);
+      db.prepare('DELETE FROM tags WHERE id = ?').run(id);
+      return c.json({ ok: true, removed: changes });
+    });
+  });
+
   // ---- projects ----
   const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived']);
 

@@ -494,6 +494,26 @@ html[data-theme="latte"] {
 }
 .rail-tag .rail-name { flex: 1; }
 .tag-count { font-size: 12px; color: var(--ink-faint); }
+/* per-tag delete: desktop hover pointers, always shown on touch */
+.tag-del {
+  display: none;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tag-del:hover { background: var(--chip-bg); color: var(--danger); }
+@media (hover: hover) and (pointer: fine) {
+  .rail-tag:hover .tag-del, .rail-tag:focus-within .tag-del { display: block; }
+}
+@media (pointer: coarse) { .tag-del { display: block; } }
 .nav-count { margin-left: auto; font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .rail-project .rail-name { flex: 1; }
 .rail-project .nav-count { margin-left: 0; }

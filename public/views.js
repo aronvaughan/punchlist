@@ -223,14 +223,37 @@ function renderRailTags() {
   if (!tags.length || !open) return;
   for (const t of tags) {
     const li = el('li');
-    const row = el('button', 'rail-tag');
+    // div (not button) so the delete affordance can nest without invalid markup
+    const row = el('div', 'rail-tag');
+    row.tabIndex = 0;
     row.append(el('span', 'rail-name', `#${t.name}`));
     if (t.count > 0) row.append(el('span', 'tag-count', String(t.count)));
     if (state.route.view === 'tag' && state.route.tag === t.name) row.classList.add('active');
-    row.addEventListener('click', () => { location.hash = `#/tag/${encodeURIComponent(t.name)}`; });
+    const go = () => { location.hash = `#/tag/${encodeURIComponent(t.name)}`; };
+    row.addEventListener('click', go);
+    row.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    // trash affordance: hover on desktop, always on touch (see tokens.css)
+    const del = el('button', 'tag-del', '✕');
+    del.setAttribute('aria-label', `Delete tag ${t.name}`);
+    del.title = 'Delete tag';
+    del.addEventListener('click', e => { e.stopPropagation(); deleteTag(t); });
+    row.append(del);
     li.append(row);
     ul.append(li);
   }
+}
+
+async function deleteTag(tag) {
+  const n = tag.count ?? 0;
+  const msg = `Delete tag #${tag.name}? Removes it from ${n} task${n === 1 ? '' : 's'}.`;
+  if (!confirm(msg)) return;
+  try {
+    await api('DELETE', `/tags/${encodeURIComponent(tag.id)}`);
+    toast(`Deleted #${tag.name}`, 'success');
+    // if we're viewing the deleted tag, leave for Today; else refresh in place
+    if (state.route.view === 'tag' && state.route.tag === tag.name) location.hash = '#/today';
+    else await reload();
+  } catch (e) { toast(`Delete failed: ${e.message}`); }
 }
 
 // ---- project creation dialog ----
