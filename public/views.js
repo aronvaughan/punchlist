@@ -149,65 +149,98 @@ export function renderRail() {
   const projCounts = counts.projects ?? {};
   const subtreeCount = id => (projCounts[id] ?? 0) +
     (children.get(id) ?? []).reduce((sum, ch) => sum + subtreeCount(ch.id), 0);
-  const addRows = (ul, parentKey) => {
+  // one nav row (.rail-project). The tree-walk/indent lives in renderTreeInto,
+  // shared with the Manage-projects dialog; this only paints a row.
+  const navRow = (p, { hasKids }) => {
+    const row = el('div', 'rail-project');
+    if (hasKids) {
+      // disclosure caret: toggles the subtree, never navigates
+      const caret = el('button', 'caret' + (collapsed.has(p.id) ? ' closed' : ''));
+      caret.setAttribute('aria-label', (collapsed.has(p.id) ? 'Expand ' : 'Collapse ') + p.name);
+      caret.setAttribute('aria-expanded', String(!collapsed.has(p.id)));
+      caret.addEventListener('click', e => { e.stopPropagation(); toggleCollapsed(p.id); });
+      row.append(caret);
+    } else {
+      row.append(el('span', 'caret-spacer'));
+    }
+    row.append(el('span', 'rail-name', p.name));
+    // count: own when expanded (children show theirs); own+descendants when collapsed
+    const n = hasKids && collapsed.has(p.id) ? subtreeCount(p.id) : (projCounts[p.id] ?? 0);
+    if (n > 0) row.append(el('span', 'nav-count', String(n)));
+    // per-parent shortcut: "+" on hover (desktop pointers only, via CSS) —
+    // opens the Manage dialog focused on an add-child under this parent
+    const addChild = el('button', 'add-child', '+');
+    addChild.setAttribute('aria-label', `New project under ${p.name}`);
+    addChild.addEventListener('click', e => { e.stopPropagation(); openManageDialog({ addChild: p.id }); });
+    row.append(addChild);
+    row.dataset.projectId = p.id;
+    row.tabIndex = 0;
+    if (state.route.view === 'project' && state.route.projectId === p.id) row.classList.add('active');
+    const go = () => { location.hash = `#/project/${encodeURIComponent(p.id)}`; };
+    row.addEventListener('click', go);
+    row.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    // drop target: drag a task from any list onto a project to file it
+    new Sortable(row, {
+      group: { name: 'tasks', put: true, pull: false },
+      sort: false,
+      onAdd: async evt => {
+        const id = evt.item.dataset.id;
+        evt.item.remove();
+        try {
+          await api('PATCH', `/tasks/${id}`, { project_id: p.id });
+          toast(`Moved to ${p.name}`, 'success');
+          await reload();
+        } catch (e) {
+          await rollback(`Move failed: ${e.message}`);
+        }
+      },
+    });
+    return row;
+  };
+  const projHead = document.getElementById('rail-projects-head');
+  const projOpen = sectionHead(projHead, 'projects', 'Projects');
+  // gear on the Projects section header opens the Manage dialog
+  const gear = el('button', 'rail-gear', '⚙');
+  gear.title = 'Manage projects';
+  gear.setAttribute('aria-label', 'Manage projects');
+  gear.addEventListener('click', e => { e.stopPropagation(); openManageDialog(); });
+  projHead.append(gear);
+  document.getElementById('rail-new-project').hidden = !projOpen;
+  if (projOpen) renderTreeInto(rootUl, live, { renderRow: navRow, collapsed: id => collapsed.has(id) });
+  renderRailTags();
+}
+
+// Shared project-tree walker: NAV and the Manage dialog both use this so the
+// tree-walk + indent (nested <ul>) logic lives in ONE place. renderRow paints a
+// single row for a project; the walker handles children/nesting.
+// opts: { renderRow, collapsed?, archivedLast?, alwaysList?, listClass?, onList? }
+export function renderTreeInto(rootUl, projects, opts) {
+  const { renderRow, collapsed = () => false, archivedLast = false,
+    alwaysList = false, listClass = 'rail-subtree', onList } = opts;
+  const children = childrenMap(projects);
+  // dialog: archived siblings sort last (stable — keeps rank order within a group)
+  if (archivedLast) {
+    for (const arr of children.values()) arr.sort((a, b) => (a.archived ? 1 : 0) - (b.archived ? 1 : 0));
+  }
+  onList?.(rootUl, '');
+  const addRows = (ul, parentKey, depth) => {
     for (const p of children.get(parentKey) ?? []) {
-      const li = el('li');
-      const row = el('div', 'rail-project');
       const hasKids = children.has(p.id);
-      if (hasKids) {
-        // disclosure caret: toggles the subtree, never navigates
-        const caret = el('button', 'caret' + (collapsed.has(p.id) ? ' closed' : ''));
-        caret.setAttribute('aria-label', (collapsed.has(p.id) ? 'Expand ' : 'Collapse ') + p.name);
-        caret.setAttribute('aria-expanded', String(!collapsed.has(p.id)));
-        caret.addEventListener('click', e => { e.stopPropagation(); toggleCollapsed(p.id); });
-        row.append(caret);
-      } else {
-        row.append(el('span', 'caret-spacer'));
-      }
-      row.append(el('span', 'rail-name', p.name));
-      // count: own when expanded (children show theirs); own+descendants when collapsed
-      const n = hasKids && collapsed.has(p.id) ? subtreeCount(p.id) : (projCounts[p.id] ?? 0);
-      if (n > 0) row.append(el('span', 'nav-count', String(n)));
-      // per-parent shortcut: "+" on hover (desktop pointers only, via CSS)
-      const addChild = el('button', 'add-child', '+');
-      addChild.setAttribute('aria-label', `New project under ${p.name}`);
-      addChild.addEventListener('click', e => { e.stopPropagation(); openProjectDialog(p.id); });
-      row.append(addChild);
-      row.dataset.projectId = p.id;
-      row.tabIndex = 0;
-      if (state.route.view === 'project' && state.route.projectId === p.id) row.classList.add('active');
-      const go = () => { location.hash = `#/project/${encodeURIComponent(p.id)}`; };
-      row.addEventListener('click', go);
-      row.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
-      // drop target: drag a task from any list onto a project to file it
-      new Sortable(row, {
-        group: { name: 'tasks', put: true, pull: false },
-        sort: false,
-        onAdd: async evt => {
-          const id = evt.item.dataset.id;
-          evt.item.remove();
-          try {
-            await api('PATCH', `/tasks/${id}`, { project_id: p.id });
-            toast(`Moved to ${p.name}`, 'success');
-            await reload();
-          } catch (e) {
-            await rollback(`Move failed: ${e.message}`);
-          }
-        },
-      });
-      li.append(row);
-      if (hasKids && !collapsed.has(p.id)) {
-        const sub = el('ul', 'rail-subtree');
-        addRows(sub, p.id);
+      const li = el('li');
+      li.dataset.projectId = p.id;
+      li.append(renderRow(p, { depth, hasKids }));
+      const expand = hasKids && !collapsed(p.id);
+      if (expand || alwaysList) {
+        const sub = el('ul', listClass);
+        sub.dataset.parentId = p.id;
+        onList?.(sub, p.id);
+        if (expand) addRows(sub, p.id, depth + 1);
         li.append(sub);
       }
       ul.append(li);
     }
   };
-  const projOpen = sectionHead(document.getElementById('rail-projects-head'), 'projects', 'Projects');
-  document.getElementById('rail-new-project').hidden = !projOpen;
-  if (projOpen) addRows(rootUl, '');
-  renderRailTags();
+  addRows(rootUl, '', 0);
 }
 
 // ---- rail: tags section ----
@@ -257,48 +290,239 @@ async function deleteTag(tag) {
   } catch (e) { toast(`Delete failed: ${e.message}`); }
 }
 
-// ---- project creation dialog ----
-const pdialog = () => document.getElementById('project-dialog');
+// ---- Manage projects dialog ----
+// One tree-admin surface: rename inline, add-child, archive/unarchive, and
+// drag-to-reparent (nested SortableJS). Shares the tree walk (renderTreeInto)
+// with the nav. The API is the source of truth — every mutation reloads.
+const mdialog = () => document.getElementById('manage-dialog');
+let manageCreatedId = null; // last project created here (picker selects it on close)
+let manageFocus = null;     // 'new' | { addChild: parentId } — applied on open only
+let manageTopWired = false; // the persistent (top level) drop zone is wired once
 
-export function openProjectDialog(parentId = null) {
-  const name = document.getElementById('project-name-input');
-  const parent = document.getElementById('project-parent-select');
-  const err = document.getElementById('project-error');
-  name.value = '';
+// open the dialog; resolves { createdId } when it closes (drawer picker awaits)
+export function openManageDialog(focus = null) {
+  manageFocus = focus;
+  manageCreatedId = null;
+  const dlg = mdialog();
+  renderManageTree();
+  dlg.open = true;
+  return new Promise(resolve => {
+    const onHide = e => {
+      if (e.target !== dlg) return; // ignore bubbled hides from inner controls
+      dlg.removeEventListener('wa-hide', onHide);
+      resolve({ createdId: manageCreatedId });
+    };
+    dlg.addEventListener('wa-hide', onHide);
+  });
+}
+
+function manageDragActive(on) {
+  document.getElementById('manage-body').classList.toggle('dragging', on);
+}
+
+// after any mutation: reload app state (rail + current view) then repaint tree
+async function reloadManage() {
+  await reload();
+  renderManageTree();
+}
+
+// nested SortableJS: each children <ul> (and the (top level) zone) is a drop
+// target in one group. Dropping a row into a list reparents it to that list's
+// project; the API's cycle check (400) is the backstop → toast + reload truth.
+function manageSortableOpts() {
+  return {
+    group: 'proj-move',
+    animation: 150,
+    handle: '.manage-grip',
+    fallbackOnBody: true,
+    onStart: () => manageDragActive(true),
+    onEnd: async evt => {
+      manageDragActive(false);
+      // same-list reorder isn't persisted for projects → restore server order
+      if (evt.to === evt.from && evt.oldIndex !== evt.newIndex) await reloadManage();
+    },
+    onAdd: async evt => {
+      manageDragActive(false);
+      const id = evt.item.dataset.projectId;
+      const parentId = evt.to.dataset.parentId || null;
+      try {
+        await api('PATCH', `/projects/${id}`, { parent_id: parentId });
+        toast(parentId ? 'Moved' : 'Moved to top level', 'success');
+      } catch (e) {
+        toast(e.status === 400 ? 'Cannot move a project into its own subtree' : `Move failed: ${e.message}`);
+      }
+      await reloadManage();
+    },
+  };
+}
+
+function renderManageTree() {
+  const root = document.getElementById('manage-tree');
+  root.replaceChildren();
+  root.dataset.parentId = '';
+  // persistent (top level) drop zone: clear any stray dropped row, wire once
+  const top = document.getElementById('manage-top-drop');
+  top.replaceChildren();
+  top.dataset.parentId = '';
+  if (!manageTopWired) { new Sortable(top, manageSortableOpts()); manageTopWired = true; }
+
+  renderTreeInto(root, state.projects ?? [], {
+    renderRow: manageRow,
+    archivedLast: true,
+    alwaysList: true,          // every row gets a children <ul> (a drop target)
+    listClass: 'manage-children',
+    onList: ul => { new Sortable(ul, manageSortableOpts()); },
+  });
+  renderManageParentOptions();
+
+  // focus intent applies once, on open (not on later repaints)
+  if (manageFocus === 'new') setTimeout(() => document.getElementById('manage-new-name')?.focus(), 60);
+  else if (manageFocus?.addChild) { const pid = manageFocus.addChild; setTimeout(() => openChildInput(pid), 60); }
+  manageFocus = null;
+}
+
+function manageRow(p) {
+  const row = el('div', 'manage-row' + (p.archived ? ' archived' : ''));
+  row.dataset.projectId = p.id;
+  const grip = el('span', 'manage-grip');
+  grip.setAttribute('aria-hidden', 'true');
+  grip.title = 'Drag to reparent';
+  row.append(grip);
+  const name = el('button', 'manage-name', p.name);
+  name.title = 'Rename';
+  name.setAttribute('aria-label', `Rename ${p.name}`);
+  name.addEventListener('click', () => startRename(p, name));
+  row.append(name);
+  const actions = el('div', 'manage-actions');
+  const add = el('button', 'manage-btn', '+');
+  add.title = `Add a sub-project under ${p.name}`;
+  add.setAttribute('aria-label', `Add a sub-project under ${p.name}`);
+  add.addEventListener('click', () => openChildInput(p.id));
+  const arch = el('button', 'manage-btn manage-archive', p.archived ? 'Restore' : 'Archive');
+  arch.setAttribute('aria-label', `${p.archived ? 'Unarchive' : 'Archive'} ${p.name}`);
+  arch.addEventListener('click', async () => {
+    try {
+      await api('PATCH', `/projects/${p.id}`, { archived: !p.archived });
+      toast(p.archived ? 'Restored' : 'Archived', 'success');
+      await reloadManage();
+    } catch (e) { toast(`Save failed: ${e.message}`); }
+  });
+  actions.append(add, arch);
+  row.append(actions);
+  return row;
+}
+
+// click a name → inline text input; Enter/blur commit (PATCH name), Escape
+// cancels; empty is rejected inline, duplicate surfaces the API 409 inline.
+function startRename(p, nameBtn) {
+  const input = el('input', 'manage-name-input');
+  input.type = 'text';
+  input.value = p.name;
+  input.setAttribute('aria-label', `Rename ${p.name}`);
+  const err = el('span', 'manage-inline-error');
   err.hidden = true;
-  parent.replaceChildren();
-  const none = el('option', null, '(none)');
+  let busy = false;
+  const commit = async () => {
+    if (busy) return;
+    const v = input.value.trim();
+    if (!v || v === p.name) { input.replaceWith(nameBtn); err.remove(); return; }
+    busy = true;
+    try {
+      await api('PATCH', `/projects/${p.id}`, { name: v });
+      await reloadManage();
+    } catch (e) {
+      busy = false;
+      err.textContent = e.status === 409 ? 'Name already exists' : (e.status === 400 ? 'Invalid name' : 'Save failed');
+      err.hidden = false;
+      input.focus();
+    }
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.replaceWith(nameBtn); err.remove(); }
+  });
+  input.addEventListener('blur', () => setTimeout(() => { if (input.isConnected) commit(); }, 120));
+  nameBtn.replaceWith(input);
+  input.after(err);
+  input.focus();
+  input.select();
+}
+
+// inline "add a child" input under a project row
+function openChildInput(parentId) {
+  const li = document.querySelector(`#manage-tree li[data-project-id="${CSS.escape(parentId)}"]`);
+  if (!li) return;
+  let ul = li.querySelector(':scope > ul.manage-children');
+  if (!ul) { ul = el('ul', 'manage-children'); ul.dataset.parentId = parentId; li.append(ul); }
+  const existing = ul.querySelector('.manage-child-input input');
+  if (existing) { existing.focus(); return; }
+  const wrap = el('li', 'manage-child-input');
+  const input = el('input', 'manage-name-input');
+  input.type = 'text';
+  input.placeholder = 'Sub-project name…';
+  input.setAttribute('aria-label', 'New sub-project name');
+  const err = el('span', 'manage-inline-error');
+  err.hidden = true;
+  input.addEventListener('keydown', async e => {
+    if (e.key === 'Escape') { e.preventDefault(); wrap.remove(); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = input.value.trim();
+      if (!v) { wrap.remove(); return; }
+      try {
+        const created = await api('POST', '/projects', { name: v, parent_id: parentId });
+        manageCreatedId = created.id;
+        await reloadManage();
+      } catch (e2) {
+        err.textContent = e2.status === 409 ? 'Name already exists' : (e2.status === 400 ? 'Invalid name' : 'Create failed');
+        err.hidden = false;
+        input.focus();
+      }
+    }
+  });
+  input.addEventListener('blur', () => setTimeout(() => wrap.remove(), 150));
+  wrap.append(input, err);
+  ul.prepend(wrap);
+  input.focus();
+}
+
+// the bottom "+ New project" row's parent <select> (live projects, indented)
+function renderManageParentOptions() {
+  const sel = document.getElementById('manage-new-parent');
+  const prev = sel.value;
+  sel.replaceChildren();
+  const none = el('option', null, '(top level)');
   none.value = '';
-  parent.append(none);
-  const children = childrenMap(state.projects.filter(p => !p.archived));
+  sel.append(none);
+  const children = childrenMap((state.projects ?? []).filter(p => !p.archived));
   const walk = (key, depth) => {
     for (const p of children.get(key) ?? []) {
       const o = el('option', null, `${'   '.repeat(depth)}${depth ? '└ ' : ''}${p.name}`);
       o.value = p.id;
-      parent.append(o);
+      sel.append(o);
       walk(p.id, depth + 1);
     }
   };
   walk('', 0);
-  parent.value = parentId ?? '';
-  pdialog().open = true;
-  setTimeout(() => name.focus(), 50);
+  sel.value = prev; // survive repaints
 }
 
+// bottom row: the plain create case (name + optional parent)
 async function createProject() {
-  const name = document.getElementById('project-name-input');
-  const parent = document.getElementById('project-parent-select');
-  const err = document.getElementById('project-error');
+  const name = document.getElementById('manage-new-name');
+  const parent = document.getElementById('manage-new-parent');
+  const err = document.getElementById('manage-error');
   const value = name.value.trim();
-  if (!value) { err.textContent = 'Name is required.'; err.hidden = false; return; }
+  if (!value) { err.textContent = 'Name is required.'; err.hidden = false; name.focus(); return; }
   const body = { name: value };
   if (parent.value) body.parent_id = parent.value;
   try {
     const p = await api('POST', '/projects', body);
-    pdialog().open = false;
-    const target = `#/project/${encodeURIComponent(p.id)}`;
-    if (location.hash === target) await reload();
-    else location.hash = target; // navigation triggers reload + tree update
+    manageCreatedId = p.id;
+    name.value = '';
+    err.hidden = true;
+    await reloadManage();
+    document.getElementById('manage-new-name').focus();
   } catch (e) {
     err.textContent = e.status === 409 ? 'A project with that name already exists.' : `Create failed: ${e.message}`;
     err.hidden = false;
@@ -359,10 +583,11 @@ document.getElementById('tag-cancel').addEventListener('click', () => {
   document.getElementById('tag-dialog').open = false;
 });
 
-document.getElementById('rail-new-project').addEventListener('click', () => openProjectDialog(null));
-document.getElementById('project-cancel').addEventListener('click', () => { pdialog().open = false; });
-document.getElementById('project-create').addEventListener('click', createProject);
-document.getElementById('project-name-input').addEventListener('keydown', e => {
+// left-nav "+ New project" opens the Manage dialog focused on its new-project row
+document.getElementById('rail-new-project').addEventListener('click', () => openManageDialog('new'));
+document.getElementById('manage-close').addEventListener('click', () => { mdialog().open = false; });
+document.getElementById('manage-new-add').addEventListener('click', createProject);
+document.getElementById('manage-new-name').addEventListener('keydown', e => {
   if (e.key === 'Enter') createProject();
 });
 
