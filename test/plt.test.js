@@ -173,7 +173,7 @@ test('cli: list --kind splits templates from workflows', () => {
   assert.ok(!templates.includes('research-and-buy'));
   const workflows = run(['list', '--kind', 'workflow']).stdout;
   assert.ok(workflows.includes('research-and-buy'));
-  assert.ok(!workflows.includes('weekly-review'));
+  assert.ok(!workflows.includes('templates/packs')); // no template rows
 });
 
 test('cli: list --tag with no matches prints only the header', () => {
@@ -206,4 +206,87 @@ test('cli: PUNCHLIST_TEMPLATES_DIR overrides repo root', () => {
   const { status, stdout } = run(['list'], { PUNCHLIST_TEMPLATES_DIR: REPO });
   assert.strictEqual(status, 0);
   assert.ok(stdout.includes('weekly-review'));
+});
+
+// ------------------------------------------------------------------- skills
+
+const fs = require('fs');
+const os = require('os');
+const SCAFFOLD = path.join(REPO, 'skills', 'shared', 'wf-scaffold.sh');
+
+function scaffold(name, root) {
+  return spawnSync('bash', [SCAFFOLD, name], {
+    encoding: 'utf8',
+    env: { ...process.env, PUNCHLIST_TEMPLATES_DIR: root },
+  });
+}
+
+test('wf-scaffold: writes a skeleton and refuses to overwrite', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plt-scaffold-'));
+  const res = scaffold('my-flow', root);
+  assert.strictEqual(res.status, 0);
+  const file = path.join(root, 'workflows', 'authored', 'my-flow.md');
+  assert.strictEqual(res.stdout.trim(), file);
+  const text = fs.readFileSync(file, 'utf8');
+  assert.ok(text.startsWith('---\nname: my-flow\nkind: workflow'));
+  // one commented example of each edge kind
+  for (const kw of ['needs:', 'outcomes:', 'when:', 'else_of:', 'on_fail:', 'repeat_until:']) {
+    assert.ok(text.includes(kw), `skeleton mentions ${kw}`);
+  }
+  const again = scaffold('my-flow', root);
+  assert.notStrictEqual(again.status, 0);
+  assert.match(again.stderr, /refusing to overwrite/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('wf-scaffold: rejects bad names', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plt-scaffold-'));
+  for (const bad of ['My Flow', 'UPPER', 'a_b', '-lead', 'trail-', ''])
+    assert.notStrictEqual(scaffold(bad, root).status, 0, `rejects \`${bad}\``);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('wf-scaffold: validates with only the first step uncommented', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plt-scaffold-'));
+  scaffold('my-flow', root);
+  const file = path.join(root, 'workflows', 'authored', 'my-flow.md');
+  const text = fs.readFileSync(file, 'utf8');
+  // uncomment exactly the first step's three lines
+  const first = text
+    .replace('#  - id: first', '  - id: first')
+    .replace('#    assignee: owner', '    assignee: owner')
+    .replace('#    title: "Do the first thing"', '    title: "Do the first thing"');
+  fs.writeFileSync(file, first);
+  const res = run(['validate', file], { PUNCHLIST_TEMPLATES_DIR: root });
+  assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+});
+
+test('wf-scaffold: validates and renders fully uncommented', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plt-scaffold-'));
+  scaffold('my-flow', root);
+  const file = path.join(root, 'workflows', 'authored', 'my-flow.md');
+  const text = fs.readFileSync(file, 'utf8').replace(/^#( {2,})/gm, '$1');
+  fs.writeFileSync(file, text);
+  assert.strictEqual(run(['validate', file], { PUNCHLIST_TEMPLATES_DIR: root }).status, 0);
+  assert.strictEqual(run(['render', 'my-flow'], { PUNCHLIST_TEMPLATES_DIR: root }).status, 0);
+  assert.ok(fs.readFileSync(file, 'utf8').includes('```mermaid'));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('skills: every SKILL.md has frontmatter and a name matching its dir', () => {
+  const skillFiles = [];
+  for (const agent of ['claude', 'hermes']) {
+    const dir = path.join(REPO, 'skills', agent);
+    for (const entry of fs.readdirSync(dir)) {
+      const f = path.join(dir, entry, 'SKILL.md');
+      if (fs.existsSync(f)) skillFiles.push({ dir: entry, file: f });
+    }
+  }
+  assert.ok(skillFiles.length >= 4, 'expected resolver + writer skills for both agents');
+  for (const { dir, file } of skillFiles) {
+    const { fm } = plt.parseFrontmatter(fs.readFileSync(file, 'utf8'));
+    assert.ok(fm, `${file} has frontmatter`);
+    assert.strictEqual(fm.name, dir, `${file} name matches its directory`);
+    assert.ok(fm.description && String(fm.description).length > 20, `${file} has a description`);
+  }
 });

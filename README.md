@@ -7,11 +7,12 @@ workflows choreograph multi-step, multi-actor work by compiling to
 punchlist tasks. Markdown-first, Obsidian-curatable, mermaid-visualized,
 agent-agnostic.
 
-Shipped so far (P1 + P3): the template format, the `plt` CLI
+Shipped so far (P1 + P3 + P4): the template format, the `plt` CLI
 (validate/list/show/render/launch/advance/runs), three core templates,
-resolver skills for claude and hermes, and the workflow runtime — the
-format, validator, mermaid renderer, compiler (`launch`) and advancer
-(`advance`), plus one shipped workflow (`research-and-buy`). See
+resolver and workflow-writer skills for claude and hermes, and the
+workflow runtime — the format, validator, mermaid renderer, compiler
+(`launch`) and advancer (`advance`), plus two shipped workflows
+(`research-and-buy`, `weekly-review-flow`). See
 [docs/2026-08-25-prd.md](docs/2026-08-25-prd.md).
 
 ## Quickstart
@@ -50,6 +51,17 @@ The copied `scripts/plt.sh` forwards to the canonical resolver
 a symlinked install needs nothing, and a plain copy just needs the env
 var set (or edit the shim to point at your checkout, as the reference
 installs do).
+
+The **workflow-writer** skill (`skills/{claude,hermes}/workflow-writer`,
+installed the same way) is the authoring playbook: it interviews you one
+question at a time — goal, actors, happy-path steps, named decision
+outcomes, failure handling, loops — starts from a commented skeleton
+(`skills/shared/wf-scaffold.sh <name>` → `workflows/authored/<name>.md`),
+drafts any missing templates with golden exemplars, then validates and
+renders the mermaid for a visual yes. Agents may use it to *propose*
+workflows from repeated patterns: the draft lands in `authored/` with a
+review task for the owner — an agent never launches a workflow it
+authored without that review.
 
 ## Format reference
 
