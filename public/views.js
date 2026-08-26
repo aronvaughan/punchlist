@@ -36,7 +36,7 @@ export function openNewTask() {
   } else if (r.view === 'review') {
     ctx = 'Review';
   } else if (r.view === 'needs-input') {
-    ctx = 'Needs input';
+    ctx = 'Human';
   } else if (r.view === 'agents') {
     ctx = 'Agents';
   }
@@ -437,8 +437,8 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   if (task.status === 'blocked') {
     // needs-input: the agent is waiting on an answer — jump to the lane
     const chip = el('button', 'chip blocked-chip', '❓ waiting');
-    chip.title = 'Blocked on a question — answer it in Needs input';
-    chip.setAttribute('aria-label', 'Waiting for your answer — open Needs input');
+    chip.title = 'Blocked on a question — answer it in the Human lane';
+    chip.setAttribute('aria-label', 'Waiting for your answer — open the Human lane');
     chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
     row.append(chip);
   }
@@ -606,7 +606,7 @@ export function renderMain() {
     titleEl.textContent = 'Review';
     renderReview(listEl, tasks);
   } else if (r.view === 'needs-input') {
-    titleEl.textContent = 'Needs input';
+    titleEl.textContent = 'Human';
     renderNeedsInput(listEl, tasks);
   } else if (r.view === 'agents') {
     titleEl.textContent = 'Agents';
@@ -627,7 +627,7 @@ function emptyNote(view) {
     upcoming: 'No scheduled tasks yet.',
     logbook: 'Completed tasks land here.',
     review: 'Nothing waiting on your review.',
-    'needs-input': 'No agent is waiting on an answer.',
+    'needs-input': 'Nothing waiting on a human.',
     agents: 'Nothing delegated — assign a task to Claude or Hermes.',
   }[view] ?? 'No tasks here yet.';
 }

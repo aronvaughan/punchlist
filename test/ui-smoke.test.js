@@ -33,6 +33,7 @@ test('GET / returns the app shell with CSP', async () => {
   assert.match(html, /data-webawesome="\/vendor\/webawesome"/);
   assert.match(html, /data-view="review"/); // delegation: Review nav entry
   assert.match(html, /data-view="needs-input"/); // needs-input lane between Review and Agents
+  assert.match(html, /data-view="needs-input">Human</); // relabelled "Human" (route stays #/needs-input)
   assert.match(html, /data-view="agents"/); // delegation: Agents nav entry
   // nav order: Review → Needs input → Agents
   assert.ok(html.indexOf('data-view="review"') < html.indexOf('data-view="needs-input"') &&
