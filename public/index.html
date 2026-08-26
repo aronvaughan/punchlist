@@ -88,18 +88,21 @@
     <wa-button slot="footer" id="window-ok" variant="brand">Set</wa-button>
   </wa-dialog>
 
-  <wa-dialog id="project-dialog" label="New project">
-    <div class="dialog-field">
-      <label for="project-name-input">Name</label>
-      <input id="project-name-input" type="text" autocomplete="off">
+  <wa-dialog id="manage-dialog" label="Manage projects">
+    <div id="manage-body" class="manage-body">
+      <!-- (top level) drop zone: dragging a project here unparents it -->
+      <ul id="manage-top-drop" class="manage-top-drop" data-parent-id=""
+          aria-label="Drop a project here to move it to the top level"></ul>
+      <ul id="manage-tree" class="manage-tree" data-parent-id=""></ul>
+      <div class="manage-new-row">
+        <input id="manage-new-name" type="text" autocomplete="off" placeholder="New project name"
+               aria-label="New project name">
+        <select id="manage-new-parent" aria-label="Parent project"></select>
+        <wa-button id="manage-new-add" variant="brand" size="small">Add</wa-button>
+      </div>
+      <p id="manage-error" class="dialog-error" hidden></p>
     </div>
-    <div class="dialog-field">
-      <label for="project-parent-select">Parent</label>
-      <select id="project-parent-select"></select>
-    </div>
-    <p id="project-error" class="dialog-error" hidden></p>
-    <wa-button slot="footer" id="project-cancel" appearance="plain">Cancel</wa-button>
-    <wa-button slot="footer" id="project-create" variant="brand">Create</wa-button>
+    <wa-button slot="footer" id="manage-close" appearance="plain">Done</wa-button>
   </wa-dialog>
 
   <wa-dialog id="when-dialog" label="Schedule for…">

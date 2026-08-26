@@ -626,6 +626,138 @@ html[data-theme="latte"] {
 }
 .dialog-error { color: var(--danger); font-size: 13px; margin: 4px 0 0; }
 
+/* ---- Manage projects dialog (tree admin) ---- */
+.manage-body { max-height: min(64vh, 560px); overflow-y: auto; overflow-x: hidden; }
+/* gear on the rail's Projects section header */
+#rail-projects-head:has(.sec-toggle) { display: flex; align-items: center; gap: 4px; }
+#rail-projects-head .sec-toggle { flex: 1; }
+.rail-gear {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.rail-gear:hover { color: var(--accent); background: var(--hover); }
+/* (top level) unparent drop zone */
+.manage-top-drop {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  min-height: 40px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+.manage-top-drop::before { content: "(top level) — drop here to unparent"; }
+.manage-body.dragging .manage-top-drop { border-color: var(--accent); color: var(--accent); }
+/* the tree itself: nested lists mirror the nav's indent language */
+.manage-tree, .manage-children { list-style: none; margin: 0; padding: 0; }
+.manage-children {
+  margin-left: 18px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+/* empty child lists become visible drop targets while a drag is live */
+.manage-body.dragging .manage-children:empty {
+  min-height: 28px;
+  border-left-color: var(--accent);
+}
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 4px 0 0;
+  border-radius: var(--radius);
+}
+.manage-row:hover { background: var(--hover); }
+.manage-row.archived { opacity: .55; }
+.manage-grip {
+  flex: none;
+  width: 24px;
+  height: 44px;
+  cursor: grab;
+  background:
+    radial-gradient(circle, var(--ink-faint) 1.4px, transparent 1.4px)
+    0 0 / 6px 6px;
+  background-position: center;
+  opacity: .6;
+  touch-action: none;
+}
+.manage-grip:active { cursor: grabbing; }
+.manage-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  cursor: text;
+  padding: 8px 4px;
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manage-name:hover { background: var(--chip-bg); }
+.manage-name-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+.manage-inline-error { color: var(--danger); font-size: 12px; margin-left: 6px; }
+.manage-actions { flex: none; display: flex; align-items: center; gap: 2px; }
+.manage-btn {
+  flex: none;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.manage-btn:hover { background: var(--chip-bg); color: var(--accent); }
+.manage-child-input { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.manage-new-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.manage-new-row #manage-new-name { flex: 2 1 140px; min-height: 40px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+.manage-new-row #manage-new-parent { flex: 1 1 120px; min-height: 40px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+@media (max-width: 700px) {
+  .manage-btn { min-width: 44px; height: 44px; }
+  .manage-new-row wa-button::part(base) { min-height: 44px; }
+}
+/* drawer project picker: select grows, "Manage…" sits beside it */
+.project-picker-row { display: flex; align-items: center; gap: 10px; }
+.project-picker-row select { flex: 1; min-width: 0; }
+.project-picker-row .link-btn { flex: none; white-space: nowrap; }
+
 #main {
   grid-area: main;
   overflow-y: auto;

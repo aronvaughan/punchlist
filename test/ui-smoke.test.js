@@ -110,6 +110,39 @@ test('status markers: themed glyphs for agent in-flight states', async () => {
   assert.match(views, /function statusMarker/);
 });
 
+test('manage-projects dialog: shared tree renderer + dialog markup + tokens', async () => {
+  const { get } = makeApp();
+  const html = await (await get('/')).text();
+  // dialog scaffold present, old name-only #project-dialog retired
+  assert.match(html, /id="manage-dialog"/);
+  assert.match(html, /id="manage-tree"/);
+  assert.match(html, /id="manage-top-drop"/); // (top level) unparent drop zone
+  assert.match(html, /id="manage-new-name"/);
+  assert.match(html, /id="manage-new-parent"/);
+  assert.doesNotMatch(html, /id="project-dialog"/);
+
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /export function openManageDialog/);
+  assert.match(views, /export function renderTreeInto/); // ONE tree walk, nav + dialog
+  // nav renders through the shared walker (no private addRows recursion)
+  assert.match(views, /renderTreeInto\(rootUl, live/);
+  assert.match(views, /renderTreeInto\(root, state\.projects/);
+  assert.match(views, /parent_id: parentId/);      // drag-to-reparent PATCH
+  assert.match(views, /archived: !p\.archived/);   // archive/unarchive toggle
+
+  // drawer picker gets the "Manage…" affordance
+  const detail = await (await get('/detail.js')).text();
+  assert.match(detail, /openManageDialog/);
+  assert.match(detail, /Manage…/);
+
+  // styles use theme tokens only (spot-check: no hex in the new blocks)
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.manage-row\s*\{/);
+  assert.match(css, /\.manage-row\.archived\s*\{[^}]*opacity/);
+  assert.match(css, /\.manage-children\s*\{[^}]*var\(--line\)/);
+  assert.match(css, /\.rail-gear\s*\{/);
+});
+
 test('CSP permits data: for icons but stays same-origin for scripts', async () => {
   const { get } = makeApp();
   const csp = (await get('/')).headers.get('Content-Security-Policy');

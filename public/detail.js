@@ -6,6 +6,7 @@ import { api, state, reload, toast, todayISO, pickWhen, currentActor } from '/ap
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
+import { openManageDialog } from '/views.js';
 
 const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -174,7 +175,18 @@ function projectEditor() {
   }
   sel.value = current.project_id ?? '';
   sel.addEventListener('change', () => patch({ project_id: sel.value || null }));
-  return labeled('Project', sel);
+  // "Manage…" opens the shared tree-admin dialog; on close the picker refreshes
+  // its options and selects a project that was just created there
+  const manage = el('button', 'link-btn', 'Manage…');
+  manage.type = 'button';
+  manage.addEventListener('click', async () => {
+    const { createdId } = await openManageDialog();
+    if (createdId) await patch({ project_id: createdId });
+    rebuild(); // repaint options (and selection) from fresh state.projects
+  });
+  const row = el('div', 'project-picker-row');
+  row.append(sel, manage);
+  return labeled('Project', row);
 }
 
 function assigneeEditor() {
