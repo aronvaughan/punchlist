@@ -79,6 +79,16 @@ test('caching: app files revalidate (no-cache), vendored assets may cache', asyn
     'public, max-age=86400');
 });
 
+test('section headers: left-aligned standout treatment (accent tick + hairline)', async () => {
+  const { get } = makeApp();
+  const css = await (await get('/tokens.css')).text();
+  // main-pane section heads gain an accent tick before the label and keep the
+  // trailing hairline rule; rail section toggles get a bottom hairline
+  assert.match(css, /\.section-head::before\s*\{/);
+  assert.match(css, /\.section-head::after\s*\{\s*content:\s*"";\s*flex:\s*1;\s*height:\s*1px;\s*background:\s*var\(--line\)/);
+  assert.match(css, /\.rail-heading:has\(\.sec-toggle\)\s*\{[^}]*border-bottom:\s*1px solid var\(--line\)/);
+});
+
 test('CSP permits data: for icons but stays same-origin for scripts', async () => {
   const { get } = makeApp();
   const csp = (await get('/')).headers.get('Content-Security-Policy');
