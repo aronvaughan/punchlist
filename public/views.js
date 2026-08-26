@@ -6,6 +6,7 @@ import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { expandRow } from '/inline.js';
 import { mdToHtml } from '/md.js';
+import { tagsField } from '/suggest.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const lastSection = new Map(); // projectId -> section the user last touched
@@ -366,6 +367,29 @@ document.getElementById('project-name-input').addEventListener('keydown', e => {
 });
 
 // ---- rows ----
+// quick inline tag editing from the subline's tag icon. Mirrors inline.js:
+// PATCH updates state in place (no reload while editing); closing reloads so
+// the subline chips repaint from server truth.
+async function saveRowTags(task, fields) {
+  try {
+    const updated = await api('PATCH', `/tasks/${task.id}`, fields);
+    Object.assign(task, updated);
+    const i = state.tasks.findIndex(t => t.id === task.id);
+    if (i >= 0) state.tasks[i] = task;
+    return true;
+  } catch (e) { toast(`Save failed: ${e.message}`); return false; }
+}
+
+function toggleRowTags(task, row, tagsWrap) {
+  const open = row.querySelector('.quick-tags');
+  if (open) { open.remove(); if (tagsWrap) tagsWrap.hidden = false; reload(); return; }
+  const box = el('div', 'quick-tags');
+  box.append(tagsField(task, fields => saveRowTags(task, fields)));
+  if (tagsWrap) tagsWrap.hidden = true;
+  row.querySelector('.row-main').append(box);
+  setTimeout(() => box.querySelector('input')?.focus(), 30);
+}
+
 function taskRow(task, { showProject = false, logbook = false, sortable = false, showClaimed = false } = {}) {
   const row = el('div', 'task-row');
   row.dataset.id = task.id;
@@ -405,12 +429,12 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   });
   row.append(check);
 
-  row.append(el('span', 'title', task.title));
+  // two-line layout: title (+ status/due chips) on top; project pill + tag
+  // chips move to a muted subline beneath, so long titles read on a phone
+  const main = el('div', 'row-main');
+  const titleLine = el('div', 'row-title-line');
+  titleLine.append(el('span', 'title', task.title));
 
-  if (showProject && task.project_id) {
-    const p = state.projects.find(x => x.id === task.project_id);
-    if (p) row.append(el('span', 'chip project-name', p.name));
-  }
   if (task.vetted === 0) {
     // amber quarantine chip (agent-security layer 1): agents will not execute
     // this task. Tapping it is the admin's Vet action — the server 403s
@@ -419,19 +443,19 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.title = 'Created by an untrusted source — agents will not execute it. Tap to vet.';
     chip.setAttribute('aria-label', 'Unvetted — tap to vet for agent execution');
     chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
-    row.append(chip);
+    titleLine.append(chip);
   }
   if (task.assignee && task.assignee !== currentActor()) {
     // agent chip: muted; accent outline while claimed (in_progress)
-    row.append(el('span', 'chip agent' + (task.status === 'in_progress' ? ' working' : ''), task.assignee));
+    titleLine.append(el('span', 'chip agent' + (task.status === 'in_progress' ? ' working' : ''), task.assignee));
     if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
-      row.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));
+      titleLine.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));
     }
     if (task.status === 'review') {
       const chip = el('button', 'chip review-chip', 'review');
       chip.setAttribute('aria-label', `Review ${task.assignee}'s report`);
       chip.addEventListener('click', e => { e.stopPropagation(); openReviewDialog(task); });
-      row.append(chip);
+      titleLine.append(chip);
     }
   }
   if (task.status === 'blocked') {
@@ -440,20 +464,39 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.title = 'Blocked on a question — answer it in the Human lane';
     chip.setAttribute('aria-label', 'Waiting for your answer — open the Human lane');
     chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
-    row.append(chip);
-  }
-  for (const tag of task.tags ?? []) {
-    const chip = el('button', 'chip tag', `#${tag}`);
-    chip.addEventListener('click', e => { e.stopPropagation(); setTagFilter(tag); });
-    row.append(chip);
+    titleLine.append(chip);
   }
   if (task.due_date) {
-    // countdown chip: red when overdue/today/within 7 days, muted beyond
+    // countdown chip stays on the title line (right) — a deadline reads best there
     const { text, urgent } = dueCountdown(task.due_date, t);
     const chip = el('span', 'chip due' + (urgent && task.status === 'active' ? ' arrived' : ''),
       `${text}${task.due_time ? ' · ' + task.due_time : ''}`);
-    row.append(chip);
+    titleLine.append(chip);
   }
+  main.append(titleLine);
+
+  // subline: project pill + tag chips (smaller, muted) + a tag-edit affordance
+  const subline = el('div', 'row-subline');
+  if (showProject && task.project_id) {
+    const p = state.projects.find(x => x.id === task.project_id);
+    if (p) subline.append(el('span', 'chip project-name', p.name));
+  }
+  const tagsWrap = el('span', 'subline-tags');
+  for (const tag of task.tags ?? []) {
+    const chip = el('button', 'chip tag', `#${tag}`);
+    chip.addEventListener('click', e => { e.stopPropagation(); setTagFilter(tag); });
+    tagsWrap.append(chip);
+  }
+  subline.append(tagsWrap);
+  // tag icon: opens the inline tag editor (shared suggest.js field) for quick
+  // add/remove without opening the full drawer
+  const tagEdit = el('button', 'tag-edit', '#');
+  tagEdit.title = 'Add or remove tags';
+  tagEdit.setAttribute('aria-label', 'Edit tags');
+  tagEdit.addEventListener('click', e => { e.stopPropagation(); toggleRowTags(task, row, tagsWrap); });
+  subline.append(tagEdit);
+  main.append(subline);
+  row.append(main);
   row.tabIndex = 0;
   // Things-style: active rows expand in place; done/archived open the drawer
   const open = () => {

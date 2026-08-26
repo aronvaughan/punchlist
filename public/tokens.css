@@ -702,15 +702,46 @@ body.drag-active .section-block.empty .task-list {
 .task-list:empty { box-shadow: none; background: transparent; }
 .task-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   min-height: 44px;
   max-height: 80px;
-  padding: 4px 10px;
+  padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
 }
+/* the checkbox / status marker aligns to the title line, not the whole block */
+.task-row > .check, .task-row > .status-marker { margin-top: 1px; }
 .task-row:hover { background: var(--hover); }
+/* two-line row body: title (+ status/due chips) over a muted subline */
+.row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.row-title-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.row-subline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.subline-tags { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.row-subline .chip { font-size: 11px; padding: 2px 8px; }
+.row-subline .chip.project-name { color: var(--ink-soft); }
+/* tag icon on the subline: opens the inline tag editor */
+.tag-edit {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 6px;
+}
+.tag-edit:hover { color: var(--accent); background: var(--chip-bg); }
+.quick-tags { margin-top: 5px; }
 .task-row .title {
   flex: 1;
   min-width: 0;
