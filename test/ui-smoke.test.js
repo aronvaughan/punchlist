@@ -90,6 +90,16 @@ test('section headers: left-aligned standout treatment (accent tick + hairline)'
   assert.match(css, /\.rail-heading:has\(\.sec-toggle\)\s*\{[^}]*border-bottom:\s*1px solid var\(--line\)/);
 });
 
+test('task rows: project/tag pills move to a muted subline (phone readability)', async () => {
+  const { get } = makeApp();
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.row-subline\s*\{/);
+  assert.match(css, /\.tag-edit\s*\{/); // subline tag-edit affordance
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /row-subline/);
+  assert.match(views, /toggleRowTags/); // inline tag editor from the subline
+});
+
 test('CSP permits data: for icons but stays same-origin for scripts', async () => {
   const { get } = makeApp();
   const csp = (await get('/')).headers.get('Content-Security-Policy');
