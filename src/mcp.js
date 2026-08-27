@@ -269,6 +269,30 @@ const TOOLS = [
     handler: async a => taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/answer`, { answer: a.answer })),
   },
   {
+    name: 'punchlist_reorder',
+    description: 'Reprioritize your backlog: move a task directly before or after another in ' +
+      'the shared agents backlog (position IS priority). As an agent you MUST pass a reason — ' +
+      'it auto-posts a status entry to the task timeline so the owner sees why you moved it. ' +
+      'list defaults to "agents"; use "inbox"/"human" only for those lanes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: ID,
+        before: { type: 'string', description: 'Move directly BEFORE this task id' },
+        after: { type: 'string', description: 'Move directly AFTER this task id' },
+        list: { type: 'string', enum: ['agents', 'inbox', 'human'], description: 'Which lane (default agents)' },
+        reason: { type: 'string', description: 'Why you moved it — auto-posted to the timeline (required for agents)' },
+      },
+      required: ['id', 'reason'],
+    },
+    handler: async a => {
+      const body = { list: a.list || 'agents', reason: a.reason };
+      if (a.before !== undefined) body.before_id = a.before;
+      if (a.after !== undefined) body.after_id = a.after;
+      return taskResult(await api('POST', `/tasks/${encodeURIComponent(a.id)}/reorder`, body));
+    },
+  },
+  {
     name: 'punchlist_complete',
     description: 'Mark an active task done directly (human-style completion, no report). ' +
       'For delegated work use punchlist_finish instead.',

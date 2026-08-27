@@ -209,7 +209,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // Reorder within a view_ranks list. Mirrors the project/today reorder shape
   // (neighbor ids, single-neighbor adjacency, renormalize-in-tx on gap
   // exhaustion) but writes view_ranks rather than a tasks column.
-  function viewRankReorder(c, task, body, view) {
+  function viewRankReorder(c, task, body, view, afterWrite) {
     const t = today();
     const fetchRows = () => {
       const res = taskWhere(view, { today: t, admin: HUMAN, limit: 500 });
@@ -256,6 +256,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
         if (val === null) throw new ApiError(409, 'neighbors are not adjacent in that order', { current: currentList() });
       }
       upsertViewRank.run(task.id, view, val);
+      afterWrite?.(); // agent-reorder discipline: auto-post the reason, if any
       return c.json({ task: attach(getTask(task.id)) });
     });
   }
@@ -709,16 +710,29 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (!task) throw new ApiError(404, 'task not found');
     const body = await readJson(c);
     for (const k of Object.keys(body)) {
-      if (!['before_id', 'after_id', 'list'].includes(k)) throw new ApiError(400, `unknown field: ${k}`);
+      if (!['before_id', 'after_id', 'list', 'reason'].includes(k)) throw new ApiError(400, `unknown field: ${k}`);
     }
     const list = body.list ?? 'project';
     if (!['project', 'today', ...Object.keys(VIEW_RANK_LISTS)].includes(list)) {
       throw new ApiError(400, "list must be 'project', 'today', 'inbox', 'agents' or 'human'");
     }
     if (!body.before_id && !body.after_id) throw new ApiError(400, 'before_id or after_id required');
+    // agent-reorder discipline: an AGENT (non-admin actor) reprioritizing its
+    // backlog must say WHY. A supplied {reason} auto-posts a status timeline
+    // entry; human reorders post nothing. Reason is validated whenever given.
+    if (body.reason !== undefined &&
+        (typeof body.reason !== 'string' || !body.reason.trim() || body.reason.length > CAPS.comment)) {
+      throw new ApiError(400, `reason must be a non-empty string of at most ${CAPS.comment} chars`);
+    }
+    const actor = c.get('actor');
+    const postReorderReason = () => {
+      if (actor !== HUMAN && typeof body.reason === 'string' && body.reason.trim()) {
+        postComment(task.id, actor, 'status', `${actor} moved this up: ${body.reason.trim()}`);
+      }
+    };
     // inbox / agents / human keep their manual order in view_ranks (separate
     // table, per-view independent) — dispatch before the tasks-column path.
-    if (VIEW_RANK_LISTS[list]) return viewRankReorder(c, task, body, VIEW_RANK_LISTS[list]);
+    if (VIEW_RANK_LISTS[list]) return viewRankReorder(c, task, body, VIEW_RANK_LISTS[list], postReorderReason);
     const t = today();
     const col = list === 'today' ? 'today_rank' : 'rank';
 
@@ -802,6 +816,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       }
       db.prepare(`UPDATE tasks SET ${col} = ?, updated_at = ? WHERE id = ?`)
         .run(val, new Date().toISOString(), task.id);
+      postReorderReason(); // agent-reorder discipline: auto-post the reason, if any
       return c.json({ task: attach(getTask(task.id)) });
     });
   });

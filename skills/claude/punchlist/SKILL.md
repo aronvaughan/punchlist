@@ -99,8 +99,15 @@ untrusted actors) never appear in your queue and claim/finish 403 on them
   matches the expected shape.
 - **Check the queue**: when asked "is there work for you" (or at natural
   checkpoints), run `queue` — it lists active + in_progress tasks assigned
-  to your actor (server-side vetted-only). **Claim before working** a task;
-  never work unclaimed items.
+  to your actor (server-side vetted-only), in the shared agents-backlog
+  order (position IS priority — the top is what you take next). **Claim
+  before working** a task; never work unclaimed items.
+- **Reprioritizing the backlog**: you MAY reorder/reprioritize your backlog
+  (`reorder <id> --before <id> --reason "why"`, or `--after`), but you MUST
+  supply a `--reason` — it auto-posts a status entry ("<you> moved this up:
+  <reason>") to the task timeline so the owner sees why. Do it only for a
+  real reason (a blocker, a deadline, a dependency), not to push your own
+  work ahead. The owner reorders freely with no note; you do not.
 - **Finish with a substantive report**: what was done, where the output
   lives (paths, commits, links), and anything the reviewer should check.
   A bare "done" is not a report. Finishing normally lands the task in the

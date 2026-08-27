@@ -20,6 +20,9 @@
 #   pl.sh answer <id> "text"           blocked -> active with the answer (admin only)
 #   pl.sh comment <id> "text"          post a comment to the task's timeline
 #                                      (non-blocking — think out loud / progress)
+#   pl.sh reorder <id> (--before <id>|--after <id>) [--list agents|inbox|human]
+#                    --reason "why"    reprioritize your backlog; as an agent you
+#                                      MUST give a reason (auto-posted to timeline)
 #   pl.sh complete <id>                human-style done (the owner's own tasks)
 #   pl.sh approve <id>                 review -> done (admin actor only)
 #   pl.sh vet <id>                     mark an unvetted task safe for agents (admin only)
@@ -120,7 +123,7 @@ resolve_project() { # name-or-id -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -213,6 +216,24 @@ case "$cmd" in
     api POST "/tasks/$(uri "$1")/comments" "$(jq -n --arg t "$2" '{text: $t}')"
     printf '%s' "$RESP" | jq -r '"commented on " + .task_id + " (@" + (.author // "?") + ")"' ;;
 
+  reorder)
+    # Reprioritize your backlog. As an agent you MUST give a --reason: it
+    # auto-posts a status entry ("<you> moved this up: <reason>") to the task
+    # timeline so the owner sees why. Position IS priority.
+    [ $# -ge 3 ] || { echo "usage: pl.sh reorder <id> (--before <id>|--after <id>) [--list agents|inbox|human] --reason \"why\"" >&2; exit 2; }
+    id="$1"; shift
+    body=$(jq -n '{list: "agents"}')
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --before) body=$(jq --arg v "$2" '.before_id=$v' <<<"$body"); shift 2 ;;
+        --after)  body=$(jq --arg v "$2" '.after_id=$v' <<<"$body"); shift 2 ;;
+        --list)   body=$(jq --arg v "$2" '.list=$v' <<<"$body"); shift 2 ;;
+        --reason) body=$(jq --arg v "$2" '.reason=$v' <<<"$body"); shift 2 ;;
+        *) echo "pl: unknown flag $1" >&2; exit 2 ;;
+      esac
+    done
+    api POST "/tasks/$(uri "$id")/reorder" "$body"; one ;;
+
   complete)
     [ $# -eq 1 ] || { echo "usage: pl.sh complete <id>" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/complete" '{}'; one ;;
@@ -269,6 +290,6 @@ case "$cmd" in
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac

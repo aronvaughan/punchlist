@@ -76,6 +76,13 @@ the owner can `vet`.
 - **Queue discipline**: check `queue`, claim a task before starting, work
   it, then `finish` with a SUBSTANTIVE report — what you did, where output
   lives, what the reviewer should check. "Done" alone is not a report.
+- **Reprioritizing the backlog**: position IS priority — the top of your
+  queue is what you take next. You MAY reorder/reprioritize your backlog
+  (`reorder <id> --before <id> --reason "why"`, or `--after`), but you MUST
+  supply a `--reason` — it auto-posts a status entry ("<you> moved this up:
+  <reason>") to the task timeline so the owner sees why. Move something up
+  only for a real reason (a blocker, a deadline, a dependency), not to jump
+  your own work ahead. Humans reorder freely with no note; you do not.
 - **Physical/meatspace tasks are not yours**: anything needing hands in
   the world gets reassigned — `update <id> --assignee <the owner's actor>`
   plus a note explaining why. Same for new reminders the owner asks you to
