@@ -119,6 +119,7 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.match(html, /id="manage-top-drop"/); // (top level) unparent drop zone
   assert.match(html, /id="manage-new-name"/);
   assert.match(html, /id="manage-new-parent"/);
+  assert.match(html, /id="manage-show-archived"/); // icon toggle: archived hidden by default
   assert.doesNotMatch(html, /id="project-dialog"/);
 
   const views = await (await get('/views.js')).text();
@@ -126,9 +127,17 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.match(views, /export function renderTreeInto/); // ONE tree walk, nav + dialog
   // nav renders through the shared walker (no private addRows recursion)
   assert.match(views, /renderTreeInto\(rootUl, live/);
-  assert.match(views, /renderTreeInto\(root, state\.projects/);
+  assert.match(views, /renderTreeInto\(root, projects/); // dialog tree (archived-filtered)
+  assert.match(views, /manageShowArchived \|\| !p\.archived/); // archived hidden by default
   assert.match(views, /parent_id: parentId/);      // drag-to-reparent PATCH
   assert.match(views, /archived: !p\.archived/);   // archive/unarchive toggle
+  // the gear on the rail Projects header is gone; the dialog opens from
+  // "+ New project" and the per-parent + only
+  assert.doesNotMatch(views, /rail-gear/);
+  // the reparent drag handle reuses the step-row ⋮⋮ grip (.grip), not a
+  // bespoke .manage-grip
+  assert.match(views, /el\('span', 'grip'\)/);
+  assert.doesNotMatch(views, /manage-grip/);
 
   // drawer picker gets the "Manage…" affordance
   const detail = await (await get('/detail.js')).text();

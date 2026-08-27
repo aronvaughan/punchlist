@@ -90,6 +90,11 @@
 
   <wa-dialog id="manage-dialog" label="Manage projects">
     <div id="manage-body" class="manage-body">
+      <div class="manage-toolbar">
+        <!-- icon toggle: archived projects are hidden by default -->
+        <button id="manage-show-archived" class="manage-icon-toggle" type="button"
+                aria-pressed="false" aria-label="Show archived projects" title="Show archived projects">⊘</button>
+      </div>
       <!-- (top level) drop zone: dragging a project here unparents it -->
       <ul id="manage-top-drop" class="manage-top-drop" data-parent-id=""
           aria-label="Drop a project here to move it to the top level"></ul>

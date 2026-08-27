@@ -304,6 +304,7 @@ const mdialog = () => document.getElementById('manage-dialog');
 let manageCreatedId = null; // last project created here (picker selects it on close)
 let manageFocus = null;     // 'new' | { addChild: parentId } — applied on open only
 let manageTopWired = false; // the persistent (top level) drop zone is wired once
+let manageShowArchived = false; // archived projects hidden by default (icon toggles)
 
 // open the dialog; resolves { createdId } when it closes (drawer picker awaits)
 export function openManageDialog(focus = null) {
@@ -340,7 +341,7 @@ function manageSortableOpts() {
   return {
     group: 'proj-move',
     animation: 150,
-    handle: '.manage-grip',
+    handle: '.grip',
     fallbackOnBody: true,
     onStart: () => manageDragActive(true),
     onEnd: async evt => {
@@ -373,7 +374,9 @@ function renderManageTree() {
   top.dataset.parentId = '';
   if (!manageTopWired) { new Sortable(top, manageSortableOpts()); manageTopWired = true; }
 
-  renderTreeInto(root, state.projects ?? [], {
+  // archived projects are hidden by default; the toolbar icon reveals them
+  const projects = (state.projects ?? []).filter(p => manageShowArchived || !p.archived);
+  renderTreeInto(root, projects, {
     renderRow: manageRow,
     archivedLast: true,
     alwaysList: true,          // every row gets a children <ul> (a drop target)
@@ -394,7 +397,8 @@ function renderManageTree() {
 function manageRow(p) {
   const row = el('div', 'manage-row' + (p.archived ? ' archived' : ''));
   row.dataset.projectId = p.id;
-  const grip = el('span', 'manage-grip');
+  // the same ⋮⋮ grip the step rows use (reused markup/CSS) — the drag handle
+  const grip = el('span', 'grip');
   grip.setAttribute('aria-hidden', 'true');
   grip.title = 'Drag to reparent';
   row.append(grip);
@@ -404,11 +408,13 @@ function manageRow(p) {
   name.addEventListener('click', () => startRename(p, name));
   row.append(name);
   const actions = el('div', 'manage-actions');
-  const add = el('button', 'manage-btn', '+');
+  // icons over text throughout the dialog
+  const add = el('button', 'manage-btn', '＋');
   add.title = `Add a sub-project under ${p.name}`;
   add.setAttribute('aria-label', `Add a sub-project under ${p.name}`);
   add.addEventListener('click', () => openChildInput(p.id));
-  const arch = el('button', 'manage-btn manage-archive', p.archived ? 'Restore' : 'Archive');
+  const arch = el('button', 'manage-btn manage-archive', p.archived ? '♻' : '🗄');
+  arch.title = p.archived ? `Unarchive ${p.name}` : `Archive ${p.name}`;
   arch.setAttribute('aria-label', `${p.archived ? 'Unarchive' : 'Archive'} ${p.name}`);
   arch.addEventListener('click', async () => {
     try {
@@ -596,6 +602,17 @@ document.getElementById('tag-cancel').addEventListener('click', () => {
 // left-nav "+ New project" opens the Manage dialog focused on its new-project row
 document.getElementById('rail-new-project').addEventListener('click', () => openManageDialog('new'));
 document.getElementById('manage-close').addEventListener('click', () => { mdialog().open = false; });
+// show-archived icon toggle: archived projects are hidden by default
+document.getElementById('manage-show-archived').addEventListener('click', e => {
+  manageShowArchived = !manageShowArchived;
+  const btn = e.currentTarget;
+  btn.setAttribute('aria-pressed', String(manageShowArchived));
+  btn.classList.toggle('on', manageShowArchived);
+  btn.textContent = manageShowArchived ? '◉' : '⊘';
+  btn.title = manageShowArchived ? 'Hide archived projects' : 'Show archived projects';
+  btn.setAttribute('aria-label', btn.title);
+  renderManageTree();
+});
 document.getElementById('manage-new-add').addEventListener('click', createProject);
 document.getElementById('manage-new-name').addEventListener('keydown', e => {
   if (e.key === 'Enter') createProject();
