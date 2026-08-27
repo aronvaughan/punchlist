@@ -3,8 +3,11 @@
 // (external, same-origin). Mirrors the applyTheme logic in app.js.
 (function () {
   var THEMES = ['system', 'light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte',
-    'dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal'];
-  var DARK = ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal'];
+    'azure', 'glass-light', 'conifer',
+    'dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal',
+    'cobalt', 'glass-dark', 'synthwave'];
+  var DARK = ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal',
+    'cobalt', 'glass-dark', 'synthwave'];
   var pref = 'system';
   try { pref = localStorage.getItem('av-tasks-theme') || 'system'; } catch (e) { /* blocked */ }
   if (THEMES.indexOf(pref) === -1) pref = 'system';
