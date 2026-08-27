@@ -206,12 +206,7 @@ export function renderRail() {
   };
   const projHead = document.getElementById('rail-projects-head');
   const projOpen = sectionHead(projHead, 'projects', 'Projects');
-  // gear on the Projects section header opens the Manage dialog
-  const gear = el('button', 'rail-gear', '⚙');
-  gear.title = 'Manage projects';
-  gear.setAttribute('aria-label', 'Manage projects');
-  gear.addEventListener('click', e => { e.stopPropagation(); openManageDialog(); });
-  projHead.append(gear);
+  // (no gear here — the dialog opens from "+ New project" and the per-parent +)
   document.getElementById('rail-new-project').hidden = !projOpen;
   if (projOpen) renderTreeInto(rootUl, live, { renderRow: navRow, collapsed: id => collapsed.has(id) });
   // one-shot: animate the freshly-rendered subtree rows only when a user just
@@ -798,10 +793,17 @@ function taskList(tasks, opts) {
 }
 
 // ---- reorder plumbing ----
+// nearest task-row sibling in a direction — lets a list interleave non-row
+// cards (question/review) between rows without confusing neighbor detection
+function siblingRowId(item, dir) {
+  let n = item[dir];
+  while (n && !n.classList?.contains('task-row')) n = n[dir];
+  return n?.dataset.id;
+}
 function neighborBody(item, list) {
   const body = {};
-  const prev = item.previousElementSibling?.dataset.id;
-  const next = item.nextElementSibling?.dataset.id;
+  const prev = siblingRowId(item, 'previousElementSibling');
+  const next = siblingRowId(item, 'nextElementSibling');
   if (prev) body.after_id = prev;
   if (next) body.before_id = next;
   if (list) body.list = list;
@@ -810,16 +812,21 @@ function neighborBody(item, list) {
 
 async function postReorder(item, list) {
   const body = neighborBody(item, list);
-  if (!body) return;
+  if (!body) return true;
   try {
     await api('POST', `/tasks/${item.dataset.id}/reorder`, body);
+    return true;
   } catch (e) {
     // 409: scope changed under us — re-render from server truth (the contract)
     await rollback(e.status === 409 ? 'List changed — restored server order' : `Reorder failed: ${e.message}`);
+    return false;
   }
 }
 
-function sortableList(ul, { list, section } = {}) {
+// rowsOnly: the list interleaves non-draggable cards (Human lane question
+// cards); only .task-row drags, and a successful reorder reloads so the cards
+// re-align under their rows in the new order.
+function sortableList(ul, { list, section, rowsOnly = false } = {}) {
   new Sortable(ul, {
     group: { name: 'tasks', put: section !== undefined, pull: true },
     animation: 150,
@@ -827,6 +834,7 @@ function sortableList(ul, { list, section } = {}) {
     delayOnTouchOnly: true,
     filter: '.expanded', // the expanded editing card must not drag
     preventOnFilter: false,
+    ...(rowsOnly ? { draggable: '.task-row' } : {}),
     ...(COARSE ? { handle: '.grip' } : {}),
     // while a drag is live, empty project sections re-appear as drop targets
     onStart: () => document.body.classList.add('drag-active'),
@@ -834,7 +842,8 @@ function sortableList(ul, { list, section } = {}) {
       document.body.classList.remove('drag-active');
       if (evt.to !== evt.from) return; // cross-list handled by onAdd
       if (evt.oldIndex === evt.newIndex) return;
-      await postReorder(evt.item, list);
+      const ok = await postReorder(evt.item, list);
+      if (ok && rowsOnly) await reload(); // realign interleaved cards
     },
     onAdd: async evt => {
       if (section === undefined) return;
@@ -931,7 +940,7 @@ export function renderMain() {
     titleEl.textContent = 'Inbox';
     const ul = taskList(tasks, { sortable: true });
     listEl.append(ul);
-    sortableList(ul, { list: 'project' });
+    sortableList(ul, { list: 'inbox' }); // manual order persists to view_ranks('inbox')
   }
   if (tasks.length === 0) listEl.append(el('div', 'empty-note', emptyNote(r.view)));
   // one-shot: rows slide in only on a view/route change or a new task (flag),
@@ -1068,15 +1077,20 @@ function questionCard(task) {
   return card;
 }
 
-// Needs input view: every task here is status=blocked, oldest wait first —
-// row (with agent chip) + the question card with an inline answer box
+// Human lane: every task here is status=blocked. Drag-reorderable — the human
+// hand-orders which question to answer next (persists to view_ranks('human')).
+// Each row carries its question card with an inline answer box. The card is a
+// sibling of the row inside the list; SortableJS drags whole rows (.task-row),
+// and the question cards are filtered out of dragging so they ride with reorder
+// via a full reload.
 function renderNeedsInput(listEl, tasks) {
   const ul = el('div', 'task-list');
   for (const task of tasks) {
-    ul.append(taskRow(task, { showProject: true }));
+    ul.append(taskRow(task, { showProject: true, sortable: true }));
     ul.append(questionCard(task));
   }
   listEl.append(ul);
+  sortableList(ul, { list: 'human', rowsOnly: true });
 }
 
 // Review view: every task here is status=review — row (with agent chip) + card
@@ -1106,34 +1120,34 @@ function unvetCard(task) {
   return card;
 }
 
+// Agents view: ONE shared, drag-reorderable backlog across ALL agent-assigned
+// open (active + in_progress) tasks, in the global manual order the server
+// returns (view_ranks('agents'), nulls last). Agent identity is a per-row chip
+// (visual affordance) — the order is global, not grouped into per-agent
+// sections. Work waiting on the human (blocked / in review / unvetted) drops
+// below into a non-draggable "Waiting on you" area with its action cards.
 function renderAgents(listEl, tasks) {
-  const byAgent = new Map();
-  for (const t of tasks) {
-    if (!byAgent.has(t.assignee)) byAgent.set(t.assignee, []);
-    byAgent.get(t.assignee).push(t);
+  const claimable = t => t.vetted !== 0 && (t.status === 'active' || t.status === 'in_progress');
+  const backlog = tasks.filter(claimable);
+  const waiting = tasks.filter(t => !claimable(t)); // blocked / review / unvetted
+
+  if (backlog.length) {
+    listEl.append(el('div', 'section-head', 'Backlog'));
+    const ul = taskList(backlog, { showProject: true, showClaimed: true, sortable: true });
+    listEl.append(ul);
+    sortableList(ul, { list: 'agents' }); // reorder persists to view_ranks('agents')
   }
-  for (const [agent, list] of byAgent) {
-    listEl.append(el('div', 'section-head', agent[0].toUpperCase() + agent.slice(1)));
-    const vetted = list.filter(t => t.vetted !== 0);
-    const unvetted = list.filter(t => t.vetted === 0);
+
+  if (waiting.length) {
+    listEl.append(el('div', 'section-head', 'Waiting on you'));
     const ul = el('div', 'task-list');
-    for (const task of vetted) { // server order: in_progress → blocked → review → queued
+    for (const task of waiting) {
       ul.append(taskRow(task, { showProject: true, showClaimed: true }));
       if (task.status === 'blocked') ul.append(questionCard(task));
-      if (task.status === 'review') ul.append(reviewCard(task));
+      else if (task.status === 'review') ul.append(reviewCard(task));
+      else if (task.vetted === 0) ul.append(unvetCard(task));
     }
     listEl.append(ul);
-    if (unvetted.length) {
-      // quarantine subsection (agent-security layer 1): visible to the owner,
-      // excluded from the agent's queue until vetted
-      listEl.append(el('div', 'section-head unvetted-head', 'UNVETTED — agents will not execute'));
-      const qul = el('div', 'task-list');
-      for (const task of unvetted) {
-        qul.append(taskRow(task, { showProject: true }));
-        qul.append(unvetCard(task));
-      }
-      listEl.append(qul);
-    }
   }
 }
 

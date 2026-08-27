@@ -189,6 +189,77 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return (m ?? 0) + 1024;
   }
 
+  // ---- per-view manual order (view_ranks, migration 008) ----
+  // The drag-reorderable list views (inbox / agents / human) keep their manual
+  // order in view_ranks, independent of tasks.rank / today_rank. Each list maps
+  // to the taskWhere view that renders it, so "visible order" and "in scope"
+  // come from the one source of view semantics.
+  const VIEW_RANK_LISTS = { inbox: 'inbox', agents: 'agents', human: 'human' };
+  const upsertViewRank = db.prepare(
+    `INSERT INTO view_ranks (task_id, view, rank) VALUES (?, ?, ?)
+     ON CONFLICT(task_id, view) DO UPDATE SET rank = excluded.rank`);
+
+  // Move a task to the TOP of a view_ranks order (min existing rank − a gap).
+  // Used by reopen-to-top; renders the task the next agent pick-up.
+  function viewRankToTop(taskId, view) {
+    const { m } = db.prepare('SELECT MIN(rank) m FROM view_ranks WHERE view = ?').get(view);
+    upsertViewRank.run(taskId, view, (m ?? 0) - 1024);
+  }
+
+  // Reorder within a view_ranks list. Mirrors the project/today reorder shape
+  // (neighbor ids, single-neighbor adjacency, renormalize-in-tx on gap
+  // exhaustion) but writes view_ranks rather than a tasks column.
+  function viewRankReorder(c, task, body, view) {
+    const t = today();
+    const fetchRows = () => {
+      const res = taskWhere(view, { today: t, admin: HUMAN, limit: 500 });
+      return db.prepare(res.sql).all(...res.args);
+    };
+    let rows = fetchRows();
+    const inScope = id => rows.some(r => r.id === id);
+    const currentList = () => rows.map(r => ({ id: r.id, title: r.title }));
+    if (!inScope(task.id)) throw new ApiError(409, 'task is not in that list', { current: currentList() });
+    const neighbors = {};
+    for (const key of ['after_id', 'before_id']) {
+      if (!body[key]) continue;
+      if (!inScope(body[key])) throw new ApiError(409, `${key} is no longer in this list`, { current: currentList() });
+      neighbors[key] = body[key];
+    }
+    return tx(db, () => {
+      const rankOf = id => {
+        const r = db.prepare('SELECT rank FROM view_ranks WHERE task_id = ? AND view = ?').get(id, view);
+        return r ? r.rank : null;
+      };
+      // materialize the current visible order into view_ranks (same tx as the
+      // write) — the first drag in a view has no ranks yet, and a later drag can
+      // exhaust the float gap between two neighbors.
+      const renorm = () => {
+        fetchRows().forEach((r, i) => upsertViewRank.run(r.id, view, (i + 1) * 1024));
+      };
+      // single-neighbor "directly adjacent" — derive the missing bound from the
+      // row next to the given neighbor in the visible order (evenly-spaced ranks
+      // would otherwise collide, same fix as the project/today path).
+      const implicit = {};
+      if (!neighbors.after_id !== !neighbors.before_id) {
+        const given = neighbors.after_id ? 'after_id' : 'before_id';
+        const idx = rows.findIndex(r => r.id === neighbors[given]);
+        const adj = given === 'after_id' ? rows[idx + 1] : rows[idx - 1];
+        if (adj) implicit[given === 'after_id' ? 'before_id' : 'after_id'] = adj.id;
+      }
+      const bound = key => neighbors[key] ?? implicit[key];
+      const boundRank = key => (bound(key) ? rankOf(bound(key)) : null);
+      let val = between(boundRank('after_id'), boundRank('before_id'));
+      const anyNull = ['after_id', 'before_id'].some(k => bound(k) && rankOf(bound(k)) === null);
+      if (val === null || anyNull) {
+        renorm();
+        val = between(boundRank('after_id'), boundRank('before_id'));
+        if (val === null) throw new ApiError(409, 'neighbors are not adjacent in that order', { current: currentList() });
+      }
+      upsertViewRank.run(task.id, view, val);
+      return c.json({ task: attach(getTask(task.id)) });
+    });
+  }
+
   function createTask(fields, actor) {
     validateTaskBody(fields, { partial: false });
     const t = today();
@@ -274,7 +345,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   app.get('/api/v1/tasks', c => {
     const { view, project, tag, q, assignee, limit, cursor, window: windowRaw } = c.req.query();
     if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook',
-      'review', 'delegated', 'queue', 'unvetted', 'needs_input'].includes(view)) {
+      'review', 'delegated', 'agents', 'queue', 'unvetted', 'needs_input', 'human'].includes(view)) {
       throw new ApiError(400, `unknown view: ${view}`);
     }
     const lim = Math.min(Math.max(1, Number(limit) || 100), 500);
@@ -619,8 +690,13 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (!['before_id', 'after_id', 'list'].includes(k)) throw new ApiError(400, `unknown field: ${k}`);
     }
     const list = body.list ?? 'project';
-    if (!['project', 'today'].includes(list)) throw new ApiError(400, "list must be 'project' or 'today'");
+    if (!['project', 'today', ...Object.keys(VIEW_RANK_LISTS)].includes(list)) {
+      throw new ApiError(400, "list must be 'project', 'today', 'inbox', 'agents' or 'human'");
+    }
     if (!body.before_id && !body.after_id) throw new ApiError(400, 'before_id or after_id required');
+    // inbox / agents / human keep their manual order in view_ranks (separate
+    // table, per-view independent) — dispatch before the tasks-column path.
+    if (VIEW_RANK_LISTS[list]) return viewRankReorder(c, task, body, VIEW_RANK_LISTS[list]);
     const t = today();
     const col = list === 'today' ? 'today_rank' : 'rank';
 

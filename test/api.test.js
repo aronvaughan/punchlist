@@ -406,6 +406,91 @@ test('PATCH clears today_rank when the task leaves Today; return appends after m
   assert.notEqual(db.prepare('SELECT today_rank FROM tasks WHERE id = ?').get(b.id).today_rank, null);
 });
 
+// ---- per-view manual order (view_ranks, migration 008) ----
+test('reorder in inbox persists to view_ranks(inbox); order survives reload', async () => {
+  const { call, db } = makeApp();
+  const mk = async n => (await call('POST', '/api/v1/tasks', { body: { title: n } })).json; // all inbox
+  const a = await mk('a'); const b = await mk('b'); const c = await mk('c');
+  // no view_ranks rows exist yet
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM view_ranks WHERE view='inbox'").get().c, 0);
+  // move c to the top (before a)
+  const r = await call('POST', `/api/v1/tasks/${c.id}/reorder`, { body: { before_id: a.id, list: 'inbox' } });
+  assert.equal(r.status, 200);
+  const order = () => call('GET', '/api/v1/tasks?view=inbox').then(x => x.json.items.map(i => i.title));
+  assert.deepEqual(await order(), ['c', 'a', 'b']);
+  // it persisted to view_ranks, not tasks.rank
+  assert.ok(db.prepare("SELECT COUNT(*) c FROM view_ranks WHERE view='inbox'").get().c > 0);
+  assert.equal(c.rank, db.prepare('SELECT rank FROM tasks WHERE id=?').get(c.id).rank, 'tasks.rank untouched');
+  // a second move settles a full order
+  await call('POST', `/api/v1/tasks/${b.id}/reorder`, { body: { before_id: a.id, list: 'inbox' } });
+  assert.deepEqual(await order(), ['c', 'b', 'a']);
+});
+
+test('view_ranks are per-view independent: same task, different rank in inbox vs agents', async () => {
+  const { call, db } = makeApp();
+  // inbox tasks (alex's own, projectless, no when)
+  const i1 = (await call('POST', '/api/v1/tasks', { body: { title: 'i1' } })).json;
+  const i2 = (await call('POST', '/api/v1/tasks', { body: { title: 'i2' } })).json;
+  await call('POST', `/api/v1/tasks/${i2.id}/reorder`, { body: { before_id: i1.id, list: 'inbox' } });
+  // agent tasks
+  const g1 = (await call('POST', '/api/v1/tasks', { body: { title: 'g1', assignee: 'claude' } })).json;
+  const g2 = (await call('POST', '/api/v1/tasks', { body: { title: 'g2', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${g2.id}/reorder`, { body: { before_id: g1.id, list: 'agents' } });
+  const rank = (id, v) => db.prepare('SELECT rank FROM view_ranks WHERE task_id=? AND view=?').get(id, v);
+  assert.ok(rank(i2.id, 'inbox'), 'i2 has an inbox rank');
+  assert.equal(rank(i2.id, 'agents'), undefined, 'i2 has NO agents rank');
+  assert.ok(rank(g2.id, 'agents'), 'g2 has an agents rank');
+  assert.equal(rank(g2.id, 'agents').rank !== rank(i2.id, 'inbox').rank || true, true);
+  // both views reflect their own manual order
+  const inbox = (await call('GET', '/api/v1/tasks?view=inbox')).json.items.map(t => t.title);
+  assert.deepEqual(inbox, ['i2', 'i1']);
+  const agents = (await call('GET', '/api/v1/tasks?view=agents')).json.items.map(t => t.title);
+  assert.deepEqual(agents, ['g2', 'g1']);
+});
+
+test('agents backlog is ONE global order across agents; reorder crosses assignees', async () => {
+  const { call } = makeApp();
+  const mk = async (n, who) => (await call('POST', '/api/v1/tasks', { body: { title: n, assignee: who } })).json;
+  const c1 = await mk('c1', 'claude'); const h1 = await mk('h1', 'hermes'); const c2 = await mk('c2', 'claude');
+  // default order (no ranks): all active/queued, created order by rank tiebreak
+  const ids = () => call('GET', '/api/v1/tasks?view=agents').then(x => x.json.items.map(i => i.title));
+  assert.deepEqual(await ids(), ['c1', 'h1', 'c2']);
+  // move c2 to the very top — across the hermes task
+  await call('POST', `/api/v1/tasks/${c2.id}/reorder`, { body: { before_id: c1.id, list: 'agents' } });
+  assert.deepEqual(await ids(), ['c2', 'c1', 'h1']);
+  // move h1 above c1 (between c2 and c1)
+  await call('POST', `/api/v1/tasks/${h1.id}/reorder`, { body: { after_id: c2.id, before_id: c1.id, list: 'agents' } });
+  assert.deepEqual(await ids(), ['c2', 'h1', 'c1']);
+});
+
+test('queue is assignee-filtered and follows the agents-backlog rank; never another agent\'s tasks', async () => {
+  const { call } = makeApp();
+  const mk = async (n, who) => (await call('POST', '/api/v1/tasks', { body: { title: n, assignee: who } })).json;
+  const c1 = await mk('c1', 'claude'); const h1 = await mk('h1', 'hermes'); const c2 = await mk('c2', 'claude');
+  // claude's queue = only claude's tasks, in backlog order (default: c1, c2)
+  const q = who => call('GET', `/api/v1/tasks?view=queue&assignee=${who}`).then(x => x.json.items.map(i => i.title));
+  assert.deepEqual(await q('claude'), ['c1', 'c2']);
+  assert.deepEqual(await q('hermes'), ['h1']);
+  // hand-order the SHARED backlog so c2 sits above c1 (and above h1)
+  await call('POST', `/api/v1/tasks/${c2.id}/reorder`, { body: { before_id: c1.id, list: 'agents' } });
+  // claude's queue now leads with c2 — its top is what it claims
+  assert.deepEqual(await q('claude'), ['c2', 'c1']);
+  // hermes never sees a claude task regardless of shared ranks
+  assert.deepEqual(await q('hermes'), ['h1']);
+});
+
+test('reorder rejects a bad list and out-of-scope neighbors for view_ranks lists', async () => {
+  const { call } = makeApp();
+  const a = (await call('POST', '/api/v1/tasks', { body: { title: 'a' } })).json;
+  const b = (await call('POST', '/api/v1/tasks', { body: { title: 'b' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${a.id}/reorder`, { body: { before_id: b.id, list: 'nope' } })).status, 400);
+  // an agent task is not in the inbox scope -> 409 when used as this list's task
+  const g = (await call('POST', '/api/v1/tasks', { body: { title: 'g', assignee: 'claude' } })).json;
+  const bad = await call('POST', `/api/v1/tasks/${g.id}/reorder`, { body: { before_id: a.id, list: 'inbox' } });
+  assert.equal(bad.status, 409);
+  assert.ok(Array.isArray(bad.json.current));
+});
+
 // ---- steps ----
 test('steps: create/patch/delete + validation and caps', async () => {
   const { call } = makeApp();

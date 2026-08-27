@@ -29,10 +29,21 @@ const MINE = `assignee = :admin`;
 // input), then review, then queued
 const AGENT_STATUS = `CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'review' THEN 2 ELSE 3 END`;
 
+// Per-view manual order (view_ranks, migration 008). A correlated scalar
+// subquery gives each row its rank in the named view, coalesced to BIG so
+// unranked rows sort LAST behind manually-placed ones. The view name is a fixed
+// code constant (never user data) — safe to inline, same as BIG/FAR literals.
+const viewRank = view => `COALESCE((SELECT vr.rank FROM view_ranks vr
+  WHERE vr.task_id = tasks.id AND vr.view = '${view}'), ${BIG})`;
+const INBOX_RANK = viewRank('inbox');
+const AGENTS_RANK = viewRank('agents');
+const HUMAN_RANK = viewRank('human');
+
 const VIEWS = {
   inbox: {
     where: `${LIVE} AND ${MINE} AND project_id IS NULL AND when_type IS NULL`, // derived (C5)
-    keys: [`COALESCE(rank, ${BIG})`], dir: 'ASC',
+    // drag-reorderable: manual view_ranks('inbox') first, then legacy rank (I11)
+    keys: [INBOX_RANK, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   today: {
     // status filter covers BOTH disjuncts (C1). Assignee scoping covers only
@@ -73,11 +84,28 @@ const VIEWS = {
     where: `assignee <> :admin AND ${OPEN}`,
     keys: ['assignee', AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
+  // the shared agent backlog (ordering + backlog design 2026-08-27): the SAME
+  // open agent work delegated shows, but ordered as ONE GLOBAL backlog by the
+  // manual view_ranks('agents') order (nulls last), then the historical
+  // in_progress→blocked→review→queued tiebreak. Grouping-by-agent is a visual
+  // affordance in the UI; the order here is global. Drives the Agents page.
+  agents: {
+    where: `assignee <> :admin AND ${OPEN}`,
+    keys: [AGENTS_RANK, AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
   // needs-input: everything blocked on a question for the admin, oldest wait
   // first (updated_at is stamped when the task blocks)
   needs_input: {
     where: `status = 'blocked'`,
     keys: ['updated_at'], dir: 'ASC',
+  },
+  // the Human lane, drag-reorderable (ordering + backlog design 2026-08-27):
+  // same blocked-only set as needs_input, but manual view_ranks('human') order
+  // first (nulls last), then oldest-wait. needs_input stays as the count/source
+  // view; the Human PAGE reads this so the human can hand-order what to answer.
+  human: {
+    where: `status = 'blocked'`,
+    keys: [HUMAN_RANK, 'updated_at'], dir: 'ASC',
   },
   // agent work queue (agent-security layer 1): what an agent may pick up.
   // vetted=0 rows are EXCLUDED server-side — combined with the ?assignee=
@@ -85,8 +113,14 @@ const VIEWS = {
   // punchlist_queue; the claim/finish doors enforce the same gate. Status-
   // scoped: blocked tasks stay out until the admin's answer re-activates them.
   queue: {
+    // Assignee-filtered claiming (ordering + backlog design 2026-08-27): the
+    // backlog is SHARED for ordering/visibility, but pl.sh queue / MCP
+    // punchlist_queue compose ?assignee= so the caller only ever sees its own
+    // tasks. Ordered by the shared agents-backlog rank (nulls last) so the top
+    // of the caller's slice is the next thing to claim; the historical
+    // in_progress-first tiebreak keeps behaviour when nothing is hand-ranked.
     where: `status IN ('active', 'in_progress') AND vetted = 1`,
-    keys: [AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
+    keys: [AGENTS_RANK, AGENT_STATUS, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   // quarantined arrivals: delegated work an agent will not execute until
   // the admin vets it (counts badge + Agents-view header line)
