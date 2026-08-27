@@ -949,7 +949,7 @@ body.drag-active .section-block.empty .task-list {
   align-items: flex-start;
   gap: 10px;
   min-height: 44px;
-  max-height: 80px;
+  max-height: 132px; /* room for a wrapped subline of pills on narrow screens */
   padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
@@ -960,32 +960,34 @@ body.drag-active .section-block.empty .task-list {
 /* two-line row body: title (+ status/due chips) over a muted subline */
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .row-title-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* subline carries every non-title pill (project, assignee, status, counts,
+   tags-indicator). It wraps on narrow screens so pills never collide/clip. */
 .row-subline {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
+  margin-top: 2px;
 }
-.subline-tags { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
-.row-subline .chip { font-size: 11px; padding: 2px 8px; }
+.row-subline .chip { font-size: 11px; padding: 2px 8px; max-width: 100%; }
+.row-subline .chip .pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-subline .chip.project-name { color: var(--ink-soft); }
-/* tag icon on the subline: opens the inline tag editor */
-.tag-edit {
+/* per-type pill icon: inherits the pill's color via currentColor (theme token) */
+.pill-icon {
   flex: none;
-  border: none;
-  background: none;
-  color: var(--ink-faint);
-  cursor: pointer;
-  padding: 2px 5px;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  border-radius: 6px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: .85;
 }
-.tag-edit:hover { color: var(--accent); background: var(--chip-bg); }
-.quick-tags { margin-top: 5px; }
+/* tags are display-only on the row: a tag icon + count that opens the drawer */
+.chip.tags-indicator { color: var(--ink-soft); cursor: pointer; }
+.chip.tags-indicator:hover { color: var(--accent); }
+/* any pill carrying a leading type-icon lays out icon + text inline */
+.chip:has(.pill-icon) { display: inline-flex; align-items: center; gap: 5px; }
 
 /* row overflow "…": hover-reveal on desktop, always shown on touch. Opens the
    one-item Delete menu (right-click and long-press open it too). */
