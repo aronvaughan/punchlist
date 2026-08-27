@@ -16,8 +16,8 @@ setBasePath('/vendor/webawesome');
 // by theme-boot.js (blocking, pre-CSS). This mirrors that logic for runtime.
 const THEME_GROUPS = [
   ['System', ['system']],
-  ['Light', ['light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte']],
-  ['Dark', ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal']],
+  ['Light', ['light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte', 'azure', 'glass-light', 'conifer']],
+  ['Dark', ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal', 'cobalt', 'glass-dark', 'synthwave']],
 ];
 const THEMES = THEME_GROUPS.flatMap(([, list]) => list);
 const DARK_THEMES = new Set(THEME_GROUPS[2][1]);
@@ -55,7 +55,8 @@ function renderThemeChoices() {
       const sw = document.createElement('span');
       sw.className = `swatch swatch-${t}`;
       const label = document.createElement('span');
-      label.textContent = t[0].toUpperCase() + t.slice(1);
+      // title-case each hyphen segment: "glass-light" -> "Glass Light"
+      label.textContent = t.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
       b.append(sw, label);
       b.addEventListener('click', () => {
         try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }

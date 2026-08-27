@@ -265,6 +265,97 @@ html[data-theme="latte"] {
   --line: #E3D8CA;
   --shadow: 0 1px 3px rgba(85, 62, 40, .10), 0 8px 24px rgba(85, 62, 40, .08);
 }
+html[data-theme="azure"] {
+  /* bright blue light */
+  --bg: #EEF5FF;
+  --pane: #FFFFFF;
+  --ink: #10233B;
+  --ink-soft: #4B5E77;
+  --ink-faint: #8595AC;
+  --accent: #1D4FD7;
+  --on-accent: #FFFFFF;
+  --danger: #D62839;
+  --chip-bg: #DFE9FB;
+  --hover: #E4EEFD;
+  --line: #D3E0F5;
+  --shadow: 0 1px 3px rgba(20, 45, 90, .10), 0 8px 24px rgba(20, 45, 90, .08);
+}
+html[data-theme="cobalt"] {
+  /* deep blue dark, electric accent */
+  --bg: #0A1330;
+  --pane: #121D45;
+  --ink: #E6ECFF;
+  --ink-soft: #93A4CC;
+  --ink-faint: #6C7EA8;
+  --accent: #4EA8FF;
+  --on-accent: #06122E;
+  --danger: #FB7185;
+  --chip-bg: #1A2757;
+  --hover: #15214C;
+  --line: #26346B;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 8px 24px rgba(0, 6, 20, .38);
+}
+html[data-theme="glass-light"] {
+  /* translucent light: panes float as frosted glass over the bg, hairline-edged.
+     Colors are validated against the pane composited over --bg, not the alpha. */
+  --bg: #E7ECF3;
+  --pane: rgba(255, 255, 255, .55);
+  --ink: #1B2430;
+  --ink-soft: #4E5A6B;
+  --ink-faint: #7E8A9A;
+  --accent: #2563C9;
+  --on-accent: #FFFFFF;
+  --danger: #BC232C;
+  --chip-bg: rgba(255, 255, 255, .45);
+  --hover: rgba(255, 255, 255, .62);
+  --line: rgba(120, 140, 170, .38);
+  --shadow: 0 1px 2px rgba(70, 90, 120, .10), 0 10px 30px rgba(70, 90, 120, .12);
+}
+html[data-theme="glass-dark"] {
+  /* translucent dark: panes are a whisper of light over the bg + a hairline */
+  --bg: #0E1524;
+  --pane: rgba(143, 180, 255, .10);
+  --ink: #E4EAF4;
+  --ink-soft: #93A1B8;
+  --ink-faint: #6B7890;
+  --accent: #5CB2F5;
+  --on-accent: #06121F;
+  --danger: #FB7185;
+  --chip-bg: rgba(143, 180, 255, .12);
+  --hover: rgba(143, 180, 255, .08);
+  --line: rgba(143, 180, 255, .22);
+  --shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 10px 30px rgba(0, 0, 0, .4);
+}
+html[data-theme="synthwave"] {
+  /* dusk purple with cyan accent + hot-pink danger — tasteful, not garish */
+  --bg: #1A1033;
+  --pane: #251646;
+  --ink: #F0E9FF;
+  --ink-soft: #B4A6E0;
+  --ink-faint: #7E6FB0;
+  --accent: #2FE0E0;
+  --on-accent: #05201F;
+  --danger: #FF6EA6;
+  --chip-bg: #2F1D57;
+  --hover: #281851;
+  --line: #3A2668;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 8px 24px rgba(30, 6, 60, .45);
+}
+html[data-theme="conifer"] {
+  /* pale evergreen paper, deep pine accent — unusual but easy on the eyes */
+  --bg: #EDF1E5;
+  --pane: #FBFCF6;
+  --ink: #22271C;
+  --ink-soft: #556149;
+  --ink-faint: #8A957C;
+  --accent: #2C6B49;
+  --on-accent: #FFFFFF;
+  --danger: #B23A2E;
+  --chip-bg: #E1E8D5;
+  --hover: #E6EDDB;
+  --line: #DAE1CB;
+  --shadow: 0 1px 3px rgba(40, 55, 30, .10), 0 8px 24px rgba(40, 55, 30, .08);
+}
 
 /* visible keyboard focus everywhere, accent ring */
 :focus-visible {
@@ -600,6 +691,18 @@ html[data-theme="latte"] {
 .swatch-lilac::after { background: #7C5CBF; }
 .swatch-latte { background: #F5EFE8; }
 .swatch-latte::after { background: #8B5E34; }
+.swatch-azure { background: #EEF5FF; }
+.swatch-azure::after { background: #1D4FD7; }
+.swatch-cobalt { background: #0A1330; }
+.swatch-cobalt::after { background: #4EA8FF; }
+.swatch-glass-light { background: linear-gradient(135deg, #E7ECF3 0%, #FFFFFF 100%); }
+.swatch-glass-light::after { background: #2563C9; }
+.swatch-glass-dark { background: linear-gradient(135deg, #0E1524 0%, #223250 100%); }
+.swatch-glass-dark::after { background: #5CB2F5; }
+.swatch-synthwave { background: #1A1033; }
+.swatch-synthwave::after { background: #2FE0E0; }
+.swatch-conifer { background: #EDF1E5; }
+.swatch-conifer::after { background: #2C6B49; }
 .theme-group-label {
   grid-column: 1 / -1;
   font-size: 11px;
