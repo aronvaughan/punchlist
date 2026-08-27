@@ -295,3 +295,56 @@ test('reaper: archived task also fires on_done', async () => {
   assert.equal(res.deleted[0].id, up.json.id);
   a.cleanup();
 });
+
+// ---- hard delete: cascade + file cleanup + authorization ----
+test('delete task: admin-only, 404 for missing, cascades rows + attachment files', async () => {
+  const a = makeApp();
+  // a task with tags, steps, a comment and two attachments
+  const t = (await a.call('POST', '/api/v1/tasks',
+    { body: { title: 'doomed', tags: ['red', 'blue'], steps: ['one', 'two'] } })).json;
+  await a.call('POST', `/api/v1/tasks/${t.id}/comments`, { body: { text: 'a note' } });
+  const up1 = await a.upload(t.id, PNG, { contentType: 'image/png' });
+  const up2 = await a.upload(t.id, JPEG, { contentType: 'image/jpeg', filename: 'p.jpg' });
+  const f1 = filePathFor(a.mediaDir, up1.json.id, up1.json.mime);
+  const f2 = filePathFor(a.mediaDir, up2.json.id, up2.json.mime);
+  assert.ok(existsSync(f1) && existsSync(f2));
+
+  // a non-admin actor may not delete
+  const forbidden = await a.call('DELETE', `/api/v1/tasks/${t.id}`, { token: TOK_CLAUDE });
+  assert.equal(forbidden.status, 403);
+  assert.ok(a.db.prepare('SELECT 1 FROM tasks WHERE id = ?').get(t.id)); // still there
+  assert.ok(existsSync(f1)); // files untouched
+
+  // missing id -> 404
+  assert.equal((await a.call('DELETE', '/api/v1/tasks/NOPE')).status, 404);
+
+  // admin delete -> 200 and everything hanging off the task is gone
+  const del = await a.call('DELETE', `/api/v1/tasks/${t.id}`);
+  assert.equal(del.status, 200);
+  assert.deepEqual(del.json, { ok: true });
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM tasks WHERE id = ?').get(t.id).c, 0);
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM steps WHERE task_id = ?').get(t.id).c, 0);
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM task_tags WHERE task_id = ?').get(t.id).c, 0);
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM comments WHERE task_id = ?').get(t.id).c, 0);
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM attachments WHERE task_id = ?').get(t.id).c, 0);
+  // the tag definitions themselves survive (only the links were removed)
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM tags').get().c, 2);
+  // the blob files are unlinked from disk
+  assert.ok(!existsSync(f1) && !existsSync(f2));
+  a.cleanup();
+});
+
+test('delete task: nulls spawned_from back-references so children never block it', async () => {
+  const a = makeApp();
+  const parent = await a.newTask('parent');
+  const child = await a.newTask('child');
+  // simulate a recurrence child pointing back at the parent
+  a.db.prepare('UPDATE tasks SET spawned_from = ? WHERE id = ?').run(parent.id, child.id);
+  const del = await a.call('DELETE', `/api/v1/tasks/${parent.id}`);
+  assert.equal(del.status, 200);
+  // the child survives with its back-reference cleared
+  const row = a.db.prepare('SELECT spawned_from FROM tasks WHERE id = ?').get(child.id);
+  assert.ok(row);
+  assert.equal(row.spawned_from, null);
+  a.cleanup();
+});

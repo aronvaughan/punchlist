@@ -7,7 +7,7 @@ import { api, state, reload, toast, todayISO, pickWhen, currentActor,
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
-import { openManageDialog, animateOnce } from '/views.js';
+import { openManageDialog, animateOnce, performDelete } from '/views.js';
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -791,6 +791,14 @@ function actions() {
       reload();
     } catch (e) { row?.classList.remove('removing'); toast(`Archive failed: ${e.message}`); }
   });
-  row.append(complete, archive);
+  // hard delete: irreversible, admin-only server-side. Set apart from Archive
+  // (reversible) by danger styling and its own confirm ("can't be undone").
+  const del = document.createElement('wa-button');
+  del.setAttribute('variant', 'danger');
+  del.setAttribute('appearance', 'plain');
+  del.className = 'detail-delete';
+  del.textContent = 'Delete';
+  del.addEventListener('click', async () => { if (await performDelete(current)) closeDetail(); });
+  row.append(complete, archive, del);
   return row;
 }

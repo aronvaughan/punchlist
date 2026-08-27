@@ -478,6 +478,30 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     });
   });
 
+  // admin-only HARD delete: removes the task and everything hanging off it —
+  // steps, task_tags, comments, attachments (rows via CASCADE, bytes off disk),
+  // view_ranks — irreversibly. Deliberately distinct from archive, which is a
+  // reversible status flip that keeps the task. 200 on success.
+  app.delete('/api/v1/tasks/:id', c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can delete tasks`);
+    const task = getTask(c.req.param('id'));
+    if (!task) throw new ApiError(404, 'task not found');
+    // capture attachment blob paths BEFORE their rows cascade away, so we can
+    // unlink the files only after the DB transaction has committed
+    const atts = db.prepare('SELECT id, mime FROM attachments WHERE task_id = ?').all(task.id);
+    tx(db, () => {
+      // task_tags has no ON DELETE CASCADE — clear it explicitly. steps,
+      // comments, attachments and view_ranks cascade on the tasks delete.
+      // Null any spawned_from back-reference (FK is NO ACTION) so a recurrence
+      // child never blocks the delete.
+      db.prepare('UPDATE tasks SET spawned_from = NULL WHERE spawned_from = ?').run(task.id);
+      db.prepare('DELETE FROM task_tags WHERE task_id = ?').run(task.id);
+      db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+    });
+    for (const a of atts) rmSync(filePathFor(MEDIA_DIR, a.id, a.mime), { force: true });
+    return c.json({ ok: true });
+  });
+
   // Guarded FINAL transition to done — the only place a recurrence spawns
   // (delegation design: spawn on complete, approve or auto-close finish; never
   // on entering review). Runs inside the caller's tx; only the call that
