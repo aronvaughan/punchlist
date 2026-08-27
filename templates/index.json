@@ -1,0 +1,51 @@
+{
+  "templates": [
+    {
+      "name": "coding-task",
+      "kind": "template",
+      "tags": [
+        "code",
+        "engineering",
+        "tdd"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/coding-task.md"
+    },
+    {
+      "name": "purchase-decision",
+      "kind": "template",
+      "tags": [
+        "purchase",
+        "decision",
+        "research"
+      ],
+      "domain": "general",
+      "output": "markdown",
+      "path": "templates/packs/core/purchase-decision.md"
+    },
+    {
+      "name": "research-brief",
+      "kind": "template",
+      "tags": [
+        "research",
+        "writing"
+      ],
+      "domain": "general",
+      "output": "markdown",
+      "path": "templates/packs/core/research-brief.md"
+    },
+    {
+      "name": "weekly-review",
+      "kind": "template",
+      "tags": [
+        "review",
+        "writing",
+        "personal"
+      ],
+      "domain": "personal",
+      "output": "markdown",
+      "path": "templates/packs/core/weekly-review.md"
+    }
+  ]
+}

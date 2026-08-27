@@ -290,3 +290,50 @@ test('skills: every SKILL.md has frontmatter and a name matching its dir', () =>
     assert.ok(fm.description && String(fm.description).length > 20, `${file} has a description`);
   }
 });
+
+// ------------------------------------------------------------ coding-task + index
+
+test('validateFile accepts the coding-task pack template', () => {
+  const errors = plt.validateFile(path.join(REPO, 'templates/packs/core/coding-task.md'));
+  assert.deepStrictEqual(errors, []);
+});
+
+test('buildIndex: one row per template (not workflows), sorted, with the bridge fields', () => {
+  const idx = plt.buildIndex();
+  assert.ok(Array.isArray(idx.templates));
+  const names = idx.templates.map((t) => t.name);
+  assert.ok(names.includes('coding-task'));
+  assert.ok(!names.some((n) => n === 'research-and-buy')); // workflows excluded
+  assert.deepStrictEqual(names, [...names].sort()); // stable sort by name
+  const coding = idx.templates.find((t) => t.name === 'coding-task');
+  assert.deepStrictEqual(coding, {
+    name: 'coding-task', kind: 'template', tags: ['code', 'engineering', 'tdd'],
+    domain: 'engineering', output: 'markdown', path: 'templates/packs/core/coding-task.md',
+  });
+});
+
+test('cli: plt index regenerates templates/index.json', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plt-index-'));
+  // minimal repo: bin (via PUNCHLIST_TEMPLATES_DIR) + one template file
+  fs.mkdirSync(path.join(root, 'templates', 'packs', 'core'), { recursive: true });
+  fs.copyFileSync(path.join(REPO, 'templates/packs/core/coding-task.md'),
+    path.join(root, 'templates/packs/core/coding-task.md'));
+  const res = run(['index'], { PUNCHLIST_TEMPLATES_DIR: root });
+  assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+  const idx = JSON.parse(fs.readFileSync(path.join(root, 'templates', 'index.json'), 'utf8'));
+  assert.strictEqual(idx.templates.length, 1);
+  assert.strictEqual(idx.templates[0].name, 'coding-task');
+  assert.strictEqual(idx.templates[0].path, 'templates/packs/core/coding-task.md');
+  // idempotent: a second run reports "up to date" and leaves the file identical
+  const before = fs.readFileSync(path.join(root, 'templates', 'index.json'), 'utf8');
+  const again = run(['index'], { PUNCHLIST_TEMPLATES_DIR: root });
+  assert.match(again.stdout, /up to date/);
+  assert.strictEqual(fs.readFileSync(path.join(root, 'templates', 'index.json'), 'utf8'), before);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('committed templates/index.json is in sync with the templates on disk', () => {
+  // the generated bridge file must be committed fresh — buildIndex matches it
+  const onDisk = JSON.parse(fs.readFileSync(path.join(REPO, 'templates', 'index.json'), 'utf8'));
+  assert.deepStrictEqual(onDisk, plt.buildIndex());
+});
