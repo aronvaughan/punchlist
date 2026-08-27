@@ -905,6 +905,46 @@ body.drag-active .section-block.empty .task-list {
   }
 }
 
+/* ---- motion: subtle, purposeful entrance + press feedback. EVERYTHING here is
+   gated on prefers-reduced-motion:no-preference (reduced-motion users get none).
+   transform/opacity only — compositor properties, so no layout shift / CLS.
+   Targets 120–250ms with standard easing. ---- */
+@keyframes row-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes marker-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 1. rows entering a view (route change) / new task — one-shot via an .anim-in
+     class the renderer sets ONLY for those intents, never on every reload.
+     Reused for the rail subtree on expand and the Manage-dialog tree on open. */
+  #list.anim-in .task-row { animation: row-in 190ms ease-out backwards; }
+  #rail-projects.anim-in .rail-subtree .rail-project { animation: row-in 190ms ease-out backwards; }
+  #manage-tree.anim-in .manage-row { animation: row-in 180ms ease-out backwards; }
+
+  /* 3. status marker cross-fades + scales in when a task's board state changes */
+  .status-marker { animation: marker-in 160ms ease-out backwards; }
+
+  /* 4. disclosure caret rotate eases (base rule below is already smooth; this
+     just unifies duration). Subtree expand rides the row-in above. */
+  .caret::before { transition: transform .2s ease; }
+
+  /* 5. toasts slide up (WA dialogs/drawers animate themselves — don't fight them) */
+  #toasts > * { animation: toast-in 200ms ease-out backwards; }
+
+  /* archived project rows ease to dimmed rather than snapping */
+  .manage-row { transition: opacity 180ms ease, background 150ms ease; }
+
+  /* 6. light press feedback on the teal + primary actions (CSS only) */
+  #new-task-btn, .add-child, .manage-btn, .rail-gear, .check, .tag-edit,
+  .chip.filter, .window-chip {
+    transition: transform 120ms ease, filter 120ms ease, background 120ms ease, color 120ms ease;
+  }
+  #new-task-btn:active, .add-child:active, .manage-btn:active, .rail-gear:active,
+  .check:active, .tag-edit:active, .chip.filter:active, .window-chip:active { transform: scale(.94); }
+  wa-button[variant="brand"]::part(base) { transition: transform 120ms ease, filter 120ms ease; }
+  wa-button[variant="brand"]:active::part(base) { transform: scale(.97); }
+}
+
 .check {
   flex: none;
   width: 22px;

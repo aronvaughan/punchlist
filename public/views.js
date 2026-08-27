@@ -11,6 +11,11 @@ import { tagsField } from '/suggest.js';
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const lastSection = new Map(); // projectId -> section the user last touched
 
+// one-shot entrance-animation intents: set true by a specific USER action
+// (route/view change, expand a subtree, open the Manage dialog, create a task),
+// consumed by the next render so ordinary in-place reloads DON'T re-animate.
+export const animateOnce = { list: false, rail: false, manage: false };
+
 // "+" button / Shift+N: full editor prefilled from the current view
 export function openNewTask() {
   const r = state.route;
@@ -80,6 +85,7 @@ function secOpen(name) {
 }
 function toggleSec(name) {
   try { localStorage.setItem(SEC_KEYS[name], secOpen(name) ? '0' : '1'); } catch { /* private mode */ }
+  animateOnce.rail = true; // expanding a section slides its rows in
   renderRail();
 }
 // heading becomes one full-width 44px toggle: caret + label
@@ -114,6 +120,7 @@ function toggleCollapsed(id) {
   const set = loadCollapsed();
   set.has(id) ? set.delete(id) : set.add(id);
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set])); } catch { /* private mode */ }
+  animateOnce.rail = true; // expanding a project slides its subtree rows in
   renderRail();
 }
 
@@ -207,6 +214,10 @@ export function renderRail() {
   projHead.append(gear);
   document.getElementById('rail-new-project').hidden = !projOpen;
   if (projOpen) renderTreeInto(rootUl, live, { renderRow: navRow, collapsed: id => collapsed.has(id) });
+  // one-shot: animate the freshly-rendered subtree rows only when a user just
+  // toggled a caret/section (flag), never on ordinary reloads
+  rootUl.classList.toggle('anim-in', animateOnce.rail);
+  animateOnce.rail = false;
   renderRailTags();
 }
 
@@ -303,6 +314,7 @@ let manageTopWired = false; // the persistent (top level) drop zone is wired onc
 export function openManageDialog(focus = null) {
   manageFocus = focus;
   manageCreatedId = null;
+  animateOnce.manage = true; // tree rows slide in when the dialog opens
   const dlg = mdialog();
   renderManageTree();
   dlg.open = true;
@@ -374,6 +386,9 @@ function renderManageTree() {
     onList: ul => { new Sortable(ul, manageSortableOpts()); },
   });
   renderManageParentOptions();
+  // one-shot: animate the tree in on open, not on every mutation repaint
+  root.classList.toggle('anim-in', animateOnce.manage);
+  animateOnce.manage = false;
 
   // focus intent applies once, on open (not on later repaints)
   if (manageFocus === 'new') setTimeout(() => document.getElementById('manage-new-name')?.focus(), 60);
@@ -907,6 +922,10 @@ export function renderMain() {
     sortableList(ul, { list: 'project' });
   }
   if (tasks.length === 0) listEl.append(el('div', 'empty-note', emptyNote(r.view)));
+  // one-shot: rows slide in only on a view/route change or a new task (flag),
+  // not on every in-place reload
+  listEl.classList.toggle('anim-in', animateOnce.list);
+  animateOnce.list = false;
 }
 
 function emptyNote(view) {

@@ -6,7 +6,9 @@ import { api, state, reload, toast, todayISO, pickWhen, currentActor } from '/ap
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
-import { openManageDialog } from '/views.js';
+import { openManageDialog, animateOnce } from '/views.js';
+
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -431,6 +433,7 @@ async function submitCreate() {
     const created = await api('POST', '/tasks', body);
     createMode = false;
     closeDetail();
+    animateOnce.list = true; // the new task slides into the list
     await reload();
     if (!state.tasks.some(t => t.id === created.id)) {
       // landed outside the current view — say where
@@ -498,8 +501,19 @@ function actions() {
   archive.setAttribute('appearance', 'outlined');
   archive.textContent = current.status === 'archived' ? 'Unarchive' : 'Archive';
   archive.addEventListener('click', async () => {
-    const to = current.status === 'archived' ? 'active' : 'archived';
-    if (await patch({ status: to })) { closeDetail(); }
+    if (current.status === 'archived') { if (await patch({ status: 'active' })) closeDetail(); return; }
+    // archiving: reuse the completion fade+collapse on the list row so the task
+    // doesn't vanish abruptly, then close + reload from server truth
+    const id = current.id;
+    const row = document.querySelector(`.task-row[data-id="${CSS.escape(id)}"]`);
+    const wait = (reducedMotion() || !row) ? Promise.resolve()
+      : new Promise(r => { row.classList.add('removing'); setTimeout(r, 250); });
+    try {
+      const [updated] = await Promise.all([api('PATCH', `/tasks/${id}`, { status: 'archived' }), wait]);
+      current = updated;
+      closeDetail();
+      reload();
+    } catch (e) { row?.classList.remove('removing'); toast(`Archive failed: ${e.message}`); }
   });
   row.append(complete, archive);
   return row;
