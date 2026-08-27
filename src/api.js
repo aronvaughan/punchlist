@@ -379,6 +379,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const task = getTask(c.req.param('id'));
     if (!task) throw new ApiError(404, 'task not found');
     const body = await readJson(c);
+    // optional reopen comment: reopening review→active may carry a {comment}
+    // (feedback-for-rework). It is NOT a task field — pull it out before
+    // validation and post it to the timeline (kind=answer) before the flip.
+    const comment = body.comment;
+    delete body.comment;
+    if (comment !== undefined &&
+        (typeof comment !== 'string' || comment.length > CAPS.answer)) {
+      throw new ApiError(400, `comment must be a string of at most ${CAPS.answer} chars`);
+    }
     validateTaskBody(body, { partial: true });
     if (body.steps !== undefined) throw new ApiError(400, 'use the /steps endpoints');
     if (body.project_id !== undefined && body.project_id !== null && !getProject(body.project_id)) {
@@ -418,7 +427,16 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
                     ((merged.when_type === 'date' && merged.when_date != null && merged.when_date <= t) ||
                      (merged.due_date != null && merged.due_date <= t));
     const todayRank = inToday ? task.today_rank : null;
+    const actor = c.get('actor');
+    // reopen: review → active (the human hands finished work back for rework)
+    const isReopen = task.status === 'review' && merged.status === 'active';
     return tx(db, () => {
+      // the optional reopen comment posts BEFORE the status flip so the reason
+      // is attached ahead of the "reopened" line (kind=answer — it is
+      // feedback-for-rework the agent reads on re-claim)
+      if (isReopen && typeof comment === 'string' && comment.trim()) {
+        postComment(task.id, actor, 'answer', comment.trim());
+      }
       // rank is scoped to (project, section): a task moved to a new scope must
       // append there, not carry a rank minted in its old scope (collisions,
       // id-tiebreak ordering). Same placement rule as createTask.
@@ -439,7 +457,6 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       // project state-changing PATCHes into the timeline (status kind, terse
       // one-liner). Reassign, archive/unarchive, and reopen (review→active) are
       // the transitions that happen through PATCH rather than a door.
-      const actor = c.get('actor');
       if (body.assignee !== undefined && merged.assignee !== task.assignee) {
         postComment(task.id, actor, 'status', `reassigned to ${merged.assignee}`);
       }
@@ -447,10 +464,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
         if (merged.status === 'archived') postComment(task.id, actor, 'status', 'archived');
         else if (merged.status === 'active' && task.status === 'archived') {
           postComment(task.id, actor, 'status', 'unarchived');
-        } else if (merged.status === 'active' && task.status === 'review') {
+        } else if (isReopen) {
           postComment(task.id, actor, 'status', 'reopened');
         }
       }
+      // reopen-to-top: a reopened task is in-flight — put it at the TOP of the
+      // shared agents backlog so it's the next agent pick-up (the human can
+      // drag it down). Applies to the review→active reopen regardless of
+      // assignee (harmless for a human-assigned task — it isn't in that view).
+      if (isReopen) viewRankToTop(task.id, 'agents');
       return c.json(attach(getTask(task.id)));
     });
   });

@@ -406,6 +406,60 @@ test('PATCH clears today_rank when the task leaves Today; return appends after m
   assert.notEqual(db.prepare('SELECT today_rank FROM tasks WHERE id = ?').get(b.id).today_rank, null);
 });
 
+// ---- reopen-to-top + optional reopen comment ----
+async function toReview(call, title = 'rework me') {
+  const t = (await call('POST', '/api/v1/tasks', { body: { title, assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'done' } });
+  return t;
+}
+
+test('reopen (review→active) lifts the task to the TOP of the agents backlog', async () => {
+  const { call, db } = makeApp();
+  // an existing agent backlog with a hand-set rank, so "top" must beat it
+  const other = (await call('POST', '/api/v1/tasks', { body: { title: 'other', assignee: 'claude' } })).json;
+  const another = (await call('POST', '/api/v1/tasks', { body: { title: 'another', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${other.id}/reorder`, { body: { before_id: another.id, list: 'agents' } });
+  const t = await toReview(call);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM view_ranks WHERE task_id=? AND view='agents'").get(t.id).c, 0);
+  const r = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'active' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.status, 'active');
+  // its agents rank is now the minimum -> it leads the shared backlog
+  const agents = (await call('GET', '/api/v1/tasks?view=agents')).json.items.map(x => x.id);
+  assert.equal(agents[0], t.id, 'reopened task is next agent pick-up');
+  const min = db.prepare("SELECT MIN(rank) m FROM view_ranks WHERE view='agents'").get().m;
+  assert.equal(db.prepare("SELECT rank FROM view_ranks WHERE task_id=? AND view='agents'").get(t.id).rank, min);
+});
+
+test('reopen with a comment posts a timeline answer BEFORE the reopened status line', async () => {
+  const { call } = makeApp();
+  const t = await toReview(call);
+  const r = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'active', comment: 'redo the header' } });
+  assert.equal(r.status, 200);
+  const items = (await call('GET', `/api/v1/tasks/${t.id}/comments`)).json.items;
+  const answer = items.filter(x => x.kind === 'answer' && x.text === 'redo the header');
+  assert.equal(answer.length, 1, 'the reopen comment is an answer entry');
+  const reopened = items.filter(x => x.kind === 'status' && x.text === 'reopened');
+  assert.equal(reopened.length, 1);
+  // the comment (feedback) is attached BEFORE the reopened line
+  assert.ok(items.indexOf(answer[0]) < items.indexOf(reopened[0]));
+  // comment is only accepted as a string within caps
+  const t2 = await toReview(call, 't2');
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t2.id}`, { body: { status: 'active', comment: 5 } })).status, 400);
+});
+
+test('reopen WITHOUT a comment still works (no answer entry, still tops the backlog)', async () => {
+  const { call, db } = makeApp();
+  const t = await toReview(call);
+  const r = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'active' } });
+  assert.equal(r.status, 200);
+  const items = (await call('GET', `/api/v1/tasks/${t.id}/comments`)).json.items;
+  assert.equal(items.filter(x => x.kind === 'answer').length, 0, 'no answer without a comment');
+  assert.ok(items.some(x => x.kind === 'status' && x.text === 'reopened'));
+  assert.ok(db.prepare("SELECT rank FROM view_ranks WHERE task_id=? AND view='agents'").get(t.id));
+});
+
 // ---- per-view manual order (view_ranks, migration 008) ----
 test('reorder in inbox persists to view_ranks(inbox); order survives reload', async () => {
   const { call, db } = makeApp();

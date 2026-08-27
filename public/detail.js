@@ -756,7 +756,11 @@ function actions() {
     reopen.setAttribute('appearance', 'plain');
     reopen.textContent = 'Reopen';
     reopen.addEventListener('click', async () => {
-      if (await patch({ status: 'active' })) closeDetail();
+      // optional reopen comment (skippable) rides with the review→active flip;
+      // the server posts it (kind=answer) before reopening and lifts the task
+      // to the top of the agent backlog
+      const reason = (prompt('Reason for reopening (optional — leave blank to skip):') || '').trim();
+      if (await patch(reason ? { status: 'active', comment: reason } : { status: 'active' })) closeDetail();
     });
     row.append(reopen);
   } else if (current.status === 'done') {

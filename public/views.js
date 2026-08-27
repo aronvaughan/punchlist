@@ -999,9 +999,14 @@ async function vetTask(id) {
   await reload();
 }
 async function reopenTask(id) {
+  // optional reopen comment (skippable): feedback-for-rework attached to the
+  // timeline before the status flips back to active
+  const reason = (prompt('Reason for reopening (optional — leave blank to skip):') || '').trim();
+  const body = { status: 'active' };
+  if (reason) body.comment = reason;
   try {
-    await api('PATCH', `/tasks/${id}`, { status: 'active' });
-    toast('Reopened', 'success');
+    await api('PATCH', `/tasks/${id}`, body);
+    toast('Reopened — back at the top of the agent backlog', 'success');
   } catch (e) { toast(`Reopen failed: ${e.message}`); }
   await reload();
 }
