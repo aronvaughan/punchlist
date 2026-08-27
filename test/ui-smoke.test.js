@@ -217,3 +217,19 @@ test('template picker: drawer select from GET /templates + name chip (Part B)', 
   assert.match(css, /\.template-picker-row\s*\{/);
   assert.match(css, /\.chip\.template-chip\s*\{/);
 });
+
+test('task delete: row overflow menu + drawer trash, tokens only, distinct from archive', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /export async function performDelete/);
+  assert.match(views, /This can't be undone/); // exact confirm copy
+  assert.match(views, /row-overflow/);          // the "…" affordance
+  assert.match(views, /function openRowMenu/);  // the one-item Delete menu
+  const detail = await (await get('/detail.js')).text();
+  assert.match(detail, /performDelete\(current\)/); // wired into the drawer actions
+  assert.match(detail, /detail-delete/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.row-overflow\s*\{/);
+  assert.match(css, /\.row-menu\s*\{/);
+  assert.match(css, /\.row-menu-item\.danger\s*\{[^}]*var\(--danger\)/);
+});
