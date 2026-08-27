@@ -233,3 +233,13 @@ test('task delete: row overflow menu + drawer trash, tokens only, distinct from 
   assert.match(css, /\.row-menu\s*\{/);
   assert.match(css, /\.row-menu-item\.danger\s*\{[^}]*var\(--danger\)/);
 });
+
+test('duplicate-create guard: client debounces both add flows', async () => {
+  const { get } = makeApp();
+  const app = await (await get('/app.js')).text();
+  assert.match(app, /quickAdding/);         // quick-add in-flight flag
+  assert.match(app, /quickadd\.disabled = true/);
+  const detail = await (await get('/detail.js')).text();
+  assert.match(detail, /if \(creating\) return/); // drawer Create re-entrancy guard
+  assert.match(detail, /setAttribute\('loading', ''\)/);
+});

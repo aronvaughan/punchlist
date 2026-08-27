@@ -690,9 +690,17 @@ function draftStepsEditor() {
   return wrap;
 }
 
+// double-submit guard: disable the Create button + a re-entrancy flag while the
+// POST is in flight, so a fast double-click can't create the task twice.
+let creating = false;
 async function submitCreate() {
+  if (creating) return;
   const title = (titleInput?.value ?? current.title).trim();
   if (!title) { toast('A title is required'); titleInput?.focus(); return; }
+  creating = true;
+  const btn = document.querySelector('#detail-body .detail-actions wa-button[variant="brand"]');
+  btn?.setAttribute('loading', '');
+  btn?.setAttribute('disabled', '');
   const body = {
     title, notes: current.notes, project_id: current.project_id,
     when_type: current.when_type, when_date: current.when_date,
@@ -719,6 +727,7 @@ async function submitCreate() {
       toast(`Added to ${where}`, 'success');
     }
   } catch (e) { toast(`Create failed: ${e.message}`); }
+  finally { creating = false; btn?.removeAttribute('loading'); btn?.removeAttribute('disabled'); }
 }
 
 function createActions() {

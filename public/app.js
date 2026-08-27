@@ -321,11 +321,16 @@ document.getElementById('rail').addEventListener('click', e => {
 const quickadd = document.getElementById('quickadd');
 const search = document.getElementById('search');
 
+// double-submit guard: while one quick-add is in flight, ignore further Enters
+// (and disable the field) so a fast double-tap can't POST the same task twice.
+let quickAdding = false;
 quickadd.addEventListener('keydown', async e => {
-  if (e.key !== 'Enter') return;
+  if (e.key !== 'Enter' || quickAdding) return;
   const text = quickadd.value.trim();
   if (!text) return;
+  quickAdding = true;
   quickadd.value = '';
+  quickadd.disabled = true;
   try {
     await api('POST', '/tasks/quickadd', { text });
     animateOnce.list = true; // the new task slides into the list
@@ -333,6 +338,10 @@ quickadd.addEventListener('keydown', async e => {
   } catch (err) {
     quickadd.value = text; // don't lose the input
     toast(`Add failed: ${err.message}`);
+  } finally {
+    quickAdding = false;
+    quickadd.disabled = false;
+    quickadd.focus();
   }
 });
 
