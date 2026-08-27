@@ -18,6 +18,8 @@
 #                                      for the admin (assignee only); returns to the
 #                                      queue with the answer attached once answered
 #   pl.sh answer <id> "text"           blocked -> active with the answer (admin only)
+#   pl.sh comment <id> "text"          post a comment to the task's timeline
+#                                      (non-blocking — think out loud / progress)
 #   pl.sh complete <id>                human-style done (the owner's own tasks)
 #   pl.sh approve <id>                 review -> done (admin actor only)
 #   pl.sh vet <id>                     mark an unvetted task safe for agents (admin only)
@@ -205,6 +207,11 @@ case "$cmd" in
   answer)
     [ $# -eq 2 ] || { echo "usage: pl.sh answer <id> \"text\"" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/answer" "$(jq -n --arg a "$2" '{answer: $a}')"; one ;;
+
+  comment)
+    [ $# -eq 2 ] || { echo "usage: pl.sh comment <id> \"text\"" >&2; exit 2; }
+    api POST "/tasks/$(uri "$1")/comments" "$(jq -n --arg t "$2" '{text: $t}')"
+    printf '%s' "$RESP" | jq -r '"commented on " + .task_id + " (@" + (.author // "?") + ")"' ;;
 
   complete)
     [ $# -eq 1 ] || { echo "usage: pl.sh complete <id>" >&2; exit 2; }

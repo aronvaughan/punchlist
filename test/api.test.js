@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
 import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted, migrateLegacyDb } from '../src/server.js';
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -1053,4 +1053,169 @@ test('static UI: CSP header on static responses; traversal blocked; API 404 is J
   assert.equal(trav.status, 404);
   const missing = await app.fetch(new Request('http://x/nope.js'));
   assert.equal(missing.status, 404);
+});
+
+// ---- activity thread (comments) — Part A: task collaboration ----
+test('comments: post appends a comment row, list returns the ordered timeline', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'collab task' } })).json;
+  assert.equal(t.comment_count, 0); // task payload gains comment_count
+
+  const c1 = await call('POST', `/api/v1/tasks/${t.id}/comments`, { body: { text: 'first note' } });
+  assert.equal(c1.status, 201);
+  assert.equal(c1.json.kind, 'comment');
+  assert.equal(c1.json.author, 'alex'); // server-set actor, not client-supplied
+  assert.equal(c1.json.text, 'first note');
+
+  await call('POST', `/api/v1/tasks/${t.id}/comments`, { body: { text: 'second note' }, token: TOK_CLAUDE });
+
+  const list = await call('GET', `/api/v1/tasks/${t.id}/comments`);
+  assert.equal(list.status, 200);
+  assert.deepEqual(list.json.items.map(x => x.text), ['first note', 'second note']); // insertion order
+  assert.deepEqual(list.json.items.map(x => x.author), ['alex', 'claude']);
+
+  const refetched = (await call('GET', `/api/v1/tasks?limit=500`)).json.items.find(x => x.id === t.id);
+  assert.equal(refetched.comment_count, 2); // count reflects the two rows
+});
+
+test('comments: text is required and capped at 8KB', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'cap' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/comments`, { body: { text: '' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/comments`, { body: { text: '   ' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/comments`,
+    { body: { text: 'x'.repeat(8193) } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/comments`,
+    { body: { text: 'x'.repeat(8192) } })).status, 201);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/comments`,
+    { body: { text: 'ok', extra: 1 } })).status, 400); // unknown field
+  assert.equal((await call('POST', `/api/v1/tasks/nope/comments`, { body: { text: 'ok' } })).status, 404);
+});
+
+test('comments: any actor may comment; an unvetted task still receives comments', async () => {
+  const { call } = makeApp();
+  // email is an untrusted actor -> task is born vetted=0
+  const t = (await call('POST', '/api/v1/tasks',
+    { body: { title: 'from email', assignee: 'claude' }, token: TOK_EMAIL })).json;
+  assert.equal(t.vetted, 0);
+  // claim is locked on an unvetted task...
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE })).status, 403);
+  // ...but commenting is not execution — it still works
+  const cm = await call('POST', `/api/v1/tasks/${t.id}/comments`, { body: { text: 'looks off' }, token: TOK_CLAUDE });
+  assert.equal(cm.status, 201);
+});
+
+test('timeline: block auto-posts a question row (field stays source of truth)', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'q', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { body: { question: 'which env?' }, token: TOK_CLAUDE });
+  const items = (await call('GET', `/api/v1/tasks/${t.id}/comments`)).json.items;
+  const q = items.filter(x => x.kind === 'question');
+  assert.equal(q.length, 1);
+  assert.equal(q[0].text, 'which env?');
+  assert.equal(q[0].author, 'claude');
+  // the question FIELD is unchanged (still source of truth)
+  const task = (await call('GET', `/api/v1/tasks?view=needs_input&limit=500`)).json.items.find(x => x.id === t.id);
+  assert.match(task.question, /which env\?/);
+});
+
+test('timeline: answer auto-posts an answer row (admin actor)', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'a', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { body: { question: 'q?' }, token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'use prod' } });
+  const items = (await call('GET', `/api/v1/tasks/${t.id}/comments`)).json.items;
+  const a = items.filter(x => x.kind === 'answer');
+  assert.equal(a.length, 1);
+  assert.equal(a[0].text, 'use prod');
+  assert.equal(a[0].author, 'alex');
+});
+
+test('timeline: finish auto-posts a report row of THIS round', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'r', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { body: { report: 'shipped it' }, token: TOK_CLAUDE });
+  const items = (await call('GET', `/api/v1/tasks/${t.id}/comments`)).json.items;
+  assert.equal(items.filter(x => x.kind === 'report').map(x => x.text)[0], 'shipped it');
+});
+
+test('timeline: claim and approve auto-post status one-liners', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 's', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { body: { report: 'done' }, token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/approve`); // admin
+  const kinds = (await call('GET', `/api/v1/tasks/${t.id}/comments`)).json.items;
+  const status = kinds.filter(x => x.kind === 'status').map(x => x.text);
+  assert.ok(status.includes('claimed'));
+  assert.ok(status.includes('approved'));
+  // full ordered timeline shows the back-and-forth in order
+  assert.deepEqual(kinds.map(x => x.kind), ['status', 'report', 'status']);
+});
+
+test('timeline: complete, reassign, archive/reopen post status rows', async () => {
+  const { call } = makeApp();
+  // complete
+  const t1 = (await call('POST', '/api/v1/tasks', { body: { title: 'c' } })).json;
+  await call('POST', `/api/v1/tasks/${t1.id}/complete`);
+  assert.ok((await call('GET', `/api/v1/tasks/${t1.id}/comments`)).json.items
+    .some(x => x.kind === 'status' && x.text === 'completed'));
+  // reassign
+  const t2 = (await call('POST', '/api/v1/tasks', { body: { title: 'd' } })).json;
+  await call('PATCH', `/api/v1/tasks/${t2.id}`, { body: { assignee: 'hermes' } });
+  assert.ok((await call('GET', `/api/v1/tasks/${t2.id}/comments`)).json.items
+    .some(x => x.kind === 'status' && x.text === 'reassigned to hermes'));
+  // archive
+  const t3 = (await call('POST', '/api/v1/tasks', { body: { title: 'e' } })).json;
+  await call('PATCH', `/api/v1/tasks/${t3.id}`, { body: { status: 'archived' } });
+  assert.ok((await call('GET', `/api/v1/tasks/${t3.id}/comments`)).json.items
+    .some(x => x.kind === 'status' && x.text === 'archived'));
+});
+
+// ---- template ref + picker — Part B ----
+test('template: PATCH persists a template ref (free string, not validated)', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'tpl' } })).json;
+  assert.equal(t.template, null);
+  const patched = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { template: 'coding-task' } });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.json.template, 'coding-task');
+  // any string is accepted (templates repo is authoritative), and null clears it
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { template: 'anything-goes' } })).json.template,
+    'anything-goes');
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { template: null } })).json.template, null);
+  // over-long is rejected
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { template: 'x'.repeat(201) } })).status, 400);
+  // create-time template
+  const t2 = (await call('POST', '/api/v1/tasks', { body: { title: 'tpl2', template: 'research-brief' } })).json;
+  assert.equal(t2.template, 'research-brief');
+});
+
+test('GET /templates: reads the repo index.json when present, [] when absent', async () => {
+  const { call } = makeApp();
+  const dir = mkdtempSync(join(tmpdir(), 'plt-idx-'));
+  const prev = process.env.PUNCHLIST_TEMPLATES_DIR;
+  try {
+    // absent index -> []
+    process.env.PUNCHLIST_TEMPLATES_DIR = dir;
+    assert.deepEqual((await call('GET', '/api/v1/templates')).json.items, []);
+    // fixture index -> its templates
+    mkdirSync(join(dir, 'templates'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'index.json'), JSON.stringify({
+      templates: [{ name: 'coding-task', kind: 'template', tags: ['code'], domain: 'engineering',
+        output: 'markdown', path: 'templates/packs/core/coding-task.md' }],
+    }));
+    const res = await call('GET', '/api/v1/templates');
+    assert.equal(res.json.items.length, 1);
+    assert.equal(res.json.items[0].name, 'coding-task');
+    // pointing at a nonexistent dir also degrades to []
+    process.env.PUNCHLIST_TEMPLATES_DIR = join(dir, 'nope');
+    assert.deepEqual((await call('GET', '/api/v1/templates')).json.items, []);
+  } finally {
+    if (prev === undefined) delete process.env.PUNCHLIST_TEMPLATES_DIR;
+    else process.env.PUNCHLIST_TEMPLATES_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

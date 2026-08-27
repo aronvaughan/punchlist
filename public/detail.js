@@ -101,7 +101,7 @@ function renderDrawer() {
   titleInput = title;
   body.append(title);
 
-  body.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(), tagsEditor());
+  body.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(), templateEditor(), tagsEditor());
   body.append(notesEditor(), createMode ? draftStepsEditor() : stepsEditorFor(task), recurEditor());
   if (createMode) {
     body.append(createActions());
@@ -109,6 +109,7 @@ function renderDrawer() {
     body.append(attachmentsEditor(task));
     const rep = reportView();
     if (rep) body.append(rep);
+    body.append(timelineSection(task));
     body.append(actions());
     const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
     if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
@@ -200,6 +201,132 @@ function assigneeEditor() {
     if (ok) Object.assign(t, current); // patch() replaced `current`; refresh the field's ref
     return ok;
   }));
+}
+
+// ---- template picker (Part B): a select from GET /templates + "(none)" ----
+// Stamps task.template (a free string — the templates repo is authoritative).
+// When a task carries a template, an agent `plt show`s it for driving context.
+let templatesCache = null;
+async function loadTemplates() {
+  if (templatesCache) return templatesCache;
+  try { templatesCache = (await api('GET', '/templates')).items || []; }
+  catch { templatesCache = []; }
+  return templatesCache;
+}
+
+function templateEditor() {
+  const sel = el('select');
+  const none = el('option', null, '(none)');
+  none.value = '';
+  sel.append(none);
+  const chip = el('span', 'chip template-chip');
+  const renderChip = () => {
+    if (current.template) { chip.textContent = `▤ ${current.template}`; chip.hidden = false; }
+    else chip.hidden = true;
+  };
+  const populate = items => {
+    // keep a stamped-but-unknown template (stale ref, or repo absent) selectable
+    const names = new Set(items.map(t => t.name));
+    for (const tpl of items) {
+      const o = el('option', null, tpl.name);
+      o.value = tpl.name;
+      sel.append(o);
+    }
+    if (current.template && !names.has(current.template)) {
+      const o = el('option', null, `${current.template} (unlisted)`);
+      o.value = current.template;
+      sel.append(o);
+    }
+    sel.value = current.template ?? '';
+  };
+  loadTemplates().then(populate);
+  sel.value = current.template ?? '';
+  sel.addEventListener('change', async () => {
+    if (await patch({ template: sel.value || null })) renderChip();
+  });
+  renderChip();
+  const row = el('div', 'template-picker-row');
+  row.append(sel, chip);
+  return labeled('Template', row);
+}
+
+// ---- activity thread (Part A): the drawer's Timeline section + composer ----
+const TL_KIND_LABEL = { question: 'asked', answer: 'answered', report: 'reported' };
+
+function relTime(iso) {
+  const t = Date.parse(iso ?? '');
+  if (Number.isNaN(t)) return '';
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function timelineEntry(cm) {
+  const entry = el('div', `tl-entry tl-${cm.kind}`);
+  if (cm.kind === 'status') {
+    // muted one-liner with a subtle rule
+    const line = el('div', 'tl-status-line');
+    line.append(el('span', 'tl-author', cm.author || 'system'),
+      document.createTextNode(` ${cm.text} · `), el('span', 'tl-time', relTime(cm.created_at)));
+    entry.append(line);
+    return entry;
+  }
+  const head = el('div', 'tl-head');
+  head.append(el('span', 'chip tl-author-chip', cm.author || '—'));
+  if (TL_KIND_LABEL[cm.kind]) head.append(el('span', 'tl-kind', TL_KIND_LABEL[cm.kind]));
+  head.append(el('span', 'tl-time', relTime(cm.created_at)));
+  const bodyEl = el('div', 'tl-body notes-preview');
+  bodyEl.innerHTML = mdToHtml(cm.text); // mdToHtml escapes ALL input — the only sink, safe
+  entry.append(head, bodyEl);
+  return entry;
+}
+
+function timelineSection(task) {
+  const wrap = el('div', 'timeline');
+  wrap.append(el('label', null, 'Timeline'));
+  const listEl = el('div', 'tl-list');
+  wrap.append(listEl);
+
+  const load = async () => {
+    let items;
+    try { items = (await api('GET', `/tasks/${task.id}/comments`)).items; }
+    catch (e) { listEl.replaceChildren(el('div', 'tl-empty', `Couldn't load timeline: ${e.message}`)); return; }
+    listEl.replaceChildren();
+    if (!items.length) listEl.append(el('div', 'tl-empty', 'No activity yet.'));
+    else for (const cm of items) listEl.append(timelineEntry(cm));
+  };
+
+  const composer = el('div', 'tl-composer');
+  const ta = el('textarea');
+  ta.className = 'tl-input';
+  ta.placeholder = 'Add a comment (markdown)…';
+  const post = document.createElement('wa-button');
+  post.setAttribute('variant', 'brand');
+  post.setAttribute('size', 'small');
+  post.textContent = 'Post';
+  const submit = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    post.setAttribute('loading', '');
+    try {
+      await api('POST', `/tasks/${task.id}/comments`, { text });
+      ta.value = '';
+      await load();
+      reload(); // refresh the row 💬 count in the background
+    } catch (e) { toast(`Comment failed: ${e.message}`); }
+    finally { post.removeAttribute('loading'); }
+  };
+  post.addEventListener('click', submit);
+  composer.append(ta, post);
+  wrap.append(composer);
+  load();
+  return wrap;
 }
 
 // agent's report (markdown, safe renderer) — shown for review/done delegated work
@@ -572,6 +699,7 @@ async function submitCreate() {
     due_date: current.due_date, due_time: current.due_time,
     recur: current.recur, tags: current.tags, steps: current.steps,
     assignee: current.assignee, auto_close: !!current.auto_close,
+    template: current.template ?? null,
   };
   try {
     const created = await api('POST', '/tasks', body);

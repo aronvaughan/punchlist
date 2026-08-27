@@ -175,3 +175,36 @@ test('CSP permits data: for icons but stays same-origin for scripts', async () =
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /base-uri 'none'/);
 });
+
+test('activity thread: drawer Timeline + composer, md-safe rendering (Part A)', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  // a Timeline section + a comment composer that POSTs then refreshes
+  assert.match(detail, /function timelineSection/);
+  assert.match(detail, /\/tasks\/\$\{task\.id\}\/comments/);
+  assert.match(detail, /timelineSection\(task\)/); // wired into the drawer
+  // md-safety: comment text goes through the safe md renderer — never raw innerHTML
+  assert.match(detail, /mdToHtml\(cm\.text\)/);
+  assert.doesNotMatch(detail, /innerHTML\s*=\s*cm\.text/);
+  // kind styling classes for the entry types
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.tl-question,\s*\.tl-answer,\s*\.tl-report\s*\{[^}]*border-left:\s*3px solid var\(--accent\)/);
+  assert.match(css, /\.tl-status\s*\{[^}]*var\(--line\)/); // status one-liner subtle rule
+  assert.match(css, /\.chip\.comment-count\s*\{/);
+  // the row 💬 count chip
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /comment-count/);
+  assert.match(views, /task\.comment_count > 0/);
+});
+
+test('template picker: drawer select from GET /templates + name chip (Part B)', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  assert.match(detail, /function templateEditor/);
+  assert.match(detail, /api\('GET', '\/templates'\)/);
+  assert.match(detail, /patch\(\{ template: sel\.value \|\| null \}\)/);
+  assert.match(detail, /templateEditor\(\)/); // wired into the drawer
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.template-picker-row\s*\{/);
+  assert.match(css, /\.chip\.template-chip\s*\{/);
+});
