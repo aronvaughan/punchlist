@@ -232,6 +232,41 @@ test('unvetted view: open agent-assigned vetted=0 rows; taskCount agrees', () =>
   assert.equal(db.prepare(sql).get(...args).c, 1);
 });
 
+// ---- shared agent backlog + Human lane (view_ranks, migration 008) ----
+test('agents view: same open set as delegated, but ONE global order by view_ranks(agents)', () => {
+  const db = seed();
+  // default (no view_ranks): global order by AGENT_STATUS (in_progress→blocked→
+  // review→queued) then rank, across ALL agents (not grouped by assignee)
+  assert.deepEqual(run(db, 'agents').map(r => r.id), ['del2', 'del3', 'del1', 'del5', 'del6']);
+  // give del6 (a claude queued task) a low agents rank -> it jumps to the top
+  db.prepare("INSERT INTO view_ranks (task_id, view, rank) VALUES ('del6','agents',1)").run();
+  assert.equal(run(db, 'agents').map(r => r.id)[0], 'del6', 'hand-ranked task leads the global backlog');
+  // archived del4 is still excluded (not open)
+  assert.ok(!run(db, 'agents').map(r => r.id).includes('del4'));
+});
+
+test('queue follows view_ranks(agents) nulls-last, still assignee-scoped & vetted-only', () => {
+  const db = seed();
+  // baseline claude queue: in_progress first, then queued by rank
+  assert.deepEqual(run(db, 'queue', { assignee: 'claude' }).map(r => r.id), ['del2', 'del1', 'del5', 'del6']);
+  // hand-rank del6 to the top of the shared backlog -> claude claims it first
+  db.prepare("INSERT INTO view_ranks (task_id, view, rank) VALUES ('del6','agents',1)").run();
+  assert.deepEqual(run(db, 'queue', { assignee: 'claude' }).map(r => r.id), ['del6', 'del2', 'del1', 'del5']);
+  // hermes still only ever sees its own tasks
+  assert.deepEqual(run(db, 'queue', { assignee: 'hermes' }), []);
+});
+
+test('human view: blocked-only, view_ranks(human) first then oldest-wait', () => {
+  const db = seed();
+  db.prepare(`UPDATE tasks SET status='blocked', updated_at='2026-03-10T11:00:00.000Z' WHERE id='del5'`).run();
+  db.prepare(`UPDATE tasks SET status='blocked', updated_at='2026-03-10T09:00:00.000Z' WHERE id='del6'`).run();
+  // no ranks: oldest wait first (same as needs_input)
+  assert.deepEqual(run(db, 'human').map(r => r.id), ['del6', 'del5']);
+  // hand-order del5 to the top
+  db.prepare("INSERT INTO view_ranks (task_id, view, rank) VALUES ('del5','human',1)").run();
+  assert.deepEqual(run(db, 'human').map(r => r.id), ['del5', 'del6']);
+});
+
 test('taskCount covers review and delegated', () => {
   const db = seed();
   const c = view => {

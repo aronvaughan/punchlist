@@ -262,8 +262,8 @@ export async function reload() {
   const params = new URLSearchParams();
   if (r.view === 'project') params.set('project', r.projectId);
   else if (r.view === 'tag') params.set('tag', r.tag);
-  else if (r.view === 'agents') params.set('view', 'delegated');
-  else if (r.view === 'needs-input') params.set('view', 'needs_input');
+  else if (r.view === 'agents') params.set('view', 'agents'); // shared backlog, global manual order
+  else if (r.view === 'needs-input') params.set('view', 'human'); // Human lane, drag-reorderable
   else params.set('view', r.view);
   if (state.tag && r.view !== 'tag') params.set('tag', state.tag);
   if (state.q) params.set('q', state.q);
