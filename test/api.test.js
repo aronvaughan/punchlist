@@ -1384,3 +1384,52 @@ test('GET /templates: reads the repo index.json when present, [] when absent', a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---- duplicate-create guard (double-submit protection) ----
+test('dedup: identical rapid create by same actor+project returns the existing task (200, no clone)', async () => {
+  const { call, db } = makeApp();
+  const a = await call('POST', '/api/v1/tasks', { body: { title: 'buy milk', project_id: null } });
+  assert.equal(a.status, 201);
+  const b = await call('POST', '/api/v1/tasks', { body: { title: 'buy milk', project_id: null } });
+  assert.equal(b.status, 200);            // duplicate → existing returned
+  assert.equal(b.json.id, a.json.id);     // same task, not a clone
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM tasks WHERE title = 'buy milk'").get().c, 1);
+});
+
+test('dedup: force:true opts out and creates a genuine second task', async () => {
+  const { call, db } = makeApp();
+  const a = await call('POST', '/api/v1/tasks', { body: { title: 'ping' } });
+  const b = await call('POST', '/api/v1/tasks', { body: { title: 'ping', force: true } });
+  assert.equal(b.status, 201);
+  assert.notEqual(b.json.id, a.json.id);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM tasks WHERE title = 'ping'").get().c, 2);
+});
+
+test('dedup: different project, different actor, or a later re-add are NOT duplicates', async () => {
+  const { call, db } = makeApp();
+  const proj = await call('POST', '/api/v1/projects', { body: { name: 'Home' } });
+  const base = await call('POST', '/api/v1/tasks', { body: { title: 'chore' } });
+  assert.equal(base.status, 201);
+  // same title, different project → new task
+  assert.equal((await call('POST', '/api/v1/tasks',
+    { body: { title: 'chore', project_id: proj.json.id } })).status, 201);
+  // same title+project(null) but a different actor → new task
+  assert.equal((await call('POST', '/api/v1/tasks',
+    { body: { title: 'chore' }, token: TOK_CLAUDE })).status, 201);
+  // age the original past the window, then the same actor re-adds legitimately
+  db.prepare('UPDATE tasks SET created_at = ? WHERE id = ?')
+    .run(new Date(Date.now() - 60_000).toISOString(), base.json.id);
+  const readd = await call('POST', '/api/v1/tasks', { body: { title: 'chore' } });
+  assert.equal(readd.status, 201);
+  assert.notEqual(readd.json.id, base.json.id);
+});
+
+test('dedup: quickadd double-submit is guarded too', async () => {
+  const { call, db } = makeApp();
+  const a = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'water plants' } });
+  assert.equal(a.status, 201);
+  const b = await call('POST', '/api/v1/tasks/quickadd', { body: { text: 'water plants' } });
+  assert.equal(b.status, 200);
+  assert.equal(b.json.id, a.json.id);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM tasks WHERE title = 'water plants'").get().c, 1);
+});

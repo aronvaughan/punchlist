@@ -261,7 +261,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     });
   }
 
+  // double-submit guard: an accidental re-POST of the SAME actor's identical
+  // title + project within this window is treated as a duplicate — the existing
+  // task is returned (route answers 200, not a second 201) instead of a clone.
+  // `force: true` in the body opts out (a deliberate re-add). Returns
+  // { task, duplicate }.
+  const DEDUP_WINDOW_MS = 5000;
   function createTask(fields, actor) {
+    const force = fields.force === true;
+    if ('force' in fields) { fields = { ...fields }; delete fields.force; }
     validateTaskBody(fields, { partial: false });
     const t = today();
     const body = { notes: '', project_id: null, when_type: null, when_date: null,
@@ -272,6 +280,17 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (body.when_type !== 'date' && body.when_date) throw new ApiError(400, 'when_date requires when_type=date');
     if (body.project_id && !getProject(body.project_id)) throw new ApiError(400, 'project not found');
     if (body.recur && !body.due_date) body.due_date = t; // review C4
+    // dedup check (unless forced): same actor, identical trimmed title + project,
+    // created within the window. Newest match wins.
+    if (!force) {
+      const since = new Date(Date.now() - DEDUP_WINDOW_MS).toISOString();
+      const dup = db.prepare(
+        `SELECT * FROM tasks
+          WHERE created_by = ? AND title = ? AND project_id IS ? AND created_at >= ?
+          ORDER BY created_at DESC, id DESC LIMIT 1`
+      ).get(actor, body.title.trim(), body.project_id ?? null, since);
+      if (dup) return { task: attach(dup), duplicate: true };
+    }
     const id = ulid();
     const now = new Date().toISOString();
     return tx(db, () => {
@@ -289,7 +308,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       setTags(id, body.tags);
       const insStep = db.prepare('INSERT INTO steps (id, task_id, title, done, rank) VALUES (?, ?, ?, 0, ?)');
       body.steps.forEach((s, i) => insStep.run(ulid(), id, s.trim(), (i + 1) * 1024));
-      return attach(getTask(id));
+      return { task: attach(getTask(id)), duplicate: false };
     });
   }
 
@@ -363,7 +382,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return c.json(out);
   });
 
-  app.post('/api/v1/tasks', async c => c.json(createTask(await readJson(c), c.get('actor')), 201));
+  app.post('/api/v1/tasks', async c => {
+    const { task, duplicate } = createTask(await readJson(c), c.get('actor'));
+    return c.json(task, duplicate ? 200 : 201);
+  });
 
   app.post('/api/v1/tasks/quickadd', async c => {
     const body = await readJson(c);
@@ -373,7 +395,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     let fields;
     try { fields = quickParse(body.text, { projects, today: today(), admin: HUMAN }); } catch (e) { throw new ApiError(400, e.message); }
     if (!fields.title) throw new ApiError(400, 'quickadd text has no title');
-    return c.json(createTask(fields, c.get('actor')), 201);
+    const { task, duplicate } = createTask(fields, c.get('actor'));
+    return c.json(task, duplicate ? 200 : 201);
   });
 
   app.patch('/api/v1/tasks/:id', async c => {
