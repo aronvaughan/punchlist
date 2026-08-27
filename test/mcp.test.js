@@ -24,6 +24,7 @@ const TOK_EMAIL = 'e'.repeat(32);
 const TODAY = '2026-03-10';
 
 const TOOL_NAMES = ['punchlist_add', 'punchlist_quickadd', 'punchlist_list', 'punchlist_show',
+  'punchlist_reorder',
   'punchlist_queue', 'punchlist_claim', 'punchlist_finish', 'punchlist_block', 'punchlist_answer',
   'punchlist_complete', 'punchlist_approve', 'punchlist_vet', 'punchlist_update',
   'punchlist_projects', 'punchlist_counts'];
@@ -120,7 +121,7 @@ test('initialize handshake reports the punchlist server', async () => {
   await extra.close();
 });
 
-test('tools/list exposes all fifteen tools with object schemas and descriptions', async () => {
+test('tools/list exposes all sixteen tools with object schemas and descriptions', async () => {
   const res = await admin.request('tools/list', {});
   const tools = res.result.tools;
   assert.deepEqual(tools.map(t => t.name).sort(), [...TOOL_NAMES].sort());

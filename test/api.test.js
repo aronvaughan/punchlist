@@ -545,6 +545,32 @@ test('reorder rejects a bad list and out-of-scope neighbors for view_ranks lists
   assert.ok(Array.isArray(bad.json.current));
 });
 
+test('agent reorder with a reason auto-posts a status entry; human reorder posts nothing', async () => {
+  const { call } = makeApp();
+  const mk = async n => (await call('POST', '/api/v1/tasks', { body: { title: n, assignee: 'claude' } })).json;
+  const a = await mk('a'); const b = await mk('b');
+  const timeline = id => call('GET', `/api/v1/tasks/${id}/comments`).then(x => x.json.items);
+  // an AGENT (claude, non-admin) reorders WITH a reason -> auto-posts
+  const r = await call('POST', `/api/v1/tasks/${a.id}/reorder`,
+    { token: TOK_CLAUDE, body: { before_id: b.id, list: 'agents', reason: 'blocks the release' } });
+  assert.equal(r.status, 200);
+  const posted = (await timeline(a.id)).filter(x => x.kind === 'status' && x.author === 'claude');
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].text, 'claude moved this up: blocks the release');
+  // an AGENT reorder WITHOUT a reason posts nothing
+  await call('POST', `/api/v1/tasks/${b.id}/reorder`, { token: TOK_CLAUDE, body: { after_id: a.id, list: 'agents' } });
+  assert.equal((await timeline(b.id)).filter(x => x.kind === 'status').length, 0);
+  // a HUMAN (admin) reorder with a reason posts NOTHING (humans reorder freely)
+  await call('POST', `/api/v1/tasks/${a.id}/reorder`,
+    { body: { after_id: b.id, list: 'agents', reason: 'i just want to' } });
+  assert.equal((await timeline(a.id)).filter(x => x.kind === 'status').length, 1, 'still just the agent one');
+  // reason must be a non-empty string within caps
+  assert.equal((await call('POST', `/api/v1/tasks/${a.id}/reorder`,
+    { token: TOK_CLAUDE, body: { before_id: b.id, list: 'agents', reason: '' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${a.id}/reorder`,
+    { token: TOK_CLAUDE, body: { before_id: b.id, list: 'agents', reason: 42 } })).status, 400);
+});
+
 // ---- steps ----
 test('steps: create/patch/delete + validation and caps', async () => {
   const { call } = makeApp();
