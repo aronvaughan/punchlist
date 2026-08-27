@@ -189,6 +189,15 @@ export function renderRail() {
   // shared with the Manage-projects dialog; this only paints a row.
   const navRow = (p, { hasKids }) => {
     const row = el('div', 'rail-project');
+    // ⋮⋮ drag handle (reuses .grip). Its job today is to stop touch-scroll
+    // hijack (the grip owns touch-action:none; the row body scrolls) and to
+    // reserve the reorder affordance. FUTURE WORK: wiring actual rail reorder —
+    // a Sortable here persisting to view_ranks('rail-projects') and a matching
+    // ORDER BY in GET /projects — is not built yet (deliberately not a
+    // half-working reorder). The grip is inert until then.
+    const grip = el('span', 'grip rail-grip');
+    grip.setAttribute('aria-hidden', 'true');
+    row.append(grip);
     if (hasKids) {
       // disclosure caret: toggles the subtree, never navigates
       const caret = el('button', 'caret' + (collapsed.has(p.id) ? ' closed' : ''));
@@ -295,6 +304,13 @@ function renderRailTags() {
     // div (not button) so the delete affordance can nest without invalid markup
     const row = el('div', 'rail-tag');
     row.tabIndex = 0;
+    // ⋮⋮ drag handle (reuses .grip): stops touch-scroll hijack and reserves the
+    // reorder affordance. FUTURE WORK: actual rail-tag reorder persisting to
+    // view_ranks('rail-tags') (+ ORDER BY in GET /tags) is not wired yet —
+    // deliberately not a half-working reorder. The grip is inert until then.
+    const grip = el('span', 'grip rail-grip');
+    grip.setAttribute('aria-hidden', 'true');
+    row.append(grip);
     row.append(el('span', 'rail-name', `#${t.name}`));
     if (t.count > 0) row.append(el('span', 'tag-count', String(t.count)));
     if (state.route.view === 'tag' && state.route.tag === t.name) row.classList.add('active');

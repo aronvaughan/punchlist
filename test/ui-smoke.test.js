@@ -262,3 +262,16 @@ test('duplicate-create guard: client debounces both add flows', async () => {
   assert.match(detail, /if \(creating\) return/); // drawer Create re-entrancy guard
   assert.match(detail, /setAttribute\('loading', ''\)/);
 });
+
+test('rail rows: reused ⋮⋮ grip + touch-action so a rail drag never hijacks scroll', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  // both rail project rows and rail tag rows carry the reused .grip
+  assert.match(views, /el\('span', 'grip rail-grip'\)/);
+  // reorder-persistence is documented as future work against the view_ranks keys
+  assert.match(views, /view_ranks\('rail-projects'\)/);
+  assert.match(views, /view_ranks\('rail-tags'\)/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.rail-project, \.rail-tag \{ touch-action: pan-y; \}/);
+  assert.match(css, /\.rail-grip\s*\{/);
+});
