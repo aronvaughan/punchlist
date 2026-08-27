@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { ulid } from './db.js';
 import { sniffMime, normalizeMime, filePathFor, sanitizeFilename } from './media.js';
 import { taskWhere, taskCount, encodeCursor, decodeCursor } from './views.js';
@@ -27,10 +28,11 @@ const MIME = {
   '.json': 'application/json', '.woff2': 'font/woff2',
 };
 
-const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20, question: 2048, answer: 8192 };
+const CAPS = { title: 500, notes: 65536, steps: 100, tags: 20, question: 2048, answer: 8192,
+  comment: 8192, template: 200 };
 const MAX_BODY_BYTES = 262144; // 256KB — enforced BEFORE JSON.parse (413)
 const TASK_FIELDS = new Set(['title', 'notes', 'project_id', 'status', 'when_type', 'when_date',
-  'due_date', 'due_time', 'recur', 'tags', 'steps', 'assignee', 'auto_close']);
+  'due_date', 'due_time', 'recur', 'tags', 'steps', 'assignee', 'auto_close', 'template']);
 // The admin (human) actor — approves reviews, owns the Today/Inbox lanes
 // (delegation design). Resolved per app: buildApp's `admin` option, defaulting
 // to the first actor in `tokens` (server.js passes PUNCHLIST_ADMIN through).
@@ -102,6 +104,13 @@ function validateTaskBody(body, { partial }) {
   if (body.auto_close !== undefined && ![0, 1, true, false].includes(body.auto_close)) {
     throw new ApiError(400, 'auto_close must be boolean');
   }
+  // template: a free string (a template NAME) or null — deliberately NOT
+  // validated against a known set; the templates repo is authoritative and
+  // public users may not have it (migration 007).
+  if (body.template !== undefined && body.template !== null &&
+      (typeof body.template !== 'string' || body.template.length > CAPS.template)) {
+    throw new ApiError(400, `template must be a string of at most ${CAPS.template} chars, or null`);
+  }
   if (body.recur !== undefined && body.recur !== null) {
     try { nextDue(body.recur, '2000-01-01', '2000-01-01', '2000-01-01'); }
     catch (e) { throw new ApiError(400, `invalid recur: ${e.message}`); }
@@ -142,9 +151,24 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       'SELECT id, title, done, rank FROM steps WHERE task_id = ? ORDER BY rank, id').all(task.id);
     const attachment_count = db.prepare(
       'SELECT COUNT(*) c FROM attachments WHERE task_id = ?').get(task.id).c;
+    const comment_count = db.prepare(
+      'SELECT COUNT(*) c FROM comments WHERE task_id = ?').get(task.id).c;
     const { recur, ...rest } = task;
     for (const k of Object.keys(rest)) if (k.startsWith('__k')) delete rest[k];
-    return { ...rest, recur: recur ? JSON.parse(recur) : null, tags, steps, attachment_count };
+    return { ...rest, recur: recur ? JSON.parse(recur) : null, tags, steps,
+      attachment_count, comment_count };
+  }
+
+  // ---- activity thread (the collaboration primitive) ----
+  // Append one row to a task's timeline. Called both by the /comments door
+  // (kind='comment') and, inside the existing lifecycle doors, to project each
+  // transition into the readable timeline (question/answer/report/status). This
+  // is the ONE write path for the thread; callers run it inside their own tx so
+  // the projection lands atomically with the transition it describes.
+  function postComment(taskId, author, kind, text) {
+    db.prepare(
+      'INSERT INTO comments (id, task_id, author, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(ulid(), taskId, author, kind, text, new Date().toISOString());
   }
 
   function setTags(taskId, names) {
@@ -170,7 +194,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const t = today();
     const body = { notes: '', project_id: null, when_type: null, when_date: null,
       due_date: null, due_time: null, recur: null, tags: [], steps: [],
-      assignee: HUMAN, auto_close: 0, ...fields };
+      assignee: HUMAN, auto_close: 0, template: null, ...fields };
     if (body.status === 'archived') throw new ApiError(400, 'cannot create archived tasks');
     if (body.when_type === 'date' && !body.when_date) throw new ApiError(400, 'when_type=date requires when_date');
     if (body.when_type !== 'date' && body.when_date) throw new ApiError(400, 'when_date requires when_type=date');
@@ -184,12 +208,12 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       db.prepare(
         `INSERT INTO tasks (id, title, notes, project_id, status, when_type, when_date, due_date,
                             due_time, rank, today_rank, recur, spawned_from, created_by, completed_at,
-                            created_at, updated_at, assignee, auto_close, vetted)
-         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)`
+                            created_at, updated_at, assignee, auto_close, vetted, template)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?)`
       ).run(id, body.title.trim(), body.notes, body.project_id, body.when_type, body.when_date,
             body.due_date, body.due_time, rank, body.recur ? JSON.stringify(body.recur) : null,
             actor, now, now, body.assignee.trim(), body.auto_close ? 1 : 0,
-            UNTRUSTED.has(actor) ? 0 : 1);
+            UNTRUSTED.has(actor) ? 0 : 1, body.template ?? null);
       setTags(id, body.tags);
       const insStep = db.prepare('INSERT INTO steps (id, task_id, title, done, rank) VALUES (?, ?, ?, 0, ?)');
       body.steps.forEach((s, i) => insStep.run(ulid(), id, s.trim(), (i + 1) * 1024));
@@ -333,14 +357,29 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       db.prepare(
         `UPDATE tasks SET title=?, notes=?, project_id=?, status=?, when_type=?, when_date=?,
                 due_date=?, due_time=?, recur=?, today_rank=?, rank=?, assignee=?, auto_close=?,
-                claimed_at=?,
+                template=?, claimed_at=?,
                 completed_at = CASE WHEN ? = 'active' THEN NULL ELSE completed_at END,
                 updated_at=? WHERE id=?`
       ).run(merged.title, merged.notes, merged.project_id, merged.status, merged.when_type,
             merged.when_date, merged.due_date, merged.due_time, recurVal, todayRank, rank,
-            merged.assignee, merged.auto_close, merged.claimed_at,
+            merged.assignee, merged.auto_close, merged.template, merged.claimed_at,
             merged.status, now, task.id);
       if (body.tags !== undefined) setTags(task.id, body.tags);
+      // project state-changing PATCHes into the timeline (status kind, terse
+      // one-liner). Reassign, archive/unarchive, and reopen (review→active) are
+      // the transitions that happen through PATCH rather than a door.
+      const actor = c.get('actor');
+      if (body.assignee !== undefined && merged.assignee !== task.assignee) {
+        postComment(task.id, actor, 'status', `reassigned to ${merged.assignee}`);
+      }
+      if (merged.status !== task.status) {
+        if (merged.status === 'archived') postComment(task.id, actor, 'status', 'archived');
+        else if (merged.status === 'active' && task.status === 'archived') {
+          postComment(task.id, actor, 'status', 'unarchived');
+        } else if (merged.status === 'active' && task.status === 'review') {
+          postComment(task.id, actor, 'status', 'reopened');
+        }
+      }
       return c.json(attach(getTask(task.id)));
     });
   });
@@ -375,7 +414,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
-      return doneResponse(c, id, toDone(task, ['active']));
+      const spawned_id = toDone(task, ['active']);
+      // project the transition into the timeline (only on a real flip)
+      if (task.status === 'active') postComment(id, c.get('actor'), 'status', 'completed');
+      return doneResponse(c, id, spawned_id);
     });
   });
 
@@ -405,6 +447,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (changes === 0 && task.status !== 'in_progress') {
         throw new ApiError(409, `cannot claim a ${task.status} task`);
       }
+      // only a real active→in_progress flip posts to the timeline; an
+      // idempotent re-claim (changes=0) does not repeat the line
+      if (changes === 1) postComment(id, c.get('actor'), 'status', 'claimed');
       return c.json({ task: attach(getTask(id)) });
     });
   });
@@ -427,6 +472,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const now = new Date().toISOString();
       // repeat finishes (after a reopen) append under a timestamped rule
       const report = appendRound(task.report, body.report.trim(), now);
+      // project THIS round's report into the timeline (the field keeps its
+      // timestamped-concat; the row is the readable projection of this finish)
+      postComment(id, c.get('actor'), 'report', body.report.trim());
       if (task.auto_close) {
         // straight to done — the final transition, so recurrence spawns here
         return doneResponse(c, id, toDone(task, ['active', 'in_progress'], { report }));
@@ -446,7 +494,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can approve`);
       if (task.status === 'done') return c.json({ task: attach(task) }); // idempotent
       if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
-      return doneResponse(c, id, toDone(task, ['review']));
+      const spawned_id = toDone(task, ['review']);
+      postComment(id, c.get('actor'), 'status', 'approved');
+      return doneResponse(c, id, spawned_id);
     });
   });
 
@@ -482,6 +532,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       db.prepare(`UPDATE tasks SET status='blocked', question=?, updated_at=?
                   WHERE id=? AND status IN ('active', 'in_progress')`)
         .run(appendRound(task.question, q, now), now, id);
+      // project this round's question into the timeline (field stays truth)
+      postComment(id, c.get('actor'), 'question', q);
       return c.json({ task: attach(getTask(id)) });
     });
   });
@@ -504,6 +556,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       db.prepare(`UPDATE tasks SET status='active', answer=?, updated_at=?
                   WHERE id=? AND status='blocked'`)
         .run(appendRound(task.answer, body.answer.trim(), now), now, id);
+      // project this round's answer into the timeline (field stays truth)
+      postComment(id, c.get('actor'), 'answer', body.answer.trim());
       return c.json({ task: attach(getTask(id)) });
     });
   });
@@ -520,6 +574,41 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
         .run(new Date().toISOString(), id);
     }
     return c.json({ task: attach(getTask(id)) });
+  });
+
+  // ---- activity thread (comments) ----
+  // Model: a task is a GitHub-style issue with a typed, append-only, attributed
+  // timeline. Async and poll-refreshed like everything else — no live chat.
+  // POST here writes the ONE client-authored kind ('comment'); the lifecycle
+  // doors auto-post the other kinds. Any authenticated actor may comment (an
+  // unvetted task may still receive comments — commenting is not execution, and
+  // agents still can't claim/finish/block it).
+  app.post('/api/v1/tasks/:id/comments', async c => {
+    const id = c.req.param('id');
+    const task = getTask(id);
+    if (!task) throw new ApiError(404, 'task not found');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (k !== 'text') throw new ApiError(400, `unknown field: ${k}`);
+    if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > CAPS.comment) {
+      throw new ApiError(400, `text is required (<=${CAPS.comment} chars)`);
+    }
+    return tx(db, () => {
+      postComment(id, c.get('actor'), 'comment', body.text.trim());
+      const row = db.prepare(
+        'SELECT id, task_id, author, kind, text, created_at FROM comments WHERE task_id = ? ORDER BY rowid DESC LIMIT 1'
+      ).get(id);
+      return c.json(row, 201);
+    });
+  });
+
+  app.get('/api/v1/tasks/:id/comments', c => {
+    const id = c.req.param('id');
+    const task = getTask(id);
+    if (!task) throw new ApiError(404, 'task not found');
+    const items = db.prepare(
+      'SELECT id, task_id, author, kind, text, created_at FROM comments WHERE task_id = ? ORDER BY created_at, rowid'
+    ).all(id);
+    return c.json({ items });
   });
 
   app.post('/api/v1/tasks/:id/reorder', async c => {
@@ -929,6 +1018,23 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     ).run(merged.name.trim(), merged.notes, merged.parent_id, merged.domain, merged.archived,
           new Date().toISOString(), project.id);
     return c.json(getProject(project.id));
+  });
+
+  // ---- templates (read-only bridge to the punchlist-templates repo) ----
+  // The templates repo's `plt` regenerates templates/index.json on any change;
+  // we READ that file (never shell plt — least-coupled bridge). Locate the repo
+  // via PUNCHLIST_TEMPLATES_DIR, else the default checkout path. Degrade to an
+  // empty list whenever the repo/index isn't present or is unreadable — public
+  // users may not have the templates repo at all.
+  app.get('/api/v1/templates', c => {
+    const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
+      join(homedir(), 'code', 'punchlist-templates');
+    const file = join(dir, 'templates', 'index.json');
+    try {
+      if (!existsSync(file)) return c.json({ items: [] });
+      const data = JSON.parse(readFileSync(file, 'utf8'));
+      return c.json({ items: Array.isArray(data.templates) ? data.templates : [] });
+    } catch { return c.json({ items: [] }); }
   });
 
   // ---- static UI (CSP on every static response — review O1) ----

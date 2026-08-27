@@ -1348,6 +1348,48 @@ wa-button[variant="brand"]::part(base) {
 .due-line { font-size: 13px; color: var(--ink-soft); margin-top: 6px; }
 .due-line.urgent { color: var(--danger); font-weight: 600; }
 
+/* ---- template picker (Part B): select + a stamped-name chip ---- */
+.template-picker-row { display: flex; align-items: center; gap: 8px; }
+.template-picker-row select { flex: 1; min-width: 0; }
+.chip.template-chip {
+  flex: none;
+  cursor: default;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.chip.comment-count { cursor: default; color: var(--ink-soft); }
+
+/* ---- activity thread (Part A): the drawer Timeline ---- */
+.timeline { display: flex; flex-direction: column; gap: 8px; }
+.tl-list { display: flex; flex-direction: column; gap: 10px; }
+.tl-empty { color: var(--ink-faint); font-size: 13px; padding: 4px 0; }
+.tl-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.tl-author-chip { cursor: default; font-weight: 600; }
+.tl-kind { font-size: 12px; color: var(--ink-soft); }
+.tl-time { font-size: 12px; color: var(--ink-faint); }
+.tl-body { font-size: 14px; border-top: none; padding-top: 0; }
+.tl-body p:first-child { margin-top: 0; }
+.tl-body p:last-child { margin-bottom: 0; }
+/* question / answer read as accent-left-boxed cards (like the report cards) */
+.tl-question, .tl-answer, .tl-report {
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--chip-bg);
+  border-radius: 0 8px 8px 0;
+}
+.tl-report { border-left-color: var(--ink-soft); }
+/* status entries: a muted one-liner with a subtle rule above */
+.tl-status { border-top: 1px solid var(--line); padding-top: 8px; }
+.tl-status-line { font-size: 12px; color: var(--ink-faint); }
+.tl-status-line .tl-author { font-weight: 600; color: var(--ink-soft); }
+.tl-status-line .tl-time { color: var(--ink-faint); }
+.tl-composer { display: flex; align-items: flex-end; gap: 8px; margin-top: 4px; }
+.tl-input {
+  flex: 1;
+  min-height: 60px;
+  resize: vertical;
+}
+
 /* ---- toasts ---- */
 #toasts {
   position: fixed;

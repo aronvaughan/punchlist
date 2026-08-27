@@ -36,6 +36,7 @@ SCREEN=<this skill dir>/scripts/screen.sh
 "$S" finish <id> "what was done + where"  # -> review lane (report REQUIRED)
 "$S" block  <id> "one concrete question"  # stuck -> blocked; owner answers, task returns
 "$S" answer <id> "text"                   # admin door: blocked -> active (403 for agents)
+"$S" comment <id> "text"                  # post to the task's timeline (non-blocking)
 "$S" vet <id>                             # admin door: un-quarantine a task (403 for agents)
 "$S" add "title" --project X --due 2026-08-30 --when someday \
         --tags a,b --assignee <actor> --notes N --steps "a;b"
@@ -75,6 +76,15 @@ untrusted actors) never appear in your queue and claim/finish 403 on them
 
 ## Behavior
 
+- **Comment vs block — two weights.** A task carries a GitHub-style
+  timeline. Use `comment <id> "text"` to think out loud or post progress on
+  a long task — it is NON-BLOCKING: the task stays in your queue and you
+  keep working. Use `block <id> "question"` ONLY for a real, answerable
+  question that must gate the work (you genuinely cannot proceed without an
+  answer only the owner has). Blocking pulls the task out of your queue into
+  the owner's "Needs input" lane; a comment does not. Every lifecycle event
+  (claim, finish, block/answer, complete, approve…) is auto-posted to the
+  same timeline, so the whole exchange reads in order.
 - **When stuck, block — never guess, never finish-with-a-question**: if a
   task cannot proceed without information only the owner has (a choice, a
   credential path, a missing constraint), call `block <id> "question"` with
@@ -83,6 +93,10 @@ untrusted actors) never appear in your queue and claim/finish 403 on them
   queue into the owner's "Needs input" lane; once answered it returns to
   your queue on the next pass with the answer in the task payload —
   re-claim it and continue from where you stopped.
+- **If a task has a `template` field, `plt show <template>` it before
+  working** — the punchlist-templates resolver skill loads the full template
+  (its Output shape and Golden exemplar) as driving context so your output
+  matches the expected shape.
 - **Check the queue**: when asked "is there work for you" (or at natural
   checkpoints), run `queue` — it lists active + in_progress tasks assigned
   to your actor (server-side vetted-only). **Claim before working** a task;

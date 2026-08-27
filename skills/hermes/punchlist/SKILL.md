@@ -29,6 +29,7 @@ scripts/screen.sh --risk "title" "notes"           # high-risk classifier
 scripts/pl.sh claim  <id>                          # take a task BEFORE working it
 scripts/pl.sh finish <id> "what I did + where"     # -> review lane; report required
 scripts/pl.sh block  <id> "one concrete question"  # stuck -> blocked; owner answers, task returns
+scripts/pl.sh comment <id> "text"                  # post to the task's timeline (non-blocking)
 scripts/pl.sh show <id>                            # full task JSON (notes, steps)
 scripts/pl.sh add "title" --assignee <owner> --due 2026-08-30 --notes "..."
 scripts/pl.sh list today|review|delegated|overdue  # filtered views
@@ -63,6 +64,15 @@ the owner can `vet`.
   queue into the owner's "Needs input" lane; once answered it returns to
   your queue on the next pass with the answer in the task payload —
   re-claim it and continue from where you stopped.
+- **Comment vs block — two weights**: `comment <id> "text"` posts to the
+  task's timeline WITHOUT leaving your queue — use it to think out loud or
+  post progress on a long task. `block <id> "question"` is only for a real,
+  answerable question that must gate the work; it pulls the task into the
+  owner's "Needs input" lane until answered. Every lifecycle event is
+  auto-posted to the same timeline, so the exchange reads in order.
+- **If a task has a `template` field, `plt show <template>` it before
+  working** (the punchlist-templates resolver skill) so your output matches
+  the template's Output shape and Golden exemplar.
 - **Queue discipline**: check `queue`, claim a task before starting, work
   it, then `finish` with a SUBSTANTIVE report — what you did, where output
   lives, what the reviewer should check. "Done" alone is not a report.

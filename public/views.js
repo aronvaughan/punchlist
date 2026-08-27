@@ -755,6 +755,12 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.setAttribute('aria-label', `${task.attachment_count} image${task.attachment_count === 1 ? '' : 's'} attached`);
     subline.append(chip);
   }
+  // comment count chip: a small 💬 N when the task's timeline has activity
+  if (task.comment_count > 0) {
+    const chip = el('span', 'chip comment-count', `💬 ${task.comment_count}`);
+    chip.setAttribute('aria-label', `${task.comment_count} timeline entr${task.comment_count === 1 ? 'y' : 'ies'}`);
+    subline.append(chip);
+  }
   // tag icon: opens the inline tag editor (shared suggest.js field) for quick
   // add/remove without opening the full drawer
   const tagEdit = el('button', 'tag-edit', '#');
