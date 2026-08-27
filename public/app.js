@@ -167,6 +167,35 @@ export async function api(method, path, body) {
   }
 }
 
+// ---- attachment helpers: uploads send RAW bytes (not JSON), and the image
+// bytes are fetched WITH the bearer token then shown via an object URL — an
+// <img src> can't carry Authorization, and the GET is auth'd like the rest. ----
+export async function uploadAttachment(taskId, file, { retention = 'keep', expiresAt = null } = {}) {
+  const params = new URLSearchParams({ retention });
+  if (expiresAt) params.set('expires_at', expiresAt);
+  for (let attempt = 0; ; attempt++) {
+    const headers = { 'Content-Type': file.type, 'X-Filename': file.name };
+    const tok = localStorage.getItem(TOKEN_KEY);
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const res = await fetch(`/api/v1/tasks/${taskId}/attachments?${params}`,
+      { method: 'POST', headers, body: file });
+    if (res.status === 401 && attempt === 0) { await promptToken(); continue; }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { const e = new Error(json.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
+    return json;
+  }
+}
+
+// Fetch an attachment's bytes as an object URL (caller revokes when done).
+export async function attachmentObjectURL(id) {
+  const headers = {};
+  const tok = localStorage.getItem(TOKEN_KEY);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  const res = await fetch(`/api/v1/attachments/${id}`, { headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return URL.createObjectURL(await res.blob());
+}
+
 // optimistic-update escape hatch: the DOM already changed (drag, checkbox);
 // on failure restore server truth and explain.
 export async function rollback(message) {

@@ -749,6 +749,12 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     tagsWrap.append(chip);
   }
   subline.append(tagsWrap);
+  // attachment count chip: a small 📎 N when the task carries images
+  if (task.attachment_count > 0) {
+    const chip = el('span', 'chip attach-count', `📎 ${task.attachment_count}`);
+    chip.setAttribute('aria-label', `${task.attachment_count} image${task.attachment_count === 1 ? '' : 's'} attached`);
+    subline.append(chip);
+  }
   // tag icon: opens the inline tag editor (shared suggest.js field) for quick
   // add/remove without opening the full drawer
   const tagEdit = el('button', 'tag-edit', '#');

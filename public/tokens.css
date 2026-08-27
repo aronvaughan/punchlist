@@ -1400,3 +1400,80 @@ wa-button[variant="brand"]::part(base) {
 @media (max-width: 700px) and (prefers-reduced-motion: no-preference) {
   #rail { transition: transform .25s ease, visibility .25s; }
 }
+
+/* ---- image attachments (drawer) + row 📎 count chip ---- */
+.chip.attach-count { cursor: default; color: var(--ink-soft); }
+.attachments { display: flex; flex-direction: column; gap: 6px; }
+.att-drop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  transition: border-color .15s, background .15s;
+}
+.att-drop.drag-over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.att-input { display: none; }
+.att-add {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.att-add:hover { color: var(--accent); border-color: var(--accent); }
+.att-empty { color: var(--ink-soft); font-size: 13px; padding: 2px 0; }
+.att-grid { display: flex; flex-direction: column; gap: 10px; }
+.att-card {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--chip-bg);
+}
+.att-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--pane);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.att-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.att-thumb.att-broken::after { content: '⚠'; color: var(--ink-soft); font-size: 20px; }
+.att-meta { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.att-name { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-retention-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.att-retention, .att-expires {
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 0 8px;
+}
+.att-del {
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.att-del:hover { color: var(--danger); background: var(--bg); }
