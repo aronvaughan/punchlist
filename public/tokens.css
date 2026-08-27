@@ -664,11 +664,31 @@ html[data-theme="latte"] {
   padding-left: 8px;
   border-left: 1px solid var(--line);
 }
-/* empty child lists become visible drop targets while a drag is live */
+/* every project is a reparent drop target: empty child lists keep a small
+   hittable height AT REST (a leaf can't be dropped onto a 0-height lane —
+   that was the broken-drag bug) and grow + highlight while a drag is live */
+.manage-children:empty { min-height: 14px; }
 .manage-body.dragging .manage-children:empty {
-  min-height: 28px;
+  min-height: 30px;
   border-left-color: var(--accent);
+  background: var(--hover);
 }
+/* dialog toolbar: right-aligned icon toggles (icons over text) */
+.manage-toolbar { display: flex; justify-content: flex-end; gap: 4px; margin-bottom: 6px; }
+.manage-icon-toggle {
+  flex: none;
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.manage-icon-toggle:hover { color: var(--accent); background: var(--hover); }
+.manage-icon-toggle.on { color: var(--accent); border-color: var(--accent); }
 .manage-row {
   display: flex;
   align-items: center;
@@ -679,19 +699,8 @@ html[data-theme="latte"] {
 }
 .manage-row:hover { background: var(--hover); }
 .manage-row.archived { opacity: .55; }
-.manage-grip {
-  flex: none;
-  width: 24px;
-  height: 44px;
-  cursor: grab;
-  background:
-    radial-gradient(circle, var(--ink-faint) 1.4px, transparent 1.4px)
-    0 0 / 6px 6px;
-  background-position: center;
-  opacity: .6;
-  touch-action: none;
-}
-.manage-grip:active { cursor: grabbing; }
+/* the drag handle reuses the step-row ⋮⋮ grip (.grip); trim it to the row */
+.manage-row .grip { min-height: 40px; padding: 10px 7px; opacity: .6; }
 .manage-name {
   flex: 1;
   min-width: 0;
