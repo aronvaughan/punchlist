@@ -90,14 +90,33 @@ test('section headers: left-aligned standout treatment (accent tick + hairline)'
   assert.match(css, /\.rail-heading:has\(\.sec-toggle\)\s*\{[^}]*border-bottom:\s*1px solid var\(--line\)/);
 });
 
-test('task rows: project/tag pills move to a muted subline (phone readability)', async () => {
+test('task rows: title line is title+due only; everything else on an icon-pilled subline', async () => {
   const { get } = makeApp();
   const css = await (await get('/tokens.css')).text();
-  assert.match(css, /\.row-subline\s*\{/);
-  assert.match(css, /\.tag-edit\s*\{/); // subline tag-edit affordance
+  assert.match(css, /\.row-subline\s*\{[^}]*flex-wrap:\s*wrap/); // subline wraps, no collision
+  assert.match(css, /\.pill-icon\s*\{[^}]*stroke:\s*currentColor/); // type-icons theme-token colored
+  assert.match(css, /\.chip\.tags-indicator\s*\{/);
   const views = await (await get('/views.js')).text();
-  assert.match(views, /row-subline/);
-  assert.match(views, /toggleRowTags/); // inline tag editor from the subline
+  assert.match(views, /function pillIcon/);
+  assert.match(views, /function iconPill/);
+  // the title line carries only the title (+ due); assignee/project/status/tags
+  // moved to the subline
+  assert.match(views, /titleLine\.append\(el\('span', 'title', task\.title\)\)/);
+  assert.match(views, /subline\.append\(iconPill\('project'/);
+  assert.match(views, /subline\.append\(iconPill\('assignee'/);
+  // tags are display-only on the row: a tag-count indicator that opens the drawer
+  assert.match(views, /tags-indicator/);
+  assert.match(views, /ind\.addEventListener\('click', e => \{ e\.stopPropagation\(\); openDetail\(task\); \}\)/);
+  assert.doesNotMatch(views, /toggleRowTags/); // inline row tag-editing is gone
+});
+
+test('drawer: tag editor relocated to the bottom (single edit surface)', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  // tags no longer in the top field group; appended just before the actions row
+  assert.doesNotMatch(detail, /assigneeEditor\(\), templateEditor\(\), tagsEditor\(\)/);
+  assert.match(detail, /assigned tags \+ editor at the BOTTOM/);
+  assert.match(detail, /body\.append\(tagsEditor\(\)\);\n\s*body\.append\(actions\(\)\)/);
 });
 
 test('status markers: themed glyphs for agent in-flight states', async () => {

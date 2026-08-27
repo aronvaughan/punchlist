@@ -6,7 +6,6 @@ import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { expandRow } from '/inline.js';
 import { mdToHtml } from '/md.js';
-import { tagsField } from '/suggest.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const lastSection = new Map(); // projectId -> section the user last touched
@@ -66,6 +65,36 @@ function el(tag, className, text) {
   if (className) n.className = className;
   if (text !== undefined) n.textContent = text;
   return n;
+}
+
+// per-pill-type glyphs: tiny inline SVGs that inherit the chip's color via
+// `currentColor` (theme-token driven — no hardcoded fills). Built through the
+// DOM (never innerHTML). person = assignee, folder = project, tag = tags.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ICONS = {
+  assignee: [['circle', { cx: 8, cy: 5.4, r: 2.5 }], ['path', { d: 'M3.4 13.2c0-2.6 2.1-4 4.6-4s4.6 1.4 4.6 4' }]],
+  project: [['path', { d: 'M2.4 4.8h3.9l1.3 1.5h6v6.9H2.4z' }]],
+  tag: [['path', { d: 'M8.7 2.4H13.6V7.3L7.9 13 3 8.1z' }], ['circle', { cx: 10.7, cy: 5.3, r: 0.95 }]],
+};
+function pillIcon(name) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', 'pill-icon');
+  svg.setAttribute('width', '11');
+  svg.setAttribute('height', '11');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [tag, attrs] of ICONS[name]) {
+    const n = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+    svg.append(n);
+  }
+  return svg;
+}
+// a subline pill carrying a leading type-icon + text (button or span)
+function iconPill(iconName, text, { className = '', button = false } = {}) {
+  const pill = el(button ? 'button' : 'span', `chip ${className}`.trim());
+  pill.append(pillIcon(iconName), el('span', 'pill-text', text));
+  return pill;
 }
 
 function fmtDate(iso) {
@@ -619,28 +648,8 @@ document.getElementById('manage-new-name').addEventListener('keydown', e => {
 });
 
 // ---- rows ----
-// quick inline tag editing from the subline's tag icon. Mirrors inline.js:
-// PATCH updates state in place (no reload while editing); closing reloads so
-// the subline chips repaint from server truth.
-async function saveRowTags(task, fields) {
-  try {
-    const updated = await api('PATCH', `/tasks/${task.id}`, fields);
-    Object.assign(task, updated);
-    const i = state.tasks.findIndex(t => t.id === task.id);
-    if (i >= 0) state.tasks[i] = task;
-    return true;
-  } catch (e) { toast(`Save failed: ${e.message}`); return false; }
-}
-
-function toggleRowTags(task, row, tagsWrap) {
-  const open = row.querySelector('.quick-tags');
-  if (open) { open.remove(); if (tagsWrap) tagsWrap.hidden = false; reload(); return; }
-  const box = el('div', 'quick-tags');
-  box.append(tagsField(task, fields => saveRowTags(task, fields)));
-  if (tagsWrap) tagsWrap.hidden = true;
-  row.querySelector('.row-main').append(box);
-  setTimeout(() => box.querySelector('input')?.focus(), 30);
-}
+// (Row tags are display-only — a tag icon + count that opens the drawer. Tag
+// editing lives at the bottom of the drawer, via suggest.js tagsField.)
 
 // status marker: one small themed glyph per agent in-flight state, shown where
 // the checkbox sits. active/queued and done use the checkbox itself.
@@ -740,43 +749,13 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     row.append(check);
   }
 
-  // two-line layout: title (+ status/due chips) on top; project pill + tag
-  // chips move to a muted subline beneath, so long titles read on a phone
+  // two-line layout: the title line is JUST the title (+ due countdown at the
+  // right, which reads best beside a deadline). Everything else — project,
+  // assignee, status, tags-indicator — lives on the muted subline beneath, each
+  // pill carrying a small type-icon so the row scans at a glance on a phone.
   const main = el('div', 'row-main');
   const titleLine = el('div', 'row-title-line');
   titleLine.append(el('span', 'title', task.title));
-
-  if (task.vetted === 0) {
-    // amber quarantine chip (agent-security layer 1): agents will not execute
-    // this task. Tapping it is the admin's Vet action — the server 403s
-    // anyone else, and the toast explains.
-    const chip = el('button', 'chip unvetted', '⛨ unvetted');
-    chip.title = 'Created by an untrusted source — agents will not execute it. Tap to vet.';
-    chip.setAttribute('aria-label', 'Unvetted — tap to vet for agent execution');
-    chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
-    titleLine.append(chip);
-  }
-  if (task.assignee && task.assignee !== currentActor()) {
-    // agent chip: muted; accent outline while claimed (in_progress)
-    titleLine.append(el('span', 'chip agent' + (task.status === 'in_progress' ? ' working' : ''), task.assignee));
-    if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
-      titleLine.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));
-    }
-    if (task.status === 'review') {
-      const chip = el('button', 'chip review-chip', 'review');
-      chip.setAttribute('aria-label', `Review ${task.assignee}'s report`);
-      chip.addEventListener('click', e => { e.stopPropagation(); openReviewDialog(task); });
-      titleLine.append(chip);
-    }
-  }
-  if (task.status === 'blocked') {
-    // needs-input: the agent is waiting on an answer — jump to the lane
-    const chip = el('button', 'chip blocked-chip', '❓ waiting');
-    chip.title = 'Blocked on a question — answer it in the Human lane';
-    chip.setAttribute('aria-label', 'Waiting for your answer — open the Human lane');
-    chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
-    titleLine.append(chip);
-  }
   if (task.due_date) {
     // countdown chip stays on the title line (right) — a deadline reads best there
     const { text, urgent } = dueCountdown(task.due_date, t);
@@ -786,19 +765,43 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   }
   main.append(titleLine);
 
-  // subline: project pill + tag chips (smaller, muted) + a tag-edit affordance
   const subline = el('div', 'row-subline');
   if (showProject && task.project_id) {
     const p = state.projects.find(x => x.id === task.project_id);
-    if (p) subline.append(el('span', 'chip project-name', p.name));
+    if (p) subline.append(iconPill('project', p.name, { className: 'project-name' }));
   }
-  const tagsWrap = el('span', 'subline-tags');
-  for (const tag of task.tags ?? []) {
-    const chip = el('button', 'chip tag', `#${tag}`);
-    chip.addEventListener('click', e => { e.stopPropagation(); setTagFilter(tag); });
-    tagsWrap.append(chip);
+  if (task.assignee && task.assignee !== currentActor()) {
+    // assignee pill: person icon + agent name; accent outline while claimed
+    subline.append(iconPill('assignee', task.assignee,
+      { className: 'agent' + (task.status === 'in_progress' ? ' working' : '') }));
+    if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
+      subline.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));
+    }
+    if (task.status === 'review') {
+      const chip = el('button', 'chip review-chip', 'review');
+      chip.setAttribute('aria-label', `Review ${task.assignee}'s report`);
+      chip.addEventListener('click', e => { e.stopPropagation(); openReviewDialog(task); });
+      subline.append(chip);
+    }
   }
-  subline.append(tagsWrap);
+  if (task.status === 'blocked') {
+    // needs-input: the agent is waiting on an answer — jump to the lane
+    const chip = el('button', 'chip blocked-chip', '❓ waiting');
+    chip.title = 'Blocked on a question — answer it in the Human lane';
+    chip.setAttribute('aria-label', 'Waiting for your answer — open the Human lane');
+    chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
+    subline.append(chip);
+  }
+  if (task.vetted === 0) {
+    // amber quarantine chip (agent-security layer 1): agents will not execute
+    // this task. Tapping it is the admin's Vet action — the server 403s
+    // anyone else, and the toast explains.
+    const chip = el('button', 'chip unvetted', '⛨ unvetted');
+    chip.title = 'Created by an untrusted source — agents will not execute it. Tap to vet.';
+    chip.setAttribute('aria-label', 'Unvetted — tap to vet for agent execution');
+    chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
+    subline.append(chip);
+  }
   // attachment count chip: a small 📎 N when the task carries images
   if (task.attachment_count > 0) {
     const chip = el('span', 'chip attach-count', `📎 ${task.attachment_count}`);
@@ -811,13 +814,16 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.setAttribute('aria-label', `${task.comment_count} timeline entr${task.comment_count === 1 ? 'y' : 'ies'}`);
     subline.append(chip);
   }
-  // tag icon: opens the inline tag editor (shared suggest.js field) for quick
-  // add/remove without opening the full drawer
-  const tagEdit = el('button', 'tag-edit', '#');
-  tagEdit.title = 'Add or remove tags';
-  tagEdit.setAttribute('aria-label', 'Edit tags');
-  tagEdit.addEventListener('click', e => { e.stopPropagation(); toggleRowTags(task, row, tagsWrap); });
-  subline.append(tagEdit);
+  // tags are DISPLAY-ONLY on the row now: a single tag icon + count when the
+  // task has any. Tapping it opens the drawer, where tags are edited (bottom).
+  const tagCount = task.tags?.length ?? 0;
+  if (tagCount > 0) {
+    const ind = iconPill('tag', String(tagCount), { className: 'tags-indicator', button: true });
+    ind.title = `${tagCount} tag${tagCount === 1 ? '' : 's'}: ${task.tags.join(', ')} — edit in the drawer`;
+    ind.setAttribute('aria-label', `${tagCount} tag${tagCount === 1 ? '' : 's'} (${task.tags.join(', ')}) — open to edit`);
+    ind.addEventListener('click', e => { e.stopPropagation(); openDetail(task); });
+    subline.append(ind);
+  }
   main.append(subline);
   row.append(main);
 
