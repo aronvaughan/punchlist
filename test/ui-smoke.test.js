@@ -143,6 +143,30 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.match(css, /\.rail-gear\s*\{/);
 });
 
+test('motion: subtle entrance + press feedback, all gated on reduced-motion', async () => {
+  const { get } = makeApp();
+  const css = await (await get('/tokens.css')).text();
+  // keyframes are transform/opacity only (compositor — no CLS)
+  assert.match(css, /@keyframes row-in\b/);
+  assert.match(css, /@keyframes marker-in\b/);
+  assert.match(css, /@keyframes toast-in\b/);
+  // one-shot entrance classes the renderers toggle (list / rail subtree / dialog)
+  assert.match(css, /#list\.anim-in \.task-row\s*\{[^}]*animation:\s*row-in/);
+  assert.match(css, /#rail-projects\.anim-in .* \.rail-project\s*\{[^}]*animation:\s*row-in/);
+  assert.match(css, /#manage-tree\.anim-in \.manage-row\s*\{[^}]*animation:\s*row-in/);
+  assert.match(css, /#toasts > \*\s*\{[^}]*animation:\s*toast-in/);
+  assert.match(css, /\.status-marker\s*\{[^}]*animation:\s*marker-in/);
+  // press feedback + all of the above live UNDER the no-preference guard
+  assert.match(css, /@media \(prefers-reduced-motion: no-preference\)/);
+  assert.match(css, /#new-task-btn:active[^{]*\{[^}]*scale\(/);
+  assert.match(css, /wa-button\[variant="brand"\]:active::part\(base\)\s*\{[^}]*scale\(/);
+
+  // renderers gate entrance behind a one-shot intent flag, not every reload
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /export const animateOnce/);
+  assert.match(views, /anim-in['"]?,\s*animateOnce\.(list|rail|manage)/);
+});
+
 test('CSP permits data: for icons but stays same-origin for scripts', async () => {
   const { get } = makeApp();
   const csp = (await get('/')).headers.get('Content-Security-Policy');

@@ -6,7 +6,7 @@
 // Wordmark shows APP_NAME; CLI-ish surfaces (title, footer) use the lowercase.
 export const APP_NAME = 'Punchlist';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
-import { renderRail, renderMain, openNewTask } from '/views.js';
+import { renderRail, renderMain, openNewTask, animateOnce } from '/views.js';
 import { closeDetail } from '/detail.js';
 import { collapseInline } from '/inline.js';
 
@@ -219,7 +219,10 @@ function onRoute() {
   const changed = next.view !== state.route.view || next.projectId !== state.route.projectId ||
     next.tag !== state.route.tag;
   state.route = next;
-  if (changed) { state.tag = null; state.q = ''; document.getElementById('search').value = ''; }
+  if (changed) {
+    state.tag = null; state.q = ''; document.getElementById('search').value = '';
+    animateOnce.list = true; // entering a view: rows slide in once
+  }
   closeNav();
   closeDetail();
   reload();
@@ -295,6 +298,7 @@ quickadd.addEventListener('keydown', async e => {
   quickadd.value = '';
   try {
     await api('POST', '/tasks/quickadd', { text });
+    animateOnce.list = true; // the new task slides into the list
     await reload();
   } catch (err) {
     quickadd.value = text; // don't lose the input
