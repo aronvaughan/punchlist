@@ -2,7 +2,8 @@
 // the list re-renders in the background. Titles/labels via textContent only;
 // notes preview goes through md.js (escaped).
 import Sortable from '/vendor/sortable.core.esm.js';
-import { api, state, reload, toast, todayISO, pickWhen, currentActor } from '/app.js';
+import { api, state, reload, toast, todayISO, pickWhen, currentActor,
+  uploadAttachment, attachmentObjectURL } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { dueLine } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
@@ -105,6 +106,7 @@ function renderDrawer() {
   if (createMode) {
     body.append(createActions());
   } else {
+    body.append(attachmentsEditor(task));
     const rep = reportView();
     if (rep) body.append(rep);
     body.append(actions());
@@ -209,6 +211,148 @@ function reportView() {
   bodyEl.innerHTML = mdToHtml(current.report); // mdToHtml escapes ALL input
   wrap.append(bodyEl);
   return wrap;
+}
+
+// ---- image attachments (jpg/png): upload control + thumbnail cards ----
+const ACCEPT = 'image/png,image/jpeg';
+const objectUrls = new Set(); // revoked on each repaint to avoid leaks
+
+// current retention rule → the selector value the card should show
+function retentionValue(att) {
+  if (att.expires_at) return 'expires';
+  return att.retention === 'on_done' ? 'on_done' : 'keep';
+}
+
+function attachmentsEditor(task) {
+  const wrap = el('div', 'attachments');
+  wrap.append(el('label', null, 'Images'));
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = ACCEPT;
+  input.multiple = true;
+  input.className = 'att-input';
+  input.id = 'att-input';
+
+  const trigger = el('button', 'att-add', '＋ Attach image');
+  trigger.type = 'button';
+  trigger.addEventListener('click', () => input.click());
+
+  const grid = el('div', 'att-grid');
+  const drop = el('div', 'att-drop');
+  drop.append(trigger, input, grid);
+
+  const refresh = async () => {
+    for (const u of objectUrls) URL.revokeObjectURL(u);
+    objectUrls.clear();
+    grid.replaceChildren();
+    let items;
+    try { items = (await api('GET', `/tasks/${task.id}/attachments`)).items; }
+    catch (e) { grid.append(el('div', 'att-empty', `Couldn't load images: ${e.message}`)); return; }
+    if (!items.length) { grid.append(el('div', 'att-empty', 'No images yet.')); return; }
+    for (const att of items) grid.append(attachmentCard(att, refresh));
+  };
+
+  const doUpload = async files => {
+    const imgs = [...files].filter(f => f.type === 'image/png' || f.type === 'image/jpeg');
+    if (!imgs.length) { if (files.length) toast('Only PNG and JPEG images are supported'); return; }
+    for (const f of imgs) {
+      try { await uploadAttachment(task.id, f); }
+      catch (e) { toast(`Upload failed: ${e.message}`); }
+    }
+    await refresh();
+    reload(); // refresh the row 📎 count in the background
+  };
+
+  input.addEventListener('change', () => { if (input.files.length) doUpload(input.files); input.value = ''; });
+  // drag-drop onto the drop zone also uploads
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('drag-over');
+    if (e.dataTransfer?.files?.length) doUpload(e.dataTransfer.files);
+  });
+
+  wrap.append(drop);
+  refresh();
+  return wrap;
+}
+
+function attachmentCard(att, refresh) {
+  const card = el('div', 'att-card');
+
+  // thumbnail: lazy — fetch the bytes (with the token) only when scrolled near
+  const thumb = el('div', 'att-thumb');
+  const img = document.createElement('img');
+  img.alt = att.filename;
+  img.loading = 'lazy';
+  thumb.append(img);
+  const io = new IntersectionObserver(entries => {
+    if (!entries.some(en => en.isIntersecting)) return;
+    io.disconnect();
+    attachmentObjectURL(att.id)
+      .then(url => { objectUrls.add(url); img.src = url; })
+      .catch(() => thumb.classList.add('att-broken'));
+  }, { root: null, rootMargin: '200px' });
+  io.observe(thumb);
+  // open full-size in a new tab (blob URL) on click
+  thumb.addEventListener('click', async () => {
+    try { window.open(await attachmentObjectURL(att.id), '_blank', 'noopener'); }
+    catch (e) { toast(`Open failed: ${e.message}`); }
+  });
+
+  const meta = el('div', 'att-meta');
+  meta.append(el('div', 'att-name', att.filename));
+
+  // retention selector: Keep | Delete when done | Expire…(date)
+  const sel = document.createElement('select');
+  sel.className = 'att-retention';
+  for (const [v, label] of [['keep', 'Keep'], ['on_done', 'Delete when done'], ['expires', 'Expire…']]) {
+    const o = el('option', null, label);
+    o.value = v;
+    sel.append(o);
+  }
+  sel.value = retentionValue(att);
+
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  dateInput.className = 'att-expires';
+  dateInput.value = att.expires_at || '';
+  dateInput.hidden = sel.value !== 'expires';
+
+  sel.addEventListener('change', async () => {
+    dateInput.hidden = sel.value !== 'expires';
+    if (sel.value === 'keep') await patchAttachment(att.id, { retention: 'keep', expires_at: null });
+    else if (sel.value === 'on_done') await patchAttachment(att.id, { retention: 'on_done', expires_at: null });
+    else if (sel.value === 'expires' && dateInput.value) {
+      await patchAttachment(att.id, { retention: 'keep', expires_at: dateInput.value });
+    }
+  });
+  dateInput.addEventListener('change', async () => {
+    if (dateInput.value) await patchAttachment(att.id, { retention: 'keep', expires_at: dateInput.value });
+  });
+
+  const retentionRow = el('div', 'att-retention-row');
+  retentionRow.append(sel, dateInput);
+  meta.append(retentionRow);
+
+  const del = el('button', 'att-del', '✕');
+  del.type = 'button';
+  del.title = 'Delete image';
+  del.setAttribute('aria-label', `Delete ${att.filename}`);
+  del.addEventListener('click', async () => {
+    try { await api('DELETE', `/attachments/${att.id}`); await refresh(); reload(); }
+    catch (e) { toast(`Delete failed: ${e.message}`); }
+  });
+
+  card.append(thumb, meta, del);
+  return card;
+}
+
+async function patchAttachment(id, body) {
+  try { await api('PATCH', `/attachments/${id}`, body); }
+  catch (e) { toast(`Save failed: ${e.message}`); }
 }
 
 function tagsEditor() {

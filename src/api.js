@@ -2,10 +2,11 @@
 // The API is the ONLY write path to the database (invariant).
 // tokens: {actorName: token}; server sets created_by from the token, always.
 import { Hono } from 'hono';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ulid } from './db.js';
+import { sniffMime, normalizeMime, filePathFor, sanitizeFilename } from './media.js';
 import { taskWhere, taskCount, encodeCursor, decodeCursor } from './views.js';
 import { between, renormalize } from './rank.js';
 import { nextDue, spawn } from './recur.js';
@@ -17,7 +18,9 @@ const VERSION = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8'))
 // data: in img-src/connect-src: Web Awesome's system icon library ships its
 // SVGs as data: URIs and wa-icon fetch()es them at runtime — same-origin-only
 // otherwise, no remote hosts allowed.
-const CSP = "default-src 'self'; script-src 'self'; connect-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'";
+// blob: in img-src: attachment thumbnails are fetched WITH the bearer token
+// (an <img src> can't send Authorization), then shown via URL.createObjectURL.
+const CSP = "default-src 'self'; script-src 'self'; connect-src 'self' data:; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'";
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
@@ -112,8 +115,13 @@ function sectionOf(task, today) {
   return 3;
 }
 
-export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
+export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
+  // attachments: bytes live as their own files in the media dir; the task
+  // references the row. Cap is separate from (and far larger than) the JSON
+  // body cap — the upload route does NOT go through readJson.
+  const MEDIA_DIR = mediaDir || process.env.PUNCHLIST_MEDIA_DIR || join(ROOT_DIR, 'data', 'media');
+  const MAX_UPLOAD = maxUpload || Number(process.env.PUNCHLIST_MAX_UPLOAD_BYTES) || 10485760;
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
   // agent-security layer 1: tasks created by an untrusted actor are born
@@ -132,9 +140,11 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
     ).all(task.id).map(r => r.name);
     const steps = db.prepare(
       'SELECT id, title, done, rank FROM steps WHERE task_id = ? ORDER BY rank, id').all(task.id);
+    const attachment_count = db.prepare(
+      'SELECT COUNT(*) c FROM attachments WHERE task_id = ?').get(task.id).c;
     const { recur, ...rest } = task;
     for (const k of Object.keys(rest)) if (k.startsWith('__k')) delete rest[k];
-    return { ...rest, recur: recur ? JSON.parse(recur) : null, tags, steps };
+    return { ...rest, recur: recur ? JSON.parse(recur) : null, tags, steps, attachment_count };
   }
 
   function setTags(taskId, names) {
@@ -653,6 +663,122 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn }) {
       .run(c.req.param('sid'), c.req.param('id'));
     if (changes === 0) throw new ApiError(404, 'step not found');
     return c.json({ ok: true });
+  });
+
+  // ---- attachments (image files: jpg/png only) ----
+  // Bytes live as their own real file in the media dir named <id>.<ext>; the
+  // row here is the reference. The on-disk name is ALWAYS derived from the id +
+  // validated mime — the client filename is display-only (never a disk path).
+  const getAttachment = id => db.prepare('SELECT * FROM attachments WHERE id = ?').get(id);
+  const ATT_COLS = 'id, task_id, filename, mime, bytes, retention, expires_at, created_by, created_at';
+
+  // Raw-body upload (no multipart dep): the image bytes are the whole body,
+  // Content-Type declares the mime (a hint — the magic-byte sniff is
+  // authoritative), X-Filename is the display name, and ?retention= /
+  // ?expires_at= carry the retention rule. Deliberately NOT via readJson: the
+  // upload cap (MAX_UPLOAD, default 10MB) is far larger than the 256KB JSON cap.
+  app.post('/api/v1/tasks/:id/attachments', async c => {
+    const task = getTask(c.req.param('id'));
+    if (!task) throw new ApiError(404, 'task not found');
+    // size gate BEFORE reading the body when a length is declared
+    const declared = Number(c.req.header('Content-Length'));
+    if (Number.isFinite(declared) && declared > MAX_UPLOAD) {
+      throw new ApiError(413, `file exceeds the ${MAX_UPLOAD}-byte upload cap`);
+    }
+    const buf = Buffer.from(await c.req.arrayBuffer());
+    if (buf.length === 0) throw new ApiError(400, 'empty body — send the raw image bytes');
+    if (buf.length > MAX_UPLOAD) throw new ApiError(413, `file exceeds the ${MAX_UPLOAD}-byte upload cap`);
+    const sniffed = sniffMime(buf);
+    if (!sniffed) throw new ApiError(415, 'unsupported file type — only JPEG and PNG are allowed');
+    const declaredMime = normalizeMime(c.req.header('Content-Type'));
+    if (declaredMime && declaredMime !== sniffed) {
+      throw new ApiError(415, `declared type does not match the file's actual type (${sniffed})`);
+    }
+    const q = c.req.query();
+    const retention = q.retention ?? 'keep';
+    if (!['keep', 'on_done'].includes(retention)) {
+      throw new ApiError(400, "retention must be 'keep' or 'on_done'");
+    }
+    let expires_at = null;
+    if (q.expires_at !== undefined && q.expires_at !== '') {
+      if (!isDate(q.expires_at)) throw new ApiError(400, 'expires_at must be YYYY-MM-DD');
+      expires_at = q.expires_at;
+    }
+    const id = ulid();
+    const filename = sanitizeFilename(c.req.header('X-Filename'), sniffed);
+    const now = new Date().toISOString();
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    writeFileSync(filePathFor(MEDIA_DIR, id, sniffed), buf);
+    db.prepare(
+      `INSERT INTO attachments (${ATT_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, task.id, filename, sniffed, buf.length, retention, expires_at, c.get('actor'), now);
+    return c.json(getAttachment(id), 201);
+  });
+
+  app.get('/api/v1/tasks/:id/attachments', c => {
+    const task = getTask(c.req.param('id'));
+    if (!task) throw new ApiError(404, 'task not found');
+    const items = db.prepare(
+      `SELECT ${ATT_COLS} FROM attachments WHERE task_id = ? ORDER BY created_at, id`).all(task.id);
+    return c.json({ items });
+  });
+
+  // Stream the bytes inline. Same-origin, auth'd (the whole /api/v1/* tree is);
+  // nosniff so the browser honours our Content-Type and won't re-interpret it.
+  app.get('/api/v1/attachments/:id', c => {
+    const row = getAttachment(c.req.param('id'));
+    if (!row) throw new ApiError(404, 'attachment not found');
+    const path = filePathFor(MEDIA_DIR, row.id, row.mime);
+    if (!existsSync(path)) throw new ApiError(404, 'attachment file is gone');
+    const body = readFileSync(path);
+    return c.body(body, 200, {
+      'Content-Type': row.mime,
+      'Content-Disposition': `inline; filename="${row.filename.replace(/["\\]/g, '')}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': CSP,
+      'Cache-Control': 'private, max-age=3600',
+      'Content-Length': String(body.length),
+    });
+  });
+
+  app.patch('/api/v1/attachments/:id', async c => {
+    const row = getAttachment(c.req.param('id'));
+    if (!row) throw new ApiError(404, 'attachment not found');
+    const actor = c.get('actor');
+    if (actor !== HUMAN && actor !== row.created_by) {
+      throw new ApiError(403, 'only the uploader or the admin can change an attachment');
+    }
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) {
+      if (!['retention', 'expires_at'].includes(k)) throw new ApiError(400, `unknown field: ${k}`);
+    }
+    const retention = body.retention === undefined ? row.retention : body.retention;
+    if (!['keep', 'on_done'].includes(retention)) {
+      throw new ApiError(400, "retention must be 'keep' or 'on_done'");
+    }
+    let expires_at = row.expires_at;
+    if (body.expires_at !== undefined) {
+      if (body.expires_at === null || body.expires_at === '') expires_at = null;
+      else if (!isDate(body.expires_at)) throw new ApiError(400, 'expires_at must be YYYY-MM-DD');
+      else expires_at = body.expires_at;
+    }
+    db.prepare('UPDATE attachments SET retention = ?, expires_at = ? WHERE id = ?')
+      .run(retention, expires_at, row.id);
+    return c.json(getAttachment(row.id));
+  });
+
+  app.delete('/api/v1/attachments/:id', c => {
+    const row = getAttachment(c.req.param('id'));
+    if (!row) throw new ApiError(404, 'attachment not found');
+    const actor = c.get('actor');
+    if (actor !== HUMAN && actor !== row.created_by) {
+      throw new ApiError(403, 'only the uploader or the admin can delete an attachment');
+    }
+    return tx(db, () => {
+      db.prepare('DELETE FROM attachments WHERE id = ?').run(row.id);
+      rmSync(filePathFor(MEDIA_DIR, row.id, row.mime), { force: true });
+      return c.json({ ok: true });
+    });
   });
 
   // ---- counts (nav badges): one call, view WHEREs from views.js ----

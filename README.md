@@ -143,6 +143,18 @@ amber "unvetted" shield chip (tap to vet), the Agents view groups them
 under an explicit "agents will not execute" heading, and screening-flagged
 tasks park in Review with their reasons.
 
+### Attach images
+
+Drop a screenshot onto a task, or use **Attach image** in the drawer —
+JPEG and PNG only, validated by magic bytes (a renamed file is rejected),
+each capped at 10MB. Thumbnails lazy-load in the drawer and rows show a
+small 📎 count. Bytes live as their own files in a separate media dir
+(`PUNCHLIST_MEDIA_DIR`, default `<data>/media`), not in the database. Each
+image carries a retention rule — **Keep** (default), **Delete when done**,
+or **Expire on a date** — and a daily reaper (`scripts/reap-media.sh`)
+deletes files whose rule has fired. See
+[`docs/2026-08-26-attachments.md`](docs/2026-08-26-attachments.md).
+
 ### Make it yours
 
 Seventeen themes — light and dark families, grouped and previewed in the
@@ -226,8 +238,8 @@ as native tools in every MCP-speaking client — pick per agent, they coexist.
 ## Docs
 
 Design records live in [`docs/`](docs/) — product analysis, PRD,
-architecture, module design (the API contract), the delegation design, and
-the agent security design.
+architecture, module design (the API contract), the delegation design, the
+agent security design, and the image-attachments design.
 
 ## License
 

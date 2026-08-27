@@ -11,6 +11,9 @@ import { buildApp } from './api.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+// attachment bytes live here, each as its own file (<id>.<ext>). Separate dir
+// so backups/retention can treat blobs apart from the sqlite db.
+const MEDIA_DIR = process.env.PUNCHLIST_MEDIA_DIR || join(DATA_DIR, 'media');
 const PORT = Number(process.env.PUNCHLIST_PORT || 8600);
 const HOST = process.env.PUNCHLIST_HOST || '127.0.0.1';
 
@@ -124,6 +127,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(MEDIA_DIR, { recursive: true });
   migrateLegacyDb(DATA_DIR);
   const { db, migrate } = open(join(DATA_DIR, 'punchlist.db'));
   try {
@@ -132,7 +136,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error(`punchlist: FATAL: ${err.name}: ${err.message}`);
     process.exit(1);
   }
-  const app = buildApp({ db, tokens, admin,
+  const app = buildApp({ db, tokens, admin, mediaDir: MEDIA_DIR,
     untrusted: parseUntrusted(process.env.PUNCHLIST_UNTRUSTED_ACTORS) });
   const server = serve(app, { host: HOST, port: PORT });
   server.on('error', err => {
