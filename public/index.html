@@ -52,6 +52,12 @@
     <div id="detail-body"></div>
   </wa-drawer>
 
+  <!-- rendered-document viewer: fetches the raw text and renders it client-side
+       via md.js (XSS-safe). Nested over the detail drawer. -->
+  <wa-drawer id="doc-viewer" label="Document" placement="end">
+    <div id="doc-viewer-body" class="doc-viewer-body"></div>
+  </wa-drawer>
+
   <wa-dialog id="token-dialog" label="API token" without-header-actions>
     <p>Enter your punchlist API token. It is stored only in this browser.</p>
     <input id="token-input" type="password" autocomplete="off" aria-label="API token">

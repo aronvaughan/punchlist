@@ -171,11 +171,23 @@ export async function api(method, path, body) {
 // ---- attachment helpers: uploads send RAW bytes (not JSON), and the image
 // bytes are fetched WITH the bearer token then shown via an object URL — an
 // <img src> can't carry Authorization, and the GET is auth'd like the rest. ----
+// The Content-Type the server sees decides the upload path: an image mime takes
+// the magic-byte path, a text mime the doc path. Browsers often report an empty
+// or generic file.type for .md, so derive the mime from the extension when the
+// file is a document — otherwise the server can't tell it's meant as a doc.
+export function attachmentMime(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'md' || ext === 'markdown') return 'text/markdown';
+  if (ext === 'txt') return 'text/plain';
+  if (file.type === 'image/png' || file.type === 'image/jpeg') return file.type;
+  return file.type || 'application/octet-stream';
+}
+
 export async function uploadAttachment(taskId, file, { retention = 'keep', expiresAt = null } = {}) {
   const params = new URLSearchParams({ retention });
   if (expiresAt) params.set('expires_at', expiresAt);
   for (let attempt = 0; ; attempt++) {
-    const headers = { 'Content-Type': file.type, 'X-Filename': file.name };
+    const headers = { 'Content-Type': attachmentMime(file), 'X-Filename': file.name };
     const tok = localStorage.getItem(TOKEN_KEY);
     if (tok) headers.Authorization = `Bearer ${tok}`;
     const res = await fetch(`/api/v1/tasks/${taskId}/attachments?${params}`,
@@ -187,6 +199,15 @@ export async function uploadAttachment(taskId, file, { retention = 'keep', expir
   }
 }
 
+// Link a LOCAL document (kind='link'): no bytes, just a path the server
+// re-validates against its allowed roots. Trusted actors only + roots must be
+// configured, else the server 403s.
+export async function linkDoc(taskId, path, title) {
+  const body = { path };
+  if (title) body.title = title;
+  return api('POST', `/tasks/${taskId}/attachments/link`, body);
+}
+
 // Fetch an attachment's bytes as an object URL (caller revokes when done).
 export async function attachmentObjectURL(id) {
   const headers = {};
@@ -195,6 +216,28 @@ export async function attachmentObjectURL(id) {
   const res = await fetch(`/api/v1/attachments/${id}`, { headers });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return URL.createObjectURL(await res.blob());
+}
+
+// Fetch a document attachment's RAW text (with the bearer token) so the client
+// can render it itself via md.js — the server's rendering is never trusted.
+export async function attachmentText(id) {
+  const headers = {};
+  const tok = localStorage.getItem(TOKEN_KEY);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  const res = await fetch(`/api/v1/attachments/${id}`, { headers });
+  if (!res.ok) { const e = new Error(`HTTP ${res.status}`); e.status = res.status; throw e; }
+  return res.text();
+}
+
+// Small client-config probe: whether local-doc linking is available and which
+// actors are untrusted (their uploads render only behind an explicit confirm).
+// Cached for the session — the config is static per server process.
+let _configCache = null;
+export async function getConfig() {
+  if (_configCache) return _configCache;
+  try { _configCache = await api('GET', '/config'); }
+  catch { _configCache = { doc_linking: false, untrusted_actors: [] }; }
+  return _configCache;
 }
 
 // optimistic-update escape hatch: the DOM already changed (drag, checkbox);

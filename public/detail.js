@@ -3,7 +3,7 @@
 // notes preview goes through md.js (escaped).
 import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, toast, todayISO, pickWhen, currentActor,
-  uploadAttachment, attachmentObjectURL } from '/app.js';
+  uploadAttachment, attachmentObjectURL, attachmentText, linkDoc, getConfig } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
 import { dueLine } from '/dates.js';
@@ -352,9 +352,14 @@ function reportView() {
   return wrap;
 }
 
-// ---- image attachments (jpg/png): upload control + thumbnail cards ----
-const ACCEPT = 'image/png,image/jpeg';
+// ---- attachments: images (jpg/png) + documents (md/txt uploads + local links) ----
+const ACCEPT = '.md,.txt,image/png,image/jpeg';
 const objectUrls = new Set(); // revoked on each repaint to avoid leaks
+
+const isImageAtt = att => att.mime === 'image/png' || att.mime === 'image/jpeg';
+const isDocAtt = att => att.mime === 'text/markdown' || att.mime === 'text/plain';
+const isDropDoc = f => /\.(md|markdown|txt)$/i.test(f.name);
+const isDropImage = f => f.type === 'image/png' || f.type === 'image/jpeg';
 
 // current retention rule → the selector value the card should show
 function retentionValue(att) {
@@ -364,7 +369,7 @@ function retentionValue(att) {
 
 function attachmentsEditor(task) {
   const wrap = el('div', 'attachments');
-  wrap.append(el('label', null, 'Images'));
+  wrap.append(el('label', null, 'Attachments'));
 
   const input = document.createElement('input');
   input.type = 'file';
@@ -374,35 +379,56 @@ function attachmentsEditor(task) {
   input.id = 'att-input';
 
   const trigger = el('button', 'att-add');
-  trigger.append(icon('plus', { size: 16 }), el('span', null, 'Attach image'));
+  trigger.append(icon('plus', { size: 16 }), el('span', null, 'Attach file'));
   trigger.type = 'button';
   trigger.addEventListener('click', () => input.click());
 
+  // "Link a doc…" — only when the server has document roots configured
+  const linkBtn = el('button', 'att-add att-link-add');
+  linkBtn.append(icon('link', { size: 16 }), el('span', null, 'Link a doc…'));
+  linkBtn.type = 'button';
+  linkBtn.hidden = true;
+  getConfig().then(cfg => { linkBtn.hidden = !cfg.doc_linking; });
+
   const grid = el('div', 'att-grid');
   const drop = el('div', 'att-drop');
-  drop.append(trigger, input, grid);
+  const actions = el('div', 'att-actions');
+  actions.append(trigger, linkBtn);
+  drop.append(actions, input, grid);
 
   const refresh = async () => {
     for (const u of objectUrls) URL.revokeObjectURL(u);
     objectUrls.clear();
     grid.replaceChildren();
+    // learn which actors are untrusted (gates doc rendering) once per refresh
+    try { _untrustedActors = (await getConfig()).untrusted_actors || []; } catch { /* keep prior */ }
     let items;
     try { items = (await api('GET', `/tasks/${task.id}/attachments`)).items; }
-    catch (e) { grid.append(el('div', 'att-empty', `Couldn't load images: ${e.message}`)); return; }
-    if (!items.length) { grid.append(el('div', 'att-empty', 'No images yet.')); return; }
-    for (const att of items) grid.append(attachmentCard(att, refresh));
+    catch (e) { grid.append(el('div', 'att-empty', `Couldn't load attachments: ${e.message}`)); return; }
+    if (!items.length) { grid.append(el('div', 'att-empty', 'No attachments yet.')); return; }
+    for (const att of items) {
+      grid.append(isDocAtt(att) ? docRow(att, refresh) : attachmentCard(att, refresh));
+    }
   };
 
   const doUpload = async files => {
-    const imgs = [...files].filter(f => f.type === 'image/png' || f.type === 'image/jpeg');
-    if (!imgs.length) { if (files.length) toast('Only PNG and JPEG images are supported'); return; }
-    for (const f of imgs) {
+    const ok = [...files].filter(f => isDropImage(f) || isDropDoc(f));
+    if (!ok.length) { if (files.length) toast('Only images (PNG/JPEG) and documents (.md/.txt) are supported'); return; }
+    for (const f of ok) {
       try { await uploadAttachment(task.id, f); }
       catch (e) { toast(`Upload failed: ${e.message}`); }
     }
     await refresh();
     reload(); // refresh the row attachment count in the background
   };
+
+  linkBtn.addEventListener('click', async () => {
+    const path = prompt('Absolute path to a local .md or .txt document:');
+    if (!path || !path.trim()) return;
+    const title = prompt('Title (optional):') || undefined;
+    try { await linkDoc(task.id, path.trim(), title && title.trim()); await refresh(); reload(); }
+    catch (e) { toast(`Link failed: ${e.message}`); }
+  });
 
   input.addEventListener('change', () => { if (input.files.length) doUpload(input.files); input.value = ''; });
   // drag-drop onto the drop zone also uploads
@@ -417,6 +443,129 @@ function attachmentsEditor(task) {
   wrap.append(drop);
   refresh();
   return wrap;
+}
+
+// ---- document attachment row: file-text icon + name + View; uploads carry a
+// retention selector, links carry a "linked" badge + the path (no retention). ----
+function docRow(att, refresh) {
+  const row = el('div', 'att-doc');
+  const isLink = att.kind === 'link';
+
+  const head = el('div', 'att-doc-head');
+  head.append(icon('file-text', { size: 18, cls: 'att-doc-icon' }));
+  const nameCol = el('div', 'att-doc-namecol');
+  nameCol.append(el('div', 'att-doc-name', att.filename));
+  if (isLink) {
+    const badge = el('span', 'att-linked-badge');
+    badge.append(icon('link', { size: 12 }), el('span', null, 'linked'));
+    nameCol.append(badge);
+    if (att.path) nameCol.append(el('div', 'att-doc-path', att.path));
+  }
+  head.append(nameCol);
+
+  const view = el('button', 'att-doc-view');
+  const untrusted = !isLink && isUntrustedActor(att.created_by);
+  view.append(icon('eye', { size: 15 }), el('span', null, untrusted ? 'View (untrusted source)' : 'View'));
+  view.type = 'button';
+  if (untrusted) view.classList.add('att-doc-untrusted');
+  view.addEventListener('click', () => openDocViewer(att, { untrusted }));
+  head.append(view);
+  row.append(head);
+
+  // retention selector for uploaded docs only (links carry no bytes / retention)
+  if (!isLink) row.append(docRetentionRow(att));
+
+  const del = el('button', 'att-del att-doc-del');
+  del.append(icon('trash', { size: 16 }));
+  del.type = 'button';
+  del.title = isLink ? 'Remove link' : 'Delete document';
+  del.setAttribute('aria-label', `${isLink ? 'Remove link to' : 'Delete'} ${att.filename}`);
+  del.addEventListener('click', async () => {
+    try { await api('DELETE', `/attachments/${att.id}`); await refresh(); reload(); }
+    catch (e) { toast(`Delete failed: ${e.message}`); }
+  });
+  row.append(del);
+  return row;
+}
+
+function docRetentionRow(att) {
+  const sel = document.createElement('select');
+  sel.className = 'att-retention';
+  for (const [v, label] of [['keep', 'Keep'], ['on_done', 'Delete when done'], ['expires', 'Expire…']]) {
+    const o = el('option', null, label); o.value = v; sel.append(o);
+  }
+  sel.value = retentionValue(att);
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  dateInput.className = 'att-expires';
+  dateInput.value = att.expires_at || '';
+  dateInput.hidden = sel.value !== 'expires';
+  sel.addEventListener('change', async () => {
+    dateInput.hidden = sel.value !== 'expires';
+    if (sel.value === 'keep') await patchAttachment(att.id, { retention: 'keep', expires_at: null });
+    else if (sel.value === 'on_done') await patchAttachment(att.id, { retention: 'on_done', expires_at: null });
+    else if (sel.value === 'expires' && dateInput.value) {
+      await patchAttachment(att.id, { retention: 'keep', expires_at: dateInput.value });
+    }
+  });
+  dateInput.addEventListener('change', async () => {
+    if (dateInput.value) await patchAttachment(att.id, { retention: 'keep', expires_at: dateInput.value });
+  });
+  const rr = el('div', 'att-retention-row');
+  rr.append(sel, dateInput);
+  return rr;
+}
+
+// Is this actor one the server flags as untrusted? (docs they upload render only
+// behind an explicit confirm — the same quarantine model as untrusted tasks.)
+// Populated lazily from /config on the first attachments refresh — NOT at module
+// load, which would call getConfig() before app.js finishes initializing.
+let _untrustedActors = [];
+function isUntrustedActor(actor) { return !!actor && _untrustedActors.includes(actor); }
+
+// ---- rendered-document viewer (nested wa-drawer) ----
+function openDocViewer(att, { untrusted = false } = {}) {
+  const drawerEl = document.getElementById('doc-viewer');
+  const body = document.getElementById('doc-viewer-body');
+  drawerEl.label = att.filename || 'Document';
+  body.replaceChildren();
+
+  const render = async () => {
+    body.replaceChildren();
+    body.append(el('div', 'doc-loading', 'Loading…'));
+    let text;
+    try { text = await attachmentText(att.id); }
+    catch (e) { body.replaceChildren(el('div', 'doc-error', `Couldn't load: ${e.message}`)); return; }
+    body.replaceChildren();
+    const doc = el('div', 'doc-rendered');
+    if (att.mime === 'text/plain') {
+      const pre = document.createElement('pre');
+      pre.className = 'doc-plain';
+      pre.textContent = text; // escaped by textContent — preformatted plain text
+      doc.append(pre);
+    } else {
+      // md.js escapes ALL input; this is the only innerHTML sink here and is safe
+      doc.innerHTML = mdToHtml(text);
+    }
+    body.append(doc);
+  };
+
+  if (untrusted) {
+    const gate = el('div', 'doc-gate');
+    gate.append(icon('shield-warning', { size: 32, cls: 'doc-gate-icon' }));
+    gate.append(el('p', 'doc-gate-msg',
+      `This document was uploaded by "${att.created_by}", an untrusted source. ` +
+      `Only view it if you trust its contents.`));
+    const go = el('button', 'doc-gate-btn');
+    go.type = 'button';
+    go.append(el('span', null, 'View anyway'));
+    go.addEventListener('click', render);
+    gate.append(go);
+    body.append(gate);
+  } else {
+    render();
+  }
+  drawerEl.open = true;
 }
 
 function attachmentCard(att, refresh) {

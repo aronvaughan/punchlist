@@ -2,12 +2,13 @@
 // The API is the ONLY write path to the database (invariant).
 // tokens: {actorName: token}; server sets created_by from the token, always.
 import { Hono } from 'hono';
-import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join, normalize, extname, dirname } from 'node:path';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
+import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { ulid } from './db.js';
-import { sniffMime, normalizeMime, filePathFor, sanitizeFilename } from './media.js';
+import { sniffMime, normalizeMime, normalizeDocMime, docMimeForExt, isDocMime, isUtf8Text,
+  filePathFor, sanitizeFilename } from './media.js';
 import { taskWhere, taskCount, encodeCursor, decodeCursor } from './views.js';
 import { between, renormalize } from './rank.js';
 import { nextDue, spawn } from './recur.js';
@@ -150,6 +151,29 @@ function validateTaskBody(body, { partial }) {
   }
 }
 
+// ---- local-document link roots (migration 010) ----
+// Parse PUNCHLIST_DOC_ROOTS (colon-separated absolute dirs) into a list of
+// canonical realpaths. Non-absolute or non-existent entries are dropped (a root
+// that isn't there can't contain anything); a caller may also pass an array.
+export function resolveDocRoots(raw) {
+  const parts = Array.isArray(raw) ? raw : String(raw || '').split(':');
+  const roots = [];
+  for (const p of parts.map(s => s.trim()).filter(Boolean)) {
+    if (!isAbsolute(p)) continue;
+    try {
+      const real = realpathSync(p);
+      if (statSync(real).isDirectory() && !roots.includes(real)) roots.push(real);
+    } catch { /* missing root — skip */ }
+  }
+  return roots;
+}
+
+// True when `real` (already a realpath) is one of the roots or lives beneath it.
+// The `+ sep` guard stops /srv/docs-secret from matching a /srv/docs root.
+export function pathInsideRoots(real, roots) {
+  return roots.some(root => real === root || real.startsWith(root + sep));
+}
+
 // section key must mirror views.js SECTION
 function sectionOf(task, today) {
   if (task.when_type === 'date') return task.when_date <= today ? 0 : 1;
@@ -157,13 +181,23 @@ function sectionOf(task, today) {
   return 3;
 }
 
-export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload }) {
+export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
+    maxDoc, docRoots }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
   // references the row. Cap is separate from (and far larger than) the JSON
   // body cap — the upload route does NOT go through readJson.
   const MEDIA_DIR = mediaDir || process.env.PUNCHLIST_MEDIA_DIR || join(ROOT_DIR, 'data', 'media');
   const MAX_UPLOAD = maxUpload || Number(process.env.PUNCHLIST_MAX_UPLOAD_BYTES) || 10485760;
+  // Document (.md/.txt) uploads have their own, smaller cap — a text doc has no
+  // business being 10MB, and keeping it separate documents the intent.
+  const MAX_DOC = maxDoc || Number(process.env.PUNCHLIST_MAX_DOC_BYTES) || 2097152;
+  // Local-document LINK roots: colon-separated absolute dirs a linked file must
+  // resolve inside. Unset/empty → linking is DISABLED (the link route 403s and
+  // the config probe reports it off), keeping public instances self-contained.
+  // Each root is canonicalized (realpath) once at boot so symlink containment
+  // checks compare real path against real path.
+  const DOC_ROOTS = resolveDocRoots(docRoots ?? process.env.PUNCHLIST_DOC_ROOTS);
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
   // agent-security layer 1: tasks created by an untrusted actor are born
@@ -1004,35 +1038,64 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return c.json({ ok: true });
   });
 
-  // ---- attachments (image files: jpg/png only) ----
-  // Bytes live as their own real file in the media dir named <id>.<ext>; the
-  // row here is the reference. The on-disk name is ALWAYS derived from the id +
-  // validated mime — the client filename is display-only (never a disk path).
+  // ---- attachments (image files jpg/png + document files md/txt + doc links) ----
+  // Uploaded bytes (images and docs) live as their own real file in the media
+  // dir named <id>.<ext>; a LINK stores no bytes and references a local file on
+  // disk. The row here is the reference. For uploads the on-disk name is ALWAYS
+  // derived from the id + validated mime — the client filename is display-only
+  // (never a disk path).
   const getAttachment = id => db.prepare('SELECT * FROM attachments WHERE id = ?').get(id);
-  const ATT_COLS = 'id, task_id, filename, mime, bytes, retention, expires_at, created_by, created_at';
+  const ATT_COLS = 'id, task_id, filename, mime, bytes, retention, expires_at, created_by, created_at, kind, path';
 
-  // Raw-body upload (no multipart dep): the image bytes are the whole body,
-  // Content-Type declares the mime (a hint — the magic-byte sniff is
-  // authoritative), X-Filename is the display name, and ?retention= /
-  // ?expires_at= carry the retention rule. Deliberately NOT via readJson: the
-  // upload cap (MAX_UPLOAD, default 10MB) is far larger than the 256KB JSON cap.
+  // Content-Type for a stored/linked document mime (adds charset for text).
+  const docContentType = mime => `${mime}; charset=utf-8`;
+
+  // Raw-body upload (no multipart dep): the bytes are the whole body,
+  // Content-Type declares the mime, X-Filename is the display name, and
+  // ?retention= / ?expires_at= carry the retention rule. Deliberately NOT via
+  // readJson: the caps (images MAX_UPLOAD default 10MB, docs MAX_DOC default
+  // 2MB) are far larger than the 256KB JSON cap.
+  //
+  // Two file families:
+  //   images (.jpg/.png) — the magic-byte sniff is authoritative; a declared
+  //     image mime that disagrees, or an unrecognized type, is 415.
+  //   docs (.md/.txt) — text has no signature, so the DECLARED text mime picks
+  //     this path and the bytes are validated as real UTF-8 text (binary
+  //     masquerading as .md is 415).
   app.post('/api/v1/tasks/:id/attachments', async c => {
     const task = getTask(c.req.param('id'));
     if (!task) throw new ApiError(404, 'task not found');
+    const docMime = normalizeDocMime(c.req.header('Content-Type'));
+    const cap = docMime ? MAX_DOC : MAX_UPLOAD;
     // size gate BEFORE reading the body when a length is declared
     const declared = Number(c.req.header('Content-Length'));
-    if (Number.isFinite(declared) && declared > MAX_UPLOAD) {
-      throw new ApiError(413, `file exceeds the ${MAX_UPLOAD}-byte upload cap`);
+    if (Number.isFinite(declared) && declared > cap) {
+      throw new ApiError(413, `file exceeds the ${cap}-byte upload cap`);
     }
     const buf = Buffer.from(await c.req.arrayBuffer());
-    if (buf.length === 0) throw new ApiError(400, 'empty body — send the raw image bytes');
-    if (buf.length > MAX_UPLOAD) throw new ApiError(413, `file exceeds the ${MAX_UPLOAD}-byte upload cap`);
-    const sniffed = sniffMime(buf);
-    if (!sniffed) throw new ApiError(415, 'unsupported file type — only JPEG and PNG are allowed');
-    const declaredMime = normalizeMime(c.req.header('Content-Type'));
-    if (declaredMime && declaredMime !== sniffed) {
-      throw new ApiError(415, `declared type does not match the file's actual type (${sniffed})`);
+    if (buf.length === 0) throw new ApiError(400, 'empty body — send the raw file bytes');
+    if (buf.length > cap) throw new ApiError(413, `file exceeds the ${cap}-byte upload cap`);
+
+    let mime;
+    if (docMime) {
+      // text path: the declared type is authoritative; validate it is real text
+      if (!isUtf8Text(buf)) {
+        throw new ApiError(415, 'not valid UTF-8 text — a text/markdown or text/plain upload must be text');
+      }
+      mime = docMime;
+    } else {
+      // image path: the sniff is authoritative
+      const sniffed = sniffMime(buf);
+      if (!sniffed) {
+        throw new ApiError(415, 'unsupported file type — only JPEG, PNG, Markdown (.md) and text (.txt) are allowed');
+      }
+      const declaredMime = normalizeMime(c.req.header('Content-Type'));
+      if (declaredMime && declaredMime !== sniffed) {
+        throw new ApiError(415, `declared type does not match the file's actual type (${sniffed})`);
+      }
+      mime = sniffed;
     }
+
     const q = c.req.query();
     const retention = q.retention ?? 'keep';
     if (!['keep', 'on_done'].includes(retention)) {
@@ -1044,13 +1107,59 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       expires_at = q.expires_at;
     }
     const id = ulid();
-    const filename = sanitizeFilename(c.req.header('X-Filename'), sniffed);
+    const filename = sanitizeFilename(c.req.header('X-Filename'), mime);
     const now = new Date().toISOString();
     mkdirSync(MEDIA_DIR, { recursive: true });
-    writeFileSync(filePathFor(MEDIA_DIR, id, sniffed), buf);
+    writeFileSync(filePathFor(MEDIA_DIR, id, mime), buf);
     db.prepare(
-      `INSERT INTO attachments (${ATT_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, task.id, filename, sniffed, buf.length, retention, expires_at, c.get('actor'), now);
+      `INSERT INTO attachments (${ATT_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'file', NULL)`
+    ).run(id, task.id, filename, mime, buf.length, retention, expires_at, c.get('actor'), now);
+    return c.json(getAttachment(id), 201);
+  });
+
+  // Link a LOCAL document (no bytes stored): {path, title?}. Gated three ways —
+  // (1) linking must be configured (PUNCHLIST_DOC_ROOTS non-empty), else 403;
+  // (2) the actor must be trusted (never an UNTRUSTED actor), since a link
+  //     streams a real on-disk file; (3) the resolved realpath must live inside
+  //     an allowed root and be a .md/.txt file that exists NOW. Symlink escapes
+  //     are rejected because realpathSync resolves the link before containment.
+  app.post('/api/v1/tasks/:id/attachments/link', async c => {
+    const task = getTask(c.req.param('id'));
+    if (!task) throw new ApiError(404, 'task not found');
+    if (DOC_ROOTS.length === 0) throw new ApiError(403, 'document linking not configured');
+    const actor = c.get('actor');
+    if (UNTRUSTED.has(actor)) {
+      throw new ApiError(403, 'an untrusted actor may not link local documents');
+    }
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) {
+      if (!['path', 'title'].includes(k)) throw new ApiError(400, `unknown field: ${k}`);
+    }
+    if (typeof body.path !== 'string' || !body.path.trim()) {
+      throw new ApiError(400, 'path is required (an absolute path to a .md or .txt file)');
+    }
+    const reqPath = body.path.trim();
+    if (!isAbsolute(reqPath)) throw new ApiError(400, 'path must be absolute');
+    const ext = extname(reqPath).toLowerCase();
+    const mime = docMimeForExt(ext);
+    if (!mime) throw new ApiError(415, 'only .md and .txt files can be linked');
+    if (body.title !== undefined && body.title !== null &&
+        (typeof body.title !== 'string' || body.title.length > 200)) {
+      throw new ApiError(400, 'title must be a string of at most 200 chars, or null');
+    }
+    let real;
+    try { real = realpathSync(reqPath); }
+    catch { throw new ApiError(404, 'linked file not found'); }
+    if (!pathInsideRoots(real, DOC_ROOTS)) {
+      throw new ApiError(403, 'path is outside the allowed document roots');
+    }
+    if (!statSync(real).isFile()) throw new ApiError(400, 'path is not a regular file');
+    const id = ulid();
+    const filename = sanitizeFilename(body.title || basename(real), mime);
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO attachments (${ATT_COLS}) VALUES (?, ?, ?, ?, 0, 'keep', NULL, ?, ?, 'link', ?)`
+    ).run(id, task.id, filename, mime, c.get('actor'), now, real);
     return c.json(getAttachment(id), 201);
   });
 
@@ -1064,18 +1173,40 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
 
   // Stream the bytes inline. Same-origin, auth'd (the whole /api/v1/* tree is);
   // nosniff so the browser honours our Content-Type and won't re-interpret it.
+  // A kind='file' row streams the stored media file; a kind='link' row
+  // re-validates its path against the (possibly changed) DOC_ROOTS and streams
+  // the linked file's CURRENT contents, so edits to the doc show live. The UI
+  // never trusts this Content-Type to render — it fetches the raw text and
+  // renders through the client-side safe markdown renderer (md.js).
   app.get('/api/v1/attachments/:id', c => {
     const row = getAttachment(c.req.param('id'));
     if (!row) throw new ApiError(404, 'attachment not found');
-    const path = filePathFor(MEDIA_DIR, row.id, row.mime);
-    if (!existsSync(path)) throw new ApiError(404, 'attachment file is gone');
-    const body = readFileSync(path);
+    let body, contentType, cache;
+    if (row.kind === 'link') {
+      // config may have changed since the link was made: re-validate every time.
+      let real;
+      try { real = realpathSync(row.path); }
+      catch { throw new ApiError(404, 'linked file not found'); }
+      if (!pathInsideRoots(real, DOC_ROOTS) || !statSync(real).isFile()) {
+        throw new ApiError(404, 'linked file not found');
+      }
+      body = readFileSync(real);
+      contentType = docContentType(row.mime);
+      cache = 'private, no-cache'; // linked doc may change on disk — always revalidate
+    } else {
+      const path = filePathFor(MEDIA_DIR, row.id, row.mime);
+      if (!existsSync(path)) throw new ApiError(404, 'attachment file is gone');
+      body = readFileSync(path);
+      contentType = isDocMime(row.mime) ? docContentType(row.mime) : row.mime;
+      // id-addressed immutable bytes may cache; docs revalidate for safety
+      cache = isDocMime(row.mime) ? 'private, no-cache' : 'private, max-age=3600';
+    }
     return c.body(body, 200, {
-      'Content-Type': row.mime,
+      'Content-Type': contentType,
       'Content-Disposition': `inline; filename="${row.filename.replace(/["\\]/g, '')}"`,
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': CSP,
-      'Cache-Control': 'private, max-age=3600',
+      'Cache-Control': cache,
       'Content-Length': String(body.length),
     });
   });
@@ -1115,10 +1246,22 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     return tx(db, () => {
       db.prepare('DELETE FROM attachments WHERE id = ?').run(row.id);
-      rmSync(filePathFor(MEDIA_DIR, row.id, row.mime), { force: true });
+      // links reference a file we do NOT own — only unlink our own stored bytes
+      if (row.kind !== 'link') rmSync(filePathFor(MEDIA_DIR, row.id, row.mime), { force: true });
       return c.json({ ok: true });
     });
   });
+
+  // Lightweight client config probe (auth'd): tells the UI whether local-doc
+  // linking is available (a configured, non-empty DOC_ROOTS) and which actors
+  // are untrusted, so it can gate the "Link a doc…" affordance and require an
+  // explicit confirm before rendering a doc uploaded by an untrusted actor.
+  app.get('/api/v1/config', c => c.json({
+    doc_linking: DOC_ROOTS.length > 0,
+    untrusted_actors: [...UNTRUSTED],
+    max_doc_bytes: MAX_DOC,
+    actor: c.get('actor'),
+  }));
 
   // ---- counts (nav badges): one call, view WHEREs from views.js ----
   app.get('/api/v1/counts', c => {

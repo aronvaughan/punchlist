@@ -39,6 +39,14 @@ test('unordered and ordered lists', () => {
   assert.equal(mdToHtml('1. a\n2) b'), '<ol><li>a</li><li>b</li></ol>');
 });
 
+test('headings render as h1–h6; a heading glued to a list yields heading + list', () => {
+  assert.equal(mdToHtml('# Title'), '<h1>Title</h1>');
+  assert.equal(mdToHtml('### Deep **bold**'), '<h3>Deep <strong>bold</strong></h3>');
+  assert.equal(mdToHtml('## Key points\n- a\n- b'), '<h2>Key points</h2>\n<ul><li>a</li><li>b</li></ul>');
+  // a bare '#' with no text is not a heading — it stays a paragraph
+  assert.equal(mdToHtml('#nothashheading'), '<p>#nothashheading</p>');
+});
+
 test('fenced code blocks are escaped verbatim', () => {
   assert.equal(mdToHtml('```\n<x> & *y*\n```'), '<pre><code>&lt;x&gt; &amp; *y*</code></pre>');
 });

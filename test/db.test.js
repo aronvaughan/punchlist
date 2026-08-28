@@ -11,7 +11,7 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
   assert.deepEqual(versions.map(v => v.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -118,7 +118,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
 
   migrate(); // real migrations dir — applies 002 (rebuild), 003 (vetting), 004 (rebuild), 005 (attachments)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments']);
   // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
@@ -270,6 +270,48 @@ test('009-task-version upgrades a lived-in 008 db: data survives; version column
   // a fresh insert also defaults to 0 and the column is a plain integer
   db.prepare(`INSERT INTO tasks (id,title,status,created_at,updated_at) VALUES ('t2','x','active','t','t')`).run();
   assert.equal(db.prepare('SELECT version FROM tasks WHERE id=?').get('t2').version, 0);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('010-doc-attachments upgrades a lived-in 009 db: rows survive; kind/path land additively, no rebuild', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'punchlist.db');
+  // seed a database that knows every migration up to 009 (no 010 yet)
+  const migDirPre = join(dir, 'migs-pre');
+  mkdirSync(migDirPre);
+  for (const f of ['001-init.sql', '002-delegation.sql', '003-vetting.sql', '004-needs-input.sql',
+                   '005-attachments.sql', '006-comments.sql', '007-template.sql', '008-view-ranks.sql',
+                   '009-task-version.sql']) {
+    writeFileSync(join(migDirPre, f), readFileSync(join(import.meta.dirname, '..', 'migrations', f)));
+  }
+  const { db, migrate } = open(dbPath);
+  migrate(migDirPre);
+  db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,vetted,created_at,updated_at)
+              VALUES ('t1','has an image','active','alex','claude',1,'t','t')`).run();
+  db.prepare(`INSERT INTO attachments (id,task_id,filename,mime,bytes,retention,created_at)
+              VALUES ('a1','t1','shot.png','image/png',100,'keep','t')`).run();
+  // pre-010 there is neither a kind nor a path column
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM pragma_table_info('attachments') WHERE name='kind'`).get().c, 0);
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM pragma_table_info('attachments') WHERE name='path'`).get().c, 0);
+
+  migrate(); // real dir — applies 010 (two plain ADD COLUMNs, no rebuild)
+  assert.equal(db.prepare('SELECT version FROM schema_migrations WHERE version=?').get('010-doc-attachments').version,
+    '010-doc-attachments');
+  // the existing image attachment survived and adopted kind='file', path NULL
+  const a1 = db.prepare('SELECT * FROM attachments WHERE id = ?').get('a1');
+  assert.equal(a1.filename, 'shot.png');
+  assert.equal(a1.kind, 'file');
+  assert.equal(a1.path, null);
+  // a link row inserts with kind='link' + a path; the CHECK rejects a bad kind
+  db.prepare(`INSERT INTO attachments (id,task_id,filename,mime,bytes,retention,created_at,kind,path)
+              VALUES ('a2','t1','notes.md','text/markdown',0,'keep','t','link','/vault/notes.md')`).run();
+  const a2 = db.prepare('SELECT * FROM attachments WHERE id = ?').get('a2');
+  assert.equal(a2.kind, 'link');
+  assert.equal(a2.path, '/vault/notes.md');
+  assert.throws(() => db.prepare(
+    `INSERT INTO attachments (id,task_id,filename,mime,bytes,retention,created_at,kind)
+     VALUES ('a3','t1','x.md','text/markdown',0,'keep','t','bogus')`).run());
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   rmSync(dir, { recursive: true, force: true });
 });
