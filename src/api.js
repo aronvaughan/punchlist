@@ -489,7 +489,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     merged.auto_close = body.auto_close === undefined ? task.auto_close : (body.auto_close ? 1 : 0);
     if (body.assignee !== undefined) merged.assignee = body.assignee.trim();
     // reassigning a claimed task takes the work back: reset to active, clear claim
-    if (body.assignee !== undefined && merged.assignee !== task.assignee && task.status === 'in_progress') {
+    const isReassignTakeback =
+      body.assignee !== undefined && merged.assignee !== task.assignee && task.status === 'in_progress';
+    if (isReassignTakeback) {
       merged.status = 'active';
       merged.claimed_at = null;
     }
@@ -539,10 +541,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const rank = (merged.project_id !== task.project_id || sectionOf(merged, t) !== sectionOf(task, t))
         ? endOfSectionRank(merged.project_id, sectionOf(merged, t), t)
         : task.rank;
-      // reopen (review→active) is a real state transition — guard the write as a
-      // strict CAS so a concurrent approve/reclaim that already left review is a
-      // clean 409, never a clobber of a committed change back to active.
-      const guard = isReopen ? " AND status='review'" : '';
+      // reopen (review→active) and reassign-takeback (in_progress→active) are
+      // real state transitions — guard each write as a strict CAS so a concurrent
+      // approve/reclaim/finish that already left the source state is a clean 409,
+      // never a clobber of a committed change back to active. The takeback path is
+      // only entered when the OUTSIDE read saw in_progress, so this guard catches a
+      // finish/complete that raced in after that read but before BEGIN IMMEDIATE.
+      const guard = isReopen ? " AND status='review'"
+                  : isReassignTakeback ? " AND status='in_progress'"
+                  : '';
       const { changes } = db.prepare(
         `UPDATE tasks SET title=?, notes=?, project_id=?, status=?, when_type=?, when_date=?,
                 due_date=?, due_time=?, recur=?, today_rank=?, rank=?, assignee=?, auto_close=?,
@@ -555,6 +562,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
             merged.status, now, task.id);
       if (isReopen && changes !== 1) {
         throw new ApiError(409, 'task is no longer in review — it was already approved, reopened, or reclaimed');
+      }
+      if (isReassignTakeback && changes !== 1) {
+        throw new ApiError(409, 'task is no longer in progress — it was finished, reclaimed, or reassigned concurrently');
       }
       if (body.tags !== undefined) setTags(task.id, body.tags);
       // project state-changing PATCHes into the timeline (status kind, terse
