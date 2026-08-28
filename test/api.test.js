@@ -964,6 +964,33 @@ test('reassigning an in_progress task resets it to active and clears the claim',
   assert.equal(same.json.status, 'in_progress');
 });
 
+// The reassign-takeback (in_progress→active) is now a strict CAS like the other
+// state doors: guarded WHERE status='in_progress' with a 409 on a lost race, and
+// it honours expected_version so a caller can protect the transition against a
+// concurrent finish/reclaim. (Root cause behind finished tasks re-appearing as
+// active — task 01M14F44.)
+test('reassign-takeback is a status-guarded CAS honouring expected_version', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  const claimed = (await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE })).json.task;
+  assert.equal(claimed.status, 'in_progress');
+  // stale expected_version -> 409, and the in_progress claim is NOT clobbered to active
+  const stale = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { assignee: 'hermes', expected_version: 0 } });
+  assert.equal(stale.status, 409);
+  assert.match(stale.json.error, /stale/);
+  const row = db.prepare('SELECT status, claimed_at, assignee FROM tasks WHERE id=?').get(t.id);
+  assert.equal(row.status, 'in_progress', 'no clobber back to active on a stale takeback');
+  assert.notEqual(row.claimed_at, null, 'claim survives a rejected takeback');
+  assert.equal(row.assignee, 'claude', 'assignee unchanged on a stale takeback');
+  // matching expected_version -> the guarded takeback flips it and bumps version
+  const ok = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { assignee: 'hermes', expected_version: claimed.version } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.status, 'active');
+  assert.equal(ok.json.claimed_at, null);
+  assert.equal(ok.json.assignee, 'hermes');
+  assert.equal(ok.json.version, claimed.version + 1);
+});
+
 test("view scoping over HTTP: alex's today/inbox exclude delegated; review/delegated views + ?assignee= work", async () => {
   const { call } = makeApp();
   await call('POST', '/api/v1/tasks', { body: { title: 'mine today', when_type: 'date', when_date: TODAY } });
