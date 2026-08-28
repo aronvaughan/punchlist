@@ -6,6 +6,7 @@ import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { openDetail, stepsEditorFor } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
+import { icon } from '/icons.js';
 
 let expanded = null; // { row, task, orig, titleSpan }
 
@@ -61,7 +62,8 @@ export function expandRow(task, row) {
     if (!v) { title.value = task.title; return; }
     if (await save(task, { title: v }) && titleSpan) titleSpan.textContent = v;
   });
-  const pencil = el('button', 'inline-pencil', '✎');
+  const pencil = el('button', 'inline-pencil');
+  pencil.append(icon('pencil-simple', { size: 16 }));
   pencil.setAttribute('aria-label', 'Open full details');
   pencil.addEventListener('click', e => {
     e.stopPropagation();

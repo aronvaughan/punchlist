@@ -6,6 +6,7 @@ import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown } from '/dates.js';
 import { expandRow } from '/inline.js';
 import { mdToHtml } from '/md.js';
+import { icon } from '/icons.js';
 
 const SECTION_NAMES = ['Today', 'Upcoming', 'Anytime', 'Someday'];
 const lastSection = new Map(); // projectId -> section the user last touched
@@ -67,28 +68,12 @@ function el(tag, className, text) {
   return n;
 }
 
-// per-pill-type glyphs: tiny inline SVGs that inherit the chip's color via
-// `currentColor` (theme-token driven — no hardcoded fills). Built through the
-// DOM (never innerHTML). person = assignee, folder = project, tag = tags.
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const ICONS = {
-  assignee: [['circle', { cx: 8, cy: 5.4, r: 2.5 }], ['path', { d: 'M3.4 13.2c0-2.6 2.1-4 4.6-4s4.6 1.4 4.6 4' }]],
-  project: [['path', { d: 'M2.4 4.8h3.9l1.3 1.5h6v6.9H2.4z' }]],
-  tag: [['path', { d: 'M8.7 2.4H13.6V7.3L7.9 13 3 8.1z' }], ['circle', { cx: 10.7, cy: 5.3, r: 0.95 }]],
-};
+// per-pill-type glyphs: Phosphor icons (icons.js) that inherit the chip's color
+// via `currentColor` (theme-token driven — no hardcoded fills). assignee = user,
+// project = folder, tag = tag — the app's single icon set.
+const PILL_ICON = { assignee: 'user', project: 'folder', tag: 'tag' };
 function pillIcon(name) {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('class', 'pill-icon');
-  svg.setAttribute('width', '11');
-  svg.setAttribute('height', '11');
-  svg.setAttribute('aria-hidden', 'true');
-  for (const [tag, attrs] of ICONS[name]) {
-    const n = document.createElementNS(SVG_NS, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
-    svg.append(n);
-  }
-  return svg;
+  return icon(PILL_ICON[name], { size: 11, cls: 'pill-icon' });
 }
 // a subline pill carrying a leading type-icon + text (button or span)
 function iconPill(iconName, text, { className = '', button = false } = {}) {
@@ -189,7 +174,7 @@ export function renderRail() {
   // shared with the Manage-projects dialog; this only paints a row.
   const navRow = (p, { hasKids }) => {
     const row = el('div', 'rail-project');
-    // ⋮⋮ drag handle (reuses .grip). Its job today is to stop touch-scroll
+    // grip drag handle (reuses .grip). Its job today is to stop touch-scroll
     // hijack (the grip owns touch-action:none; the row body scrolls) and to
     // reserve the reorder affordance. FUTURE WORK: wiring actual rail reorder —
     // a Sortable here persisting to view_ranks('rail-projects') and a matching
@@ -244,8 +229,15 @@ export function renderRail() {
   };
   const projHead = document.getElementById('rail-projects-head');
   const projOpen = sectionHead(projHead, 'projects', 'Projects');
-  // (no gear here — the dialog opens from "+ New project" and the per-parent +)
-  document.getElementById('rail-new-project').hidden = !projOpen;
+  // pencil on the header line (right-aligned) opens the Manage-projects dialog —
+  // it replaces the old bottom "+ New project" row. The per-parent hover "+"
+  // (add-child) and the dialog's own add stay.
+  const manageBtn = el('button', 'rail-head-action');
+  manageBtn.append(icon('pencil-simple', { size: 15 }));
+  manageBtn.setAttribute('aria-label', 'Manage projects');
+  manageBtn.title = 'Manage projects';
+  manageBtn.addEventListener('click', () => openManageDialog('new'));
+  projHead.append(manageBtn);
   if (projOpen) renderTreeInto(rootUl, live, { renderRow: navRow, collapsed: id => collapsed.has(id) });
   // one-shot: animate the freshly-rendered subtree rows only when a user just
   // toggled a caret/section (flag), never on ordinary reloads
@@ -304,7 +296,7 @@ function renderRailTags() {
     // div (not button) so the delete affordance can nest without invalid markup
     const row = el('div', 'rail-tag');
     row.tabIndex = 0;
-    // ⋮⋮ drag handle (reuses .grip): stops touch-scroll hijack and reserves the
+    // grip drag handle (reuses .grip): stops touch-scroll hijack and reserves the
     // reorder affordance. FUTURE WORK: actual rail-tag reorder persisting to
     // view_ranks('rail-tags') (+ ORDER BY in GET /tags) is not wired yet —
     // deliberately not a half-working reorder. The grip is inert until then.
@@ -318,7 +310,8 @@ function renderRailTags() {
     row.addEventListener('click', go);
     row.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
     // trash affordance: hover on desktop, always on touch (see tokens.css)
-    const del = el('button', 'tag-del', '✕');
+    const del = el('button', 'tag-del');
+    del.append(icon('x', { size: 13 }));
     del.setAttribute('aria-label', `Delete tag ${t.name}`);
     del.title = 'Delete tag';
     del.addEventListener('click', e => { e.stopPropagation(); deleteTag(t); });
@@ -442,7 +435,7 @@ function renderManageTree() {
 function manageRow(p) {
   const row = el('div', 'manage-row' + (p.archived ? ' archived' : ''));
   row.dataset.projectId = p.id;
-  // the same ⋮⋮ grip the step rows use (reused markup/CSS) — the drag handle
+  // the same grip the step rows use (reused markup/CSS) — the drag handle
   const grip = el('span', 'grip');
   grip.setAttribute('aria-hidden', 'true');
   grip.title = 'Drag to reparent';
@@ -454,11 +447,8 @@ function manageRow(p) {
   row.append(name);
   const actions = el('div', 'manage-actions');
   // icons over text throughout the dialog
-  const add = el('button', 'manage-btn', '＋');
-  add.title = `Add a sub-project under ${p.name}`;
-  add.setAttribute('aria-label', `Add a sub-project under ${p.name}`);
-  add.addEventListener('click', () => openChildInput(p.id));
-  const arch = el('button', 'manage-btn manage-archive', p.archived ? '♻' : '🗄');
+  const arch = el('button', 'manage-btn manage-archive');
+  arch.append(icon(p.archived ? 'arrow-counter-clockwise' : 'archive', { size: 17 }));
   arch.title = p.archived ? `Unarchive ${p.name}` : `Archive ${p.name}`;
   arch.setAttribute('aria-label', `${p.archived ? 'Unarchive' : 'Archive'} ${p.name}`);
   arch.addEventListener('click', async () => {
@@ -468,7 +458,17 @@ function manageRow(p) {
       await reloadManage();
     } catch (e) { toast(`Save failed: ${e.message}`); }
   });
-  actions.append(add, arch);
+  // archived projects can't gain sub-projects — you can't nest under a dead
+  // project — so the add-child "+" only appears on live rows
+  if (!p.archived) {
+    const add = el('button', 'manage-btn');
+    add.append(icon('plus', { size: 17 }));
+    add.title = `Add a sub-project under ${p.name}`;
+    add.setAttribute('aria-label', `Add a sub-project under ${p.name}`);
+    add.addEventListener('click', () => openChildInput(p.id));
+    actions.append(add);
+  }
+  actions.append(arch);
   row.append(actions);
   return row;
 }
@@ -644,8 +644,6 @@ document.getElementById('tag-cancel').addEventListener('click', () => {
   document.getElementById('tag-dialog').open = false;
 });
 
-// left-nav "+ New project" opens the Manage dialog focused on its new-project row
-document.getElementById('rail-new-project').addEventListener('click', () => openManageDialog('new'));
 document.getElementById('manage-close').addEventListener('click', () => { mdialog().open = false; });
 // show-archived icon toggle: archived projects are hidden by default
 document.getElementById('manage-show-archived').addEventListener('click', e => {
@@ -653,7 +651,7 @@ document.getElementById('manage-show-archived').addEventListener('click', e => {
   const btn = e.currentTarget;
   btn.setAttribute('aria-pressed', String(manageShowArchived));
   btn.classList.toggle('on', manageShowArchived);
-  btn.textContent = manageShowArchived ? '◉' : '⊘';
+  btn.replaceChildren(icon(manageShowArchived ? 'eye-slash' : 'eye', { size: 17 }));
   btn.title = manageShowArchived ? 'Hide archived projects' : 'Show archived projects';
   btn.setAttribute('aria-label', btn.title);
   renderManageTree();
@@ -669,12 +667,16 @@ document.getElementById('manage-new-name').addEventListener('keydown', e => {
 
 // status marker: one small themed glyph per agent in-flight state, shown where
 // the checkbox sits. active/queued and done use the checkbox itself.
-const STATUS_GLYPH = { in_progress: '◐', blocked: '❓', review: '✓' };
+// Phosphor glyph per in-flight state: in_progress = half-filled circle (work
+// underway), blocked = question (waiting on a human), review = check (done,
+// awaiting approval). Themed via the .status-marker.* rules.
+const STATUS_ICON = { in_progress: 'circle-half', blocked: 'question', review: 'check' };
 const STATUS_LABEL = {
   in_progress: 'In progress', blocked: 'Blocked — waiting on a human', review: 'In review — awaiting approval',
 };
 function statusMarker(task) {
-  const m = el('span', `status-marker st-${task.status}`, STATUS_GLYPH[task.status] ?? '');
+  const m = el('span', `status-marker st-${task.status}`);
+  if (STATUS_ICON[task.status]) m.append(icon(STATUS_ICON[task.status], { size: 14 }));
   m.setAttribute('role', 'img');
   m.setAttribute('aria-label', STATUS_LABEL[task.status] ?? task.status);
   m.title = STATUS_LABEL[task.status] ?? '';
@@ -704,7 +706,8 @@ function openRowMenu(task, x, y) {
   document.querySelector('.row-menu')?.remove();
   const menu = el('div', 'row-menu');
   menu.setAttribute('role', 'menu');
-  const del = el('button', 'row-menu-item danger', '🗑  Delete task');
+  const del = el('button', 'row-menu-item danger');
+  del.append(icon('trash', { size: 16 }), el('span', null, 'Delete task'));
   del.setAttribute('role', 'menuitem');
   del.addEventListener('click', () => { menu.remove(); performDelete(task); });
   menu.append(del);
@@ -802,7 +805,8 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   }
   if (task.status === 'blocked') {
     // needs-input: the agent is waiting on an answer — jump to the lane
-    const chip = el('button', 'chip blocked-chip', '❓ waiting');
+    const chip = el('button', 'chip blocked-chip');
+    chip.append(icon('question', { size: 13 }), el('span', 'pill-text', 'waiting'));
     chip.title = 'Blocked on a question — answer it in the Human lane';
     chip.setAttribute('aria-label', 'Waiting for your answer — open the Human lane');
     chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
@@ -812,22 +816,36 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     // amber quarantine chip (agent-security layer 1): agents will not execute
     // this task. Tapping it is the admin's Vet action — the server 403s
     // anyone else, and the toast explains.
-    const chip = el('button', 'chip unvetted', '⛨ unvetted');
+    const chip = el('button', 'chip unvetted');
+    chip.append(icon('shield-warning', { size: 13 }), el('span', 'pill-text', 'unvetted'));
     chip.title = 'Created by an untrusted source — agents will not execute it. Tap to vet.';
     chip.setAttribute('aria-label', 'Unvetted — tap to vet for agent execution');
     chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
     subline.append(chip);
   }
-  // attachment count chip: a small 📎 N when the task carries images
+  // attachment count chip: a paperclip glyph + N when the task carries images
   if (task.attachment_count > 0) {
-    const chip = el('span', 'chip attach-count', `📎 ${task.attachment_count}`);
+    const chip = el('span', 'chip attach-count');
+    chip.append(icon('paperclip', { size: 12 }), el('span', 'pill-text', String(task.attachment_count)));
     chip.setAttribute('aria-label', `${task.attachment_count} image${task.attachment_count === 1 ? '' : 's'} attached`);
     subline.append(chip);
   }
-  // comment count chip: a small 💬 N when the task's timeline has activity
+  // comment count chip: a small chat glyph + N when the task's timeline has activity
   if (task.comment_count > 0) {
-    const chip = el('span', 'chip comment-count', `💬 ${task.comment_count}`);
+    const chip = el('span', 'chip comment-count');
+    chip.append(icon('chat-circle', { size: 12 }), el('span', 'pill-text', String(task.comment_count)));
     chip.setAttribute('aria-label', `${task.comment_count} timeline entr${task.comment_count === 1 ? 'y' : 'ies'}`);
+    subline.append(chip);
+  }
+  // step progress: a small check-glyph N/M when the task carries a checklist.
+  // Kept fresh by the drawer/inline step editors (write-through + reload), so
+  // checking a step in review updates this indicator without a page reload.
+  const steps = task.steps ?? [];
+  if (steps.length) {
+    const done = steps.filter(s => s.done).length;
+    const chip = el('span', 'chip step-count' + (done === steps.length ? ' complete' : ''));
+    chip.append(icon('check', { size: 12 }), el('span', 'pill-text', `${done}/${steps.length}`));
+    chip.setAttribute('aria-label', `${done} of ${steps.length} steps done`);
     subline.append(chip);
   }
   // tags are DISPLAY-ONLY on the row now: a single tag icon + count when the
@@ -846,7 +864,8 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   // overflow "…" → one-item Delete menu. Also reachable by right-click and, on
   // touch, a long-press. Delete is a HARD, irreversible remove (server 200) —
   // Archive lives in the drawer and is reversible.
-  const overflow = el('button', 'row-overflow', '⋯');
+  const overflow = el('button', 'row-overflow');
+  overflow.append(icon('dots-three-vertical', { size: 18 }));
   overflow.title = 'More actions';
   overflow.setAttribute('aria-label', 'More actions');
   overflow.addEventListener('click', e => {
@@ -988,7 +1007,9 @@ export function renderMain() {
       : '';
 
   if (state.tag) {
-    const chip = el('button', 'chip filter', `#${state.tag} ✕`);
+    const chip = el('button', 'chip filter');
+    chip.append(el('span', 'pill-text', `#${state.tag}`), icon('x', { size: 12 }));
+    chip.setAttribute('aria-label', `Clear #${state.tag} filter`);
     chip.addEventListener('click', () => setTagFilter(state.tag));
     chipsEl.append(chip);
   }
