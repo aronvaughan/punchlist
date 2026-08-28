@@ -5,6 +5,7 @@ import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, toast, todayISO, pickWhen, currentActor,
   uploadAttachment, attachmentObjectURL } from '/app.js';
 import { mdToHtml } from '/md.js';
+import { icon } from '/icons.js';
 import { dueLine } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
 import { openManageDialog, animateOnce, performDelete } from '/views.js';
@@ -102,7 +103,12 @@ function renderDrawer() {
   body.append(title);
 
   body.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(), templateEditor());
-  body.append(notesEditor(), createMode ? draftStepsEditor() : stepsEditorFor(task), recurEditor());
+  // step edits in the drawer write through to the live task; onChange reloads so
+  // the list row's step indicator + review card reflect the change immediately
+  // (and a reopened drawer isn't stale) — without a full page reload.
+  body.append(notesEditor(),
+    createMode ? draftStepsEditor() : stepsEditorFor(task, { onChange: () => reload() }),
+    recurEditor());
   if (createMode) {
     // tags near the bottom (rows are display-only; editing happens here)
     body.append(tagsEditor());
@@ -225,8 +231,10 @@ function templateEditor() {
   sel.append(none);
   const chip = el('span', 'chip template-chip');
   const renderChip = () => {
-    if (current.template) { chip.textContent = `▤ ${current.template}`; chip.hidden = false; }
-    else chip.hidden = true;
+    if (current.template) {
+      chip.replaceChildren(icon('file-text', { size: 13 }), el('span', 'pill-text', current.template));
+      chip.hidden = false;
+    } else chip.hidden = true;
   };
   const populate = items => {
     // keep a stamped-but-unknown template (stale ref, or repo absent) selectable
@@ -322,7 +330,7 @@ function timelineSection(task) {
       await api('POST', `/tasks/${task.id}/comments`, { text });
       ta.value = '';
       await load();
-      reload(); // refresh the row 💬 count in the background
+      reload(); // refresh the row comment count in the background
     } catch (e) { toast(`Comment failed: ${e.message}`); }
     finally { post.removeAttribute('loading'); }
   };
@@ -365,7 +373,8 @@ function attachmentsEditor(task) {
   input.className = 'att-input';
   input.id = 'att-input';
 
-  const trigger = el('button', 'att-add', '＋ Attach image');
+  const trigger = el('button', 'att-add');
+  trigger.append(icon('plus', { size: 16 }), el('span', null, 'Attach image'));
   trigger.type = 'button';
   trigger.addEventListener('click', () => input.click());
 
@@ -392,7 +401,7 @@ function attachmentsEditor(task) {
       catch (e) { toast(`Upload failed: ${e.message}`); }
     }
     await refresh();
-    reload(); // refresh the row 📎 count in the background
+    reload(); // refresh the row attachment count in the background
   };
 
   input.addEventListener('change', () => { if (input.files.length) doUpload(input.files); input.value = ''; });
@@ -468,7 +477,8 @@ function attachmentCard(att, refresh) {
   retentionRow.append(sel, dateInput);
   meta.append(retentionRow);
 
-  const del = el('button', 'att-del', '✕');
+  const del = el('button', 'att-del');
+  del.append(icon('trash', { size: 16 }));
   del.type = 'button';
   del.title = 'Delete image';
   del.setAttribute('aria-label', `Delete ${att.filename}`);
@@ -510,7 +520,16 @@ function notesEditor() {
 }
 
 // ---- steps checklist (shared with the inline row editor) ----
-export function stepsEditorFor(task) {
+// Every mutation writes THROUGH to task.steps (task === the live state.tasks
+// row), so the in-memory task stays truthful and a reopened drawer/list is never
+// stale. onChange() lets the host surface repaint the affected surfaces (the
+// drawer passes a background reload so the list row's step indicator + review
+// card update immediately; the inline card omits it — a mid-edit reload would
+// tear down the open card, and its collapse already re-syncs). This is the fix
+// for the review-lane bug where step edits saved but the UI didn't reflect them.
+export function stepsEditorFor(task, { onChange } = {}) {
+  if (!Array.isArray(task.steps)) task.steps = [];
+  const notify = () => { try { onChange?.(); } catch { /* repaint is best-effort */ } };
   const wrap = el('div');
   wrap.append(el('label', null, 'Steps'));
   const ul = el('ul', 'steps-list');
@@ -526,29 +545,43 @@ export function stepsEditorFor(task) {
     check.setAttribute('aria-label', 'Toggle step');
     check.addEventListener('click', async () => {
       check.classList.toggle('checked');
-      try { await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { done: check.classList.contains('checked') }); }
-      catch (e) { check.classList.toggle('checked'); toast(`Save failed: ${e.message}`); }
+      const done = check.classList.contains('checked');
+      try {
+        await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { done });
+        step.done = done ? 1 : 0; // write through to the live task
+        notify();
+      } catch (e) { check.classList.toggle('checked'); toast(`Save failed: ${e.message}`); }
     });
     const name = el('input');
     name.type = 'text';
     name.value = step.title;
     name.addEventListener('change', async () => {
       if (!name.value.trim()) { name.value = step.title; return; }
-      try { await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { title: name.value.trim() }); }
-      catch (e) { toast(`Save failed: ${e.message}`); }
+      const title = name.value.trim();
+      try {
+        await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { title });
+        step.title = title;
+        notify();
+      } catch (e) { toast(`Save failed: ${e.message}`); }
     });
-    const del = el('button', 'del', '✕');
+    const del = el('button', 'del');
+    del.append(icon('x', { size: 14 }));
     del.setAttribute('aria-label', 'Delete step');
     del.addEventListener('click', async () => {
-      try { await api('DELETE', `/tasks/${task.id}/steps/${step.id}`); li.remove(); }
-      catch (e) { toast(`Delete failed: ${e.message}`); }
+      try {
+        await api('DELETE', `/tasks/${task.id}/steps/${step.id}`);
+        li.remove();
+        const i = task.steps.indexOf(step);
+        if (i >= 0) task.steps.splice(i, 1);
+        notify();
+      } catch (e) { toast(`Delete failed: ${e.message}`); }
     });
     li.append(check, name, del);
     return li;
   };
-  for (const s of task.steps ?? []) ul.append(stepRow(s));
+  for (const s of task.steps) ul.append(stepRow(s));
 
-  const ranks = new Map((task.steps ?? []).map(s => [s.id, s.rank]));
+  const ranks = new Map(task.steps.map(s => [s.id, s.rank]));
   new Sortable(ul, {
     animation: 150,
     handle: '.grip',
@@ -562,6 +595,9 @@ export function stepsEditorFor(task) {
       try {
         const updated = await api('PATCH', `/tasks/${task.id}/steps/${sid}`, { rank });
         ranks.set(sid, updated.rank);
+        const moved = task.steps.find(s => s.id === sid);
+        if (moved) { moved.rank = updated.rank; task.steps.sort((a, b) => a.rank - b.rank); }
+        notify();
       } catch (e) { toast(`Reorder failed: ${e.message}`); }
     },
   });
@@ -575,8 +611,10 @@ export function stepsEditorFor(task) {
     try {
       const step = await api('POST', `/tasks/${task.id}/steps`, { title: add.value.trim() });
       ranks.set(step.id, step.rank);
+      task.steps.push(step); // write through to the live task
       ul.append(stepRow(step));
       add.value = '';
+      notify();
     } catch (err) { toast(`Add failed: ${err.message}`); }
   });
   wrap.append(ul, add);
@@ -672,7 +710,8 @@ function draftStepsEditor() {
         if (name.value.trim()) current.steps[i] = name.value.trim();
         else { current.steps.splice(i, 1); render(); }
       });
-      const del = el('button', 'del', '✕');
+      const del = el('button', 'del');
+      del.append(icon('x', { size: 14 }));
       del.setAttribute('aria-label', 'Delete step');
       del.addEventListener('click', () => { current.steps.splice(i, 1); render(); });
       li.append(name, del);

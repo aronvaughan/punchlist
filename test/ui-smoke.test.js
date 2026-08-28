@@ -46,7 +46,7 @@ test('GET / returns the app shell with CSP', async () => {
 
 test('app JS modules are served as text/javascript', async () => {
   const { get } = makeApp();
-  for (const p of ['/app.js', '/views.js', '/detail.js', '/md.js', '/dates.js', '/inline.js', '/theme-boot.js', '/suggest.js']) {
+  for (const p of ['/app.js', '/views.js', '/detail.js', '/md.js', '/dates.js', '/inline.js', '/theme-boot.js', '/suggest.js', '/icons.js']) {
     const res = await get(p);
     assert.equal(res.status, 200, p);
     assert.equal(res.headers.get('Content-Type'), 'text/javascript', p);
@@ -150,9 +150,16 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.match(views, /manageShowArchived \|\| !p\.archived/); // archived hidden by default
   assert.match(views, /parent_id: parentId/);      // drag-to-reparent PATCH
   assert.match(views, /archived: !p\.archived/);   // archive/unarchive toggle
-  // the gear on the rail Projects header is gone; the dialog opens from
-  // "+ New project" and the per-parent + only
+  // the gear on the rail Projects header is gone; the Manage dialog now opens
+  // from a PENCIL on the Projects header line (the old bottom "+ New project"
+  // row is retired) and the per-parent hover "+" (add-child)
   assert.doesNotMatch(views, /rail-gear/);
+  assert.doesNotMatch(html, /id="rail-new-project"/);   // bottom row removed
+  assert.match(views, /rail-head-action/);              // pencil on the header line
+  assert.match(views, /manageBtn\.addEventListener\('click', \(\) => openManageDialog\('new'\)\)/);
+  // archived projects can't gain sub-projects — the add-child "+" is live-only
+  assert.match(views, /can't gain sub-projects/);
+  assert.match(views, /if \(!p\.archived\) \{/);
   // the reparent drag handle reuses the step-row ⋮⋮ grip (.grip), not a
   // bespoke .manage-grip
   assert.match(views, /el\('span', 'grip'\)/);
@@ -274,4 +281,59 @@ test('rail rows: reused ⋮⋮ grip + touch-action so a rail drag never hijacks 
   const css = await (await get('/tokens.css')).text();
   assert.match(css, /\.rail-project, \.rail-tag \{ touch-action: pan-y; \}/);
   assert.match(css, /\.rail-grip\s*\{/);
+});
+
+test('icon set: Phosphor inline SVGs (icons.js) replace the ad-hoc glyphs/emoji', async () => {
+  const { get } = makeApp();
+  // the helper module is served like any app module
+  const icons = await (await get('/icons.js')).text();
+  assert.match(icons, /export function icon\(/);
+  assert.match(icons, /fill="currentColor"/);       // theme-token colored via currentColor
+  assert.match(icons, /viewBox', '0 0 256 256'/);     // Phosphor 256 grid
+  for (const name of ['pencil-simple', 'trash', 'archive', 'shield-warning', 'chat-circle', 'paperclip', 'dots-three-vertical']) {
+    assert.ok(icons.includes(`'${name}'`) || icons.includes(`${name}:`), `icons.js defines ${name}`);
+  }
+  // base CSS: icons are decorative, fill:currentColor, sized in CSS
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.icon \{[^}]*fill: currentColor/);
+  // the emoji/ad-hoc glyphs are gone from the sources — replaced by icon(...)
+  const views = await (await get('/views.js')).text();
+  for (const glyph of ['📎', '💬', '⛨', '⋯', '🗑', '◐', '❓', '✓']) {
+    assert.ok(!views.includes(glyph), `views.js no longer contains ${glyph}`);
+  }
+  assert.match(views, /import \{ icon \} from '\/icons\.js'/);
+  const detail = await (await get('/detail.js')).text();
+  assert.ok(!detail.includes('▤') && !detail.includes('✕') && !detail.includes('＋'), 'detail.js glyphs replaced');
+  const html = await (await get('/')).text();
+  // static-button glyphs (☰ + ◐) replaced by inline Phosphor SVGs in the shell
+  assert.ok(!html.includes('☰') && !html.includes('◐'), 'index.html static glyphs replaced');
+  assert.match(html, /id="nav-toggle"[^>]*>\s*<svg class="icon"/);
+});
+
+test('grip: two solid rounded vertical bars (not the old dotted ⋮⋮)', async () => {
+  const { get } = makeApp();
+  const css = await (await get('/tokens.css')).text();
+  // the grip draws two bars as pseudo-elements; the old radial-gradient dots are gone
+  assert.match(css, /\.grip::before, \.grip::after \{/);
+  assert.match(css, /\.grip::before \{ left: calc\(50% - 4px\); \}/);
+  assert.match(css, /\.grip::after  \{ left: calc\(50% \+ 2px\); \}/);
+  assert.doesNotMatch(css, /\.grip \{[^}]*radial-gradient/);
+});
+
+test('step edits write through + refresh the list (review-lane bug fix)', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  // the shared step editor takes an onChange and writes edits through to task.steps
+  assert.match(detail, /export function stepsEditorFor\(task, \{ onChange \} = \{\}\)/);
+  assert.match(detail, /task\.steps\.push\(step\)/);       // add writes through
+  assert.match(detail, /task\.steps\.splice\(i, 1\)/);     // delete writes through
+  assert.match(detail, /step\.done = done \? 1 : 0/);      // toggle writes through
+  // the drawer passes a background reload so the list row + review card refresh
+  assert.match(detail, /stepsEditorFor\(task, \{ onChange: \(\) => reload\(\) \}\)/);
+  // the row carries a step-progress indicator that reflects the write-through
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /chip step-count/);
+  assert.match(views, /steps\.filter\(s => s\.done\)\.length/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.chip\.step-count\s*\{/);
 });

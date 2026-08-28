@@ -4,6 +4,7 @@
 // inline row editor and the detail drawer.
 // save(fields) -> Promise<boolean>; on success the field repaints itself.
 import { state } from '/app.js';
+import { icon } from '/icons.js';
 
 function el(tag, className, text) {
   const n = document.createElement(tag);
@@ -67,7 +68,8 @@ export function tagsField(task, save) {
     chips.replaceChildren();
     for (const name of tags) {
       const chip = el('span', 'chip tag', `#${name}`);
-      const x = el('button', 'chip-x', '✕');
+      const x = el('button', 'chip-x');
+      x.append(icon('x', { size: 11 }));
       x.setAttribute('aria-label', `Remove tag ${name}`);
       x.addEventListener('click', async e => {
         e.stopPropagation();
