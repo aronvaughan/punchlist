@@ -50,6 +50,39 @@ function tx(db, fn) {
   catch (e) { try { db.exec('ROLLBACK'); } catch { /* noop */ } throw e; }
 }
 
+// ---- optimistic concurrency (migration 009) ----
+// A mutating door / PATCH may carry an OPTIONAL expected_version (alias
+// if_version) — in the JSON body for body-parsing doors, or as a query param
+// for the body-less ones (claim/complete/approve). When supplied and it does
+// not match the row's current `version`, the write is refused as stale (409)
+// rather than clobbering a change the caller never saw. When omitted, behaviour
+// is unchanged (last-write-wins) — so existing callers keep working. The value
+// is deleted from `body` so it never trips an unknown-field check downstream.
+function takeExpectedVersion(c, body) {
+  let raw;
+  if (body && (body.expected_version !== undefined || body.if_version !== undefined)) {
+    raw = body.expected_version ?? body.if_version;
+    delete body.expected_version;
+    delete body.if_version;
+  } else {
+    raw = c.req.query('expected_version') ?? c.req.query('if_version');
+  }
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ApiError(400, 'expected_version must be a non-negative integer');
+  }
+  return n;
+}
+
+// Guard a read task row against the caller's expected_version (no-op when null).
+function checkVersion(task, want) {
+  if (want !== null && task.version !== want) {
+    throw new ApiError(409, 'task changed since you last read it (stale)',
+      { current_version: task.version });
+  }
+}
+
 function validateTaskBody(body, { partial }) {
   // report is owned by POST /tasks/:id/finish — never client-writable here
   if ('report' in body) throw new ApiError(400, 'report is set by POST /api/v1/tasks/:id/finish');
@@ -408,6 +441,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     // validation and post it to the timeline (kind=answer) before the flip.
     const comment = body.comment;
     delete body.comment;
+    const want = takeExpectedVersion(c, body);
     if (comment !== undefined &&
         (typeof comment !== 'string' || comment.length > CAPS.answer)) {
       throw new ApiError(400, `comment must be a string of at most ${CAPS.answer} chars`);
@@ -455,6 +489,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     // reopen: review → active (the human hands finished work back for rework)
     const isReopen = task.status === 'review' && merged.status === 'active';
     return tx(db, () => {
+      // optimistic-concurrency check against the row as it stands NOW (fresh
+      // read inside the tx — the outside read used to compute `merged` predates
+      // BEGIN IMMEDIATE). No-op unless the caller supplied expected_version.
+      checkVersion(getTask(task.id), want);
       // the optional reopen comment posts BEFORE the status flip so the reason
       // is attached ahead of the "reopened" line (kind=answer — it is
       // feedback-for-rework the agent reads on re-claim)
@@ -467,16 +505,23 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const rank = (merged.project_id !== task.project_id || sectionOf(merged, t) !== sectionOf(task, t))
         ? endOfSectionRank(merged.project_id, sectionOf(merged, t), t)
         : task.rank;
-      db.prepare(
+      // reopen (review→active) is a real state transition — guard the write as a
+      // strict CAS so a concurrent approve/reclaim that already left review is a
+      // clean 409, never a clobber of a committed change back to active.
+      const guard = isReopen ? " AND status='review'" : '';
+      const { changes } = db.prepare(
         `UPDATE tasks SET title=?, notes=?, project_id=?, status=?, when_type=?, when_date=?,
                 due_date=?, due_time=?, recur=?, today_rank=?, rank=?, assignee=?, auto_close=?,
-                template=?, claimed_at=?,
+                template=?, claimed_at=?, version=version+1,
                 completed_at = CASE WHEN ? = 'active' THEN NULL ELSE completed_at END,
-                updated_at=? WHERE id=?`
+                updated_at=? WHERE id=?${guard}`
       ).run(merged.title, merged.notes, merged.project_id, merged.status, merged.when_type,
             merged.when_date, merged.due_date, merged.due_time, recurVal, todayRank, rank,
             merged.assignee, merged.auto_close, merged.template, merged.claimed_at,
             merged.status, now, task.id);
+      if (isReopen && changes !== 1) {
+        throw new ApiError(409, 'task is no longer in review — it was already approved, reopened, or reclaimed');
+      }
       if (body.tags !== undefined) setTags(task.id, body.tags);
       // project state-changing PATCHes into the timeline (status kind, terse
       // one-liner). Reassign, archive/unarchive, and reopen (review→active) are
@@ -533,7 +578,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const now = new Date().toISOString();
     const t = today();
     const { changes } = db.prepare(
-      `UPDATE tasks SET status='done', report=COALESCE(?, report), completed_at=?, updated_at=?
+      `UPDATE tasks SET status='done', report=COALESCE(?, report), completed_at=?, updated_at=?,
+              version=version+1
        WHERE id=? AND status IN (${fromStatuses.map(() => '?').join(', ')})`
     ).run(report, now, now, task.id, ...fromStatuses);
     let spawned_id;
@@ -541,7 +587,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const next = nextDue(JSON.parse(task.recur), task.due_date, t, t);
       spawned_id = spawn(db, task, next, t);
     }
-    return spawned_id;
+    return { changes, spawned_id };
   }
 
   const doneResponse = (c, id, spawned_id) => {
@@ -552,12 +598,18 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
 
   app.post('/api/v1/tasks/:id/complete', c => {
     const id = c.req.param('id');
+    const want = takeExpectedVersion(c, null); // body-less door: query param only
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
-      const spawned_id = toDone(task, ['active']);
-      // project the transition into the timeline (only on a real flip)
-      if (task.status === 'active') postComment(id, c.get('actor'), 'status', 'completed');
+      checkVersion(task, want);
+      if (task.status === 'done') return doneResponse(c, id); // idempotent re-complete
+      // strict CAS: only an active task flips to done. A concurrent claim/block/
+      // archive (or an already-finished task) leaves changes=0 -> 409, never a
+      // silent no-op success on a row we did not actually transition.
+      const { changes, spawned_id } = toDone(task, ['active']);
+      if (changes !== 1) throw new ApiError(409, `cannot complete a ${task.status} task`);
+      postComment(id, c.get('actor'), 'status', 'completed');
       return doneResponse(c, id, spawned_id);
     });
   });
@@ -570,8 +622,18 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   const lastRound = s => (s == null ? null : s.split(ROUND_SEP).pop());
 
   // ---- delegation lifecycle (claim → finish → approve) ----
+  // explicit, actionable 409 messages when a claim loses the race for a task
+  // that is no longer active. blocked is called out specially — only /answer
+  // may leave blocked, so a claim must never resurrect it.
+  const CLAIM_REJECT = {
+    blocked: 'task is blocked — awaiting an answer (only /answer can unblock it)',
+    review: 'task is in review — it has already been finished',
+    done: 'task is already done',
+    archived: 'task is archived',
+  };
   app.post('/api/v1/tasks/:id/claim', c => {
     const id = c.req.param('id');
+    const want = takeExpectedVersion(c, null); // body-less door: query param only
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
@@ -579,14 +641,17 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       // filtering — an unvetted task cannot be worked even by id
       if (!task.vetted) throw new ApiError(403, 'task not vetted for agent execution');
       if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can claim');
+      checkVersion(task, want);
       const now = new Date().toISOString();
-      // guarded: active -> in_progress; re-claiming your own in_progress task
-      // is an idempotent 200 (changes=0, claimed_at kept)
+      // strict CAS: active -> in_progress; re-claiming your own in_progress task
+      // is an idempotent 200 (changes=0, claimed_at kept). version bumps only on
+      // the real flip.
       const { changes } = db.prepare(
-        `UPDATE tasks SET status='in_progress', claimed_at=?, updated_at=? WHERE id=? AND status='active'`
+        `UPDATE tasks SET status='in_progress', claimed_at=?, updated_at=?, version=version+1
+         WHERE id=? AND status='active'`
       ).run(now, now, id);
       if (changes === 0 && task.status !== 'in_progress') {
-        throw new ApiError(409, `cannot claim a ${task.status} task`);
+        throw new ApiError(409, CLAIM_REJECT[task.status] || `cannot claim a ${task.status} task`);
       }
       // only a real active→in_progress flip posts to the timeline; an
       // idempotent re-claim (changes=0) does not repeat the line
@@ -598,6 +663,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   app.post('/api/v1/tasks/:id/finish', async c => {
     const id = c.req.param('id');
     const body = await readJson(c);
+    const want = takeExpectedVersion(c, body);
     for (const k of Object.keys(body)) if (k !== 'report') throw new ApiError(400, `unknown field: ${k}`);
     if (typeof body.report !== 'string' || !body.report.trim() || body.report.length > CAPS.notes) {
       throw new ApiError(400, `report is required (<=${CAPS.notes} chars)`);
@@ -607,6 +673,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (!task) throw new ApiError(404, 'task not found');
       if (!task.vetted) throw new ApiError(403, 'task not vetted for agent execution');
       if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can finish');
+      checkVersion(task, want);
       if (task.status !== 'active' && task.status !== 'in_progress') {
         throw new ApiError(409, `cannot finish a ${task.status} task`);
       }
@@ -618,24 +685,35 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       postComment(id, c.get('actor'), 'report', body.report.trim());
       if (task.auto_close) {
         // straight to done — the final transition, so recurrence spawns here
-        return doneResponse(c, id, toDone(task, ['active', 'in_progress'], { report }));
+        const { changes, spawned_id } = toDone(task, ['active', 'in_progress'], { report });
+        if (changes !== 1) throw new ApiError(409, `cannot finish a ${task.status} task`);
+        return doneResponse(c, id, spawned_id);
       }
-      db.prepare(
-        `UPDATE tasks SET status='review', report=?, updated_at=? WHERE id=? AND status IN ('active', 'in_progress')`
+      // strict CAS: active|in_progress -> review; a concurrent claim/block that
+      // moved the row out from under us leaves changes=0 -> 409, never a clobber.
+      const { changes } = db.prepare(
+        `UPDATE tasks SET status='review', report=?, updated_at=?, version=version+1
+         WHERE id=? AND status IN ('active', 'in_progress')`
       ).run(report, now, id);
+      if (changes !== 1) throw new ApiError(409, `cannot finish a ${task.status} task`);
       return c.json({ task: attach(getTask(id)) });
     });
   });
 
   app.post('/api/v1/tasks/:id/approve', c => {
     const id = c.req.param('id');
+    const want = takeExpectedVersion(c, null); // body-less door: query param only
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
       if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can approve`);
+      checkVersion(task, want);
       if (task.status === 'done') return c.json({ task: attach(task) }); // idempotent
       if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
-      const spawned_id = toDone(task, ['review']);
+      // strict CAS: review -> done (guarded inside toDone); a concurrent reopen
+      // that flipped review->active leaves changes=0 -> 409.
+      const { changes, spawned_id } = toDone(task, ['review']);
+      if (changes !== 1) throw new ApiError(409, `cannot approve a ${task.status} task`);
       postComment(id, c.get('actor'), 'status', 'approved');
       return doneResponse(c, id, spawned_id);
     });
@@ -648,6 +726,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   app.post('/api/v1/tasks/:id/block', async c => {
     const id = c.req.param('id');
     const body = await readJson(c);
+    const want = takeExpectedVersion(c, body);
     for (const k of Object.keys(body)) if (k !== 'question') throw new ApiError(400, `unknown field: ${k}`);
     if (typeof body.question !== 'string' || !body.question.trim() || body.question.length > CAPS.question) {
       throw new ApiError(400, `question is required (<=${CAPS.question} chars)`);
@@ -658,6 +737,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       // same gate as claim/finish: unvetted work cannot be touched by agents
       if (!task.vetted) throw new ApiError(403, 'task not vetted for agent execution');
       if (c.get('actor') !== task.assignee) throw new ApiError(403, 'only the assignee can block');
+      checkVersion(task, want);
       const q = body.question.trim();
       if (task.status === 'blocked') {
         // idempotent re-block: the same question again is a 200 no-op
@@ -669,10 +749,13 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       }
       const now = new Date().toISOString();
       // repeat rounds (block → answer → block again) append like report does;
-      // claimed_at is preserved — blocking pauses the claim, not the work
-      db.prepare(`UPDATE tasks SET status='blocked', question=?, updated_at=?
+      // claimed_at is preserved — blocking pauses the claim, not the work.
+      // strict CAS: a concurrent claim/finish/complete leaves changes=0 -> 409.
+      const { changes } = db.prepare(
+        `UPDATE tasks SET status='blocked', question=?, updated_at=?, version=version+1
                   WHERE id=? AND status IN ('active', 'in_progress')`)
         .run(appendRound(task.question, q, now), now, id);
+      if (changes !== 1) throw new ApiError(409, `cannot block a ${task.status} task`);
       // project this round's question into the timeline (field stays truth)
       postComment(id, c.get('actor'), 'question', q);
       return c.json({ task: attach(getTask(id)) });
@@ -682,6 +765,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   app.post('/api/v1/tasks/:id/answer', async c => {
     const id = c.req.param('id');
     const body = await readJson(c);
+    const want = takeExpectedVersion(c, body);
     for (const k of Object.keys(body)) if (k !== 'answer') throw new ApiError(400, `unknown field: ${k}`);
     if (typeof body.answer !== 'string' || !body.answer.trim() || body.answer.length > CAPS.answer) {
       throw new ApiError(400, `answer is required (<=${CAPS.answer} chars)`);
@@ -690,13 +774,19 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
       if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can answer`);
+      checkVersion(task, want);
       if (task.status !== 'blocked') throw new ApiError(409, `cannot answer a ${task.status} task`);
       const now = new Date().toISOString();
       // blocked → active; question kept alongside the answer so a re-claim
       // sees the full exchange. Repeat rounds append (same rule as report).
-      db.prepare(`UPDATE tasks SET status='active', answer=?, updated_at=?
+      // strict CAS: only a still-blocked row flips — this is the exact race the
+      // hardening targets (UI answer vs. the polling cron), so a lost race is a
+      // clean 409, never a double transition.
+      const { changes } = db.prepare(
+        `UPDATE tasks SET status='active', answer=?, updated_at=?, version=version+1
                   WHERE id=? AND status='blocked'`)
         .run(appendRound(task.answer, body.answer.trim(), now), now, id);
+      if (changes !== 1) throw new ApiError(409, `cannot answer a ${task.status} task`);
       // project this round's answer into the timeline (field stays truth)
       postComment(id, c.get('actor'), 'answer', body.answer.trim());
       return c.json({ task: attach(getTask(id)) });
@@ -711,7 +801,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (!task) throw new ApiError(404, 'task not found');
     if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can vet`);
     if (!task.vetted) {
-      db.prepare('UPDATE tasks SET vetted = 1, updated_at = ? WHERE id = ?')
+      db.prepare('UPDATE tasks SET vetted = 1, updated_at = ?, version = version + 1 WHERE id = ?')
         .run(new Date().toISOString(), id);
     }
     return c.json({ task: attach(getTask(id)) });
@@ -861,7 +951,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
         val = between(rankOf('after_id'), rankOf('before_id'));
         if (val === null) throw new ApiError(409, 'neighbors are not adjacent in that order', { current: currentList() });
       }
-      db.prepare(`UPDATE tasks SET ${col} = ?, updated_at = ? WHERE id = ?`)
+      db.prepare(`UPDATE tasks SET ${col} = ?, updated_at = ?, version = version + 1 WHERE id = ?`)
         .run(val, new Date().toISOString(), task.id);
       postReorderReason(); // agent-reorder discipline: auto-post the reason, if any
       return c.json({ task: attach(getTask(task.id)) });

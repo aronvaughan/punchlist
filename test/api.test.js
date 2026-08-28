@@ -1433,3 +1433,180 @@ test('dedup: quickadd double-submit is guarded too', async () => {
   assert.equal(b.json.id, a.json.id);
   assert.equal(db.prepare("SELECT COUNT(*) c FROM tasks WHERE title = 'water plants'").get().c, 1);
 });
+
+// ---- concurrency hardening: strict compare-and-swap on every state door,
+//      claim rejects blocked/terminal, optimistic-concurrency version token
+//      (2026-08-28) ------------------------------------------------------------
+
+// claim a blocked task is rejected with a clear, blocked-specific message and
+// does NOT resurrect the task (only /answer may leave blocked).
+test('CAS claim: blocked task -> 409 "awaiting an answer", status unchanged', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'which?' } });
+  const r = await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(r.status, 409);
+  assert.match(r.json.error, /blocked — awaiting an answer/);
+  assert.equal(db.prepare('SELECT status FROM tasks WHERE id=?').get(t.id).status, 'blocked');
+});
+
+test('CAS claim: review / done / archived each 409 with a clear message', async () => {
+  const { call } = makeApp();
+  // review
+  const rev = (await call('POST', '/api/v1/tasks', { body: { title: 'r', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${rev.id}/finish`, { token: TOK_CLAUDE, body: { report: 'x' } });
+  const cRev = await call('POST', `/api/v1/tasks/${rev.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(cRev.status, 409);
+  assert.match(cRev.json.error, /in review/);
+  // done (auto_close)
+  const dn = (await call('POST', '/api/v1/tasks', { body: { title: 'd', assignee: 'claude', auto_close: 1 } })).json;
+  await call('POST', `/api/v1/tasks/${dn.id}/finish`, { token: TOK_CLAUDE, body: { report: 'x' } });
+  const cDone = await call('POST', `/api/v1/tasks/${dn.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(cDone.status, 409);
+  assert.match(cDone.json.error, /already done/);
+  // archived
+  const ar = (await call('POST', '/api/v1/tasks', { body: { title: 'a', assignee: 'claude' } })).json;
+  await call('PATCH', `/api/v1/tasks/${ar.id}`, { body: { status: 'archived' } });
+  const cArch = await call('POST', `/api/v1/tasks/${ar.id}/claim`, { token: TOK_CLAUDE });
+  assert.equal(cArch.status, 409);
+  assert.match(cArch.json.error, /archived/);
+});
+
+test('CAS complete: only active flips; in_progress/review -> 409, no clobber; done idempotent', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  const inProg = await call('POST', `/api/v1/tasks/${t.id}/complete`);
+  assert.equal(inProg.status, 409, 'cannot complete an in_progress task');
+  assert.equal(db.prepare('SELECT status FROM tasks WHERE id=?').get(t.id).status, 'in_progress');
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'x' } });
+  const rev = await call('POST', `/api/v1/tasks/${t.id}/complete`);
+  assert.equal(rev.status, 409, 'cannot complete a review task');
+  assert.equal(db.prepare('SELECT status FROM tasks WHERE id=?').get(t.id).status, 'review');
+});
+
+// The observed bug: the UI answers a blocked task while the polling cron acts on
+// it. Both paths are strict CAS now — the answer flips blocked->active exactly
+// once, the loser gets 409, and neither double-transitions.
+test('CAS answer: blocked->active once; a second answer -> 409; concurrent claim loses', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
+  // the cron tries to claim the blocked task at the same moment — it loses
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE })).status, 409);
+  const a1 = await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'do X' } });
+  assert.equal(a1.status, 200);
+  assert.equal(a1.json.task.status, 'active');
+  const a2 = await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'again' } });
+  assert.equal(a2.status, 409, 'no second blocked->active transition');
+  assert.equal(db.prepare("SELECT status FROM tasks WHERE id=?").get(t.id).status, 'active');
+});
+
+// The reopen clobber: PATCH review->active used to be an unguarded write (the
+// row is read OUTSIDE the tx). The reopen path is now guarded by WHERE
+// status='review', and the approve side is a strict CAS too — so when a reopen
+// and an approve race on a review task, exactly ONE wins and the loser 409s
+// rather than dragging the row between states.
+test('CAS reopen: legit review->active works; approve after a reopen -> 409', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'x' } });
+  // legit reopen from review succeeds and does not misfire on the new guard
+  const reopen = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'active', comment: 'redo it' } });
+  assert.equal(reopen.status, 200);
+  assert.equal(reopen.json.status, 'active');
+  // the reopen won the race — a now-late approve finds no review row -> 409
+  const late = await call('POST', `/api/v1/tasks/${t.id}/approve`);
+  assert.equal(late.status, 409);
+  assert.equal(db.prepare('SELECT status FROM tasks WHERE id=?').get(t.id).status, 'active');
+});
+
+// A PATCH status=active on a DONE task is the supported M18 "undo", not a
+// reopen (the row is read as done, so the review-guard never engages) — it must
+// stay a 200 so the hardening does not regress un-complete.
+test('CAS reopen guard does not touch the M18 done->active undo path', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/complete`);
+  const undo = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { status: 'active' } });
+  assert.equal(undo.status, 200);
+  assert.equal(undo.json.status, 'active');
+});
+
+test('CAS finish/block: cannot finish or block a blocked task, status preserved', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'r' } })).status, 409);
+  assert.equal(db.prepare('SELECT status FROM tasks WHERE id=?').get(t.id).status, 'blocked');
+});
+
+// ---- optimistic concurrency: the version token ----
+test('version: present on payload, starts at 0, bumps on each mutation', async () => {
+  const { call } = makeApp();
+  const created = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  assert.equal(created.version, 0);
+  const patched = (await call('PATCH', `/api/v1/tasks/${created.id}`, { body: { title: 'job2' } })).json;
+  assert.equal(patched.version, 1);
+  const claimed = (await call('POST', `/api/v1/tasks/${created.id}/claim`, { token: TOK_CLAUDE })).json.task;
+  assert.equal(claimed.version, 2);
+  const finished = (await call('POST', `/api/v1/tasks/${created.id}/finish`, { token: TOK_CLAUDE, body: { report: 'r' } })).json.task;
+  assert.equal(finished.version, 3);
+  const approved = (await call('POST', `/api/v1/tasks/${created.id}/approve`)).json.task;
+  assert.equal(approved.version, 4);
+});
+
+test('version: idempotent re-claim does NOT bump (no real flip)', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+  const v1 = (await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE })).json.task.version;
+  const v2 = (await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE })).json.task.version;
+  assert.equal(v1, v2, 'idempotent re-claim keeps the same version');
+});
+
+test('expected_version: omitted works; match 200; mismatch 409 stale (PATCH body)', async () => {
+  const { call, db } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job' } })).json;
+  assert.equal(t.version, 0);
+  // omitted -> unchanged behavior
+  const plain = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { title: 'a' } });
+  assert.equal(plain.status, 200);
+  assert.equal(plain.json.version, 1);
+  // match -> 200
+  const ok = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { title: 'b', expected_version: 1 } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.version, 2);
+  // mismatch -> 409 stale, no change
+  const stale = await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { title: 'c', expected_version: 1 } });
+  assert.equal(stale.status, 409);
+  assert.match(stale.json.error, /stale/);
+  assert.equal(stale.json.current_version, 2);
+  assert.equal(db.prepare('SELECT title FROM tasks WHERE id=?').get(t.id).title, 'b', 'no clobber on stale');
+});
+
+test('expected_version: query param on body-less doors (claim/complete); if_version alias', async () => {
+  const { call, db } = makeApp();
+  // complete via query param
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job' } })).json;
+  const bad = await call('POST', `/api/v1/tasks/${t.id}/complete?expected_version=9`);
+  assert.equal(bad.status, 409);
+  assert.match(bad.json.error, /stale/);
+  assert.equal(db.prepare('SELECT status FROM tasks WHERE id=?').get(t.id).status, 'active', 'not completed on stale');
+  const good = await call('POST', `/api/v1/tasks/${t.id}/complete?expected_version=0`);
+  assert.equal(good.status, 200);
+  assert.equal(good.json.task.status, 'done');
+  // claim via if_version alias
+  const t2 = (await call('POST', '/api/v1/tasks', { body: { title: 'j2', assignee: 'claude' } })).json;
+  assert.equal((await call('POST', `/api/v1/tasks/${t2.id}/claim?if_version=7`, { token: TOK_CLAUDE })).status, 409);
+  assert.equal((await call('POST', `/api/v1/tasks/${t2.id}/claim?if_version=0`, { token: TOK_CLAUDE })).status, 200);
+});
+
+test('expected_version: non-integer rejected 400', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job' } })).json;
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { title: 'x', expected_version: 'nope' } })).status, 400);
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/complete?expected_version=-1`)).status, 400);
+});
