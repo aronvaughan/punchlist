@@ -11,7 +11,7 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
   assert.deepEqual(versions.map(v => v.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -118,7 +118,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
 
   migrate(); // real migrations dir — applies 002 (rebuild), 003 (vetting), 004 (rebuild), 005 (attachments)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version']);
   // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
@@ -240,4 +240,36 @@ test('ulid: 26 chars, lexicographically time-ordered', () => {
   assert.equal(a.length, 26);
   assert.ok(a < b);
   assert.match(a, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+});
+
+test('009-task-version upgrades a lived-in 008 db: data survives; version column lands at 0, no rebuild', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'punchlist.db');
+  // seed a database that knows every migration up to 008 (no 009 yet)
+  const migDirPre = join(dir, 'migs-pre');
+  mkdirSync(migDirPre);
+  for (const f of ['001-init.sql', '002-delegation.sql', '003-vetting.sql', '004-needs-input.sql',
+                   '005-attachments.sql', '006-comments.sql', '007-template.sql', '008-view-ranks.sql']) {
+    writeFileSync(join(migDirPre, f), readFileSync(join(import.meta.dirname, '..', 'migrations', f)));
+  }
+  const { db, migrate } = open(dbPath);
+  migrate(migDirPre);
+  db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,vetted,created_at,updated_at)
+              VALUES ('t1','carried over','active','alex','claude',1,'t','t')`).run();
+  // pre-009 there is no version column at all
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM pragma_table_info('tasks') WHERE name='version'`).get().c, 0);
+
+  migrate(); // real dir — applies 009 (plain ADD COLUMN, no rebuild)
+  assert.equal(db.prepare('SELECT version FROM schema_migrations WHERE version=?').get('009-task-version').version,
+    '009-task-version');
+  // existing row survived and adopted the default version 0
+  const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
+  assert.equal(t1.title, 'carried over');
+  assert.equal(t1.assignee, 'claude');
+  assert.equal(t1.version, 0);
+  // a fresh insert also defaults to 0 and the column is a plain integer
+  db.prepare(`INSERT INTO tasks (id,title,status,created_at,updated_at) VALUES ('t2','x','active','t','t')`).run();
+  assert.equal(db.prepare('SELECT version FROM tasks WHERE id=?').get('t2').version, 0);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  rmSync(dir, { recursive: true, force: true });
 });
