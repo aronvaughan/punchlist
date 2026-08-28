@@ -800,10 +800,10 @@ html[data-theme="conifer"] {
   padding-left: 8px;
   border-left: 1px solid var(--line);
 }
-/* every project is a reparent drop target: empty child lists keep a small
-   hittable height AT REST (a leaf can't be dropped onto a 0-height lane —
-   that was the broken-drag bug) and grow + highlight while a drag is live */
-.manage-children:empty { min-height: 14px; }
+/* every project is a reparent drop target, but an EMPTY child list must be
+   invisible at rest — no height, no dangling border stub under the row — and
+   only becomes a hittable, highlighted lane while a drag is live */
+.manage-children:empty { min-height: 0; border-left-color: transparent; }
 .manage-body.dragging .manage-children:empty {
   min-height: 30px;
   border-left-color: var(--accent);

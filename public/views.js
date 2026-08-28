@@ -372,9 +372,26 @@ async function reloadManage() {
   renderManageTree();
 }
 
+// derive {after_id?, before_id?} for a dropped <li> from its sibling <li>s in
+// the target list: the row ABOVE is the after_id (we land below it → lower rank
+// neighbor), the row BELOW is the before_id (we land above it) — the same
+// after/before convention the task reorder uses. Returns null when there are no
+// project siblings (dropped into an empty list → caller falls back to a plain
+// parent_id PATCH, since the reorder endpoint needs a neighbor).
+function projNeighborBody(li) {
+  const body = {};
+  const above = li.previousElementSibling?.dataset?.projectId;
+  const below = li.nextElementSibling?.dataset?.projectId;
+  if (above) body.after_id = above;
+  if (below) body.before_id = below;
+  return (body.after_id || body.before_id) ? body : null;
+}
+
 // nested SortableJS: each children <ul> (and the (top level) zone) is a drop
-// target in one group. Dropping a row into a list reparents it to that list's
-// project; the API's cycle check (400) is the backstop → toast + reload truth.
+// target in one group. A drop that stays in the same list REORDERS the project
+// among its siblings (rank); a drop into a different list REPARENTS it — and,
+// when it lands next to siblings, sets its rank so it stays where it was
+// dropped. The API is the source of truth (cycle check 400) → toast + reload.
 function manageSortableOpts() {
   return {
     group: 'proj-move',
@@ -384,15 +401,26 @@ function manageSortableOpts() {
     onStart: () => manageDragActive(true),
     onEnd: async evt => {
       manageDragActive(false);
-      // same-list reorder isn't persisted for projects → restore server order
-      if (evt.to === evt.from && evt.oldIndex !== evt.newIndex) await reloadManage();
+      // cross-list moves are handled by onAdd; here only same-list reorders
+      if (evt.to !== evt.from || evt.oldIndex === evt.newIndex) return;
+      const id = evt.item.dataset.projectId;
+      const body = projNeighborBody(evt.item);
+      if (body) {
+        try { await api('POST', `/projects/${id}/reorder`, body); }
+        catch (e) { toast(`Reorder failed: ${e.message}`); }
+      }
+      await reloadManage();
     },
     onAdd: async evt => {
       manageDragActive(false);
       const id = evt.item.dataset.projectId;
       const parentId = evt.to.dataset.parentId || null;
+      const neighbors = projNeighborBody(evt.item);
       try {
-        await api('PATCH', `/projects/${id}`, { parent_id: parentId });
+        // reparent AND place at the drop position when there are neighbors;
+        // an empty target list has none → a plain reparent (appends by rank)
+        if (neighbors) await api('POST', `/projects/${id}/reorder`, { parent_id: parentId, ...neighbors });
+        else await api('PATCH', `/projects/${id}`, { parent_id: parentId });
         toast(parentId ? 'Moved' : 'Moved to top level', 'success');
       } catch (e) {
         toast(e.status === 400 ? 'Cannot move a project into its own subtree' : `Move failed: ${e.message}`);

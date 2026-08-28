@@ -1270,6 +1270,83 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return c.json(getProject(project.id));
   });
 
+  // Reorder a project among its SIBLINGS (fractional rank), mirroring the task
+  // reorder's neighbor→between()→renormalize-in-tx shape. {before_id?, after_id?}
+  // name the target neighbors (after_id = the sibling it lands below, i.e. lower
+  // rank; before_id = the sibling above it — same convention as tasks). An
+  // optional {parent_id} makes it a combined reparent+reorder: the project is
+  // moved under that parent AND placed at the drop position in one write (drop
+  // into an EMPTY parent has no neighbors — the dialog PATCHes parent_id there).
+  // Admin-only. Scoped strictly to the target parent's children, so reordering
+  // under parent A never renormalizes parent B.
+  app.post('/api/v1/projects/:id/reorder', async c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can reorder projects`);
+    const project = getProject(c.req.param('id'));
+    if (!project) throw new ApiError(404, 'project not found');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) {
+      if (!['before_id', 'after_id', 'parent_id'].includes(k)) throw new ApiError(400, `unknown field: ${k}`);
+    }
+    if (!body.before_id && !body.after_id) throw new ApiError(400, 'before_id or after_id required');
+
+    // target parent: an explicit parent_id (combined reparent+reorder) or, when
+    // absent, the project's current parent (a pure sibling reorder). null = top.
+    const reparenting = Object.prototype.hasOwnProperty.call(body, 'parent_id');
+    const targetParent = reparenting ? (body.parent_id ?? null) : (project.parent_id ?? null);
+    if (reparenting && targetParent !== null) {
+      // same cycle guard as PATCH: a project can't move into its own subtree
+      let cur = targetParent, hops = 0;
+      while (cur != null) {
+        if (cur === project.id) throw new ApiError(400, 'parent_id would create a cycle');
+        const p = getProject(cur);
+        if (!p) throw new ApiError(400, 'parent project not found');
+        cur = p.parent_id;
+        if (++hops > 100) throw new ApiError(400, 'project tree too deep');
+      }
+    }
+
+    // siblings under the target parent, in the same COALESCE(rank) order as GET
+    const siblingOrder = () => db.prepare(
+      `SELECT id, COALESCE(rank, 9.0e18) AS k FROM projects WHERE parent_id IS ?
+       ORDER BY k, id`).all(targetParent);
+    // neighbors must be distinct siblings under the target parent (never the row itself)
+    const neighbors = {};
+    for (const key of ['after_id', 'before_id']) {
+      if (!body[key]) continue;
+      const n = getProject(body[key]);
+      if (!n || n.id === project.id || (n.parent_id ?? null) !== targetParent) {
+        throw new ApiError(409, `${key} is not a sibling in the target order`);
+      }
+      neighbors[key] = n;
+    }
+
+    const scope = { table: 'projects', column: 'rank', where: 'parent_id IS ?', args: [targetParent] };
+    return tx(db, () => {
+      // single-neighbor => "directly adjacent to it": derive the missing bound
+      // from the visible sibling order (excluding the moved row), same as tasks
+      const order = siblingOrder().filter(s => s.id !== project.id);
+      const implicit = {};
+      if (!neighbors.after_id !== !neighbors.before_id) {
+        const given = neighbors.after_id ? 'after_id' : 'before_id';
+        const idx = order.findIndex(s => s.id === neighbors[given].id);
+        const adj = given === 'after_id' ? order[idx + 1] : order[idx - 1];
+        if (adj) implicit[given === 'after_id' ? 'before_id' : 'after_id'] = adj;
+      }
+      const bound = key => neighbors[key] ?? implicit[key];
+      const rankOf = key => bound(key) ? getProject(bound(key).id).rank : null;
+      let val = between(rankOf('after_id'), rankOf('before_id'));
+      const anyNull = ['after_id', 'before_id'].some(k => bound(k) && rankOf(k) === null);
+      if (val === null || anyNull) {
+        renormalize(db, scope); // same tx as the write (design M10)
+        val = between(rankOf('after_id'), rankOf('before_id'));
+        if (val === null) throw new ApiError(409, 'neighbors are not adjacent in that order');
+      }
+      db.prepare('UPDATE projects SET parent_id = ?, rank = ?, updated_at = ? WHERE id = ?')
+        .run(targetParent, val, new Date().toISOString(), project.id);
+      return c.json(getProject(project.id));
+    });
+  });
+
   // ---- templates (read-only bridge to the punchlist-templates repo) ----
   // The templates repo's `plt` regenerates templates/index.json on any change;
   // we READ that file (never shell plt — least-coupled bridge). Locate the repo

@@ -632,6 +632,69 @@ test('projects: create/list/patch, duplicate name 409, parent cycle 400', async 
   assert.equal((await call('PATCH', '/api/v1/projects/NOPE', { body: { name: 'x' } })).status, 404);
 });
 
+test('project reorder: sibling rank persists among top-level projects; admin-only; neighbors must be siblings', async () => {
+  const { call } = makeApp();
+  const mk = async n => (await call('POST', '/api/v1/projects', { body: { name: n } })).json;
+  const a = await mk('A'), b = await mk('B'), c = await mk('C');
+  const tops = async () => (await call('GET', '/api/v1/projects')).json.items
+    .filter(p => p.parent_id == null).map(p => p.name);
+  assert.deepEqual(await tops(), ['A', 'B', 'C']);
+  // move C to the very top (single neighbor: before A)
+  const r = await call('POST', `/api/v1/projects/${c.id}/reorder`, { body: { before_id: a.id } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await tops(), ['C', 'A', 'B']);
+  // move C back between A and B (two neighbors)
+  await call('POST', `/api/v1/projects/${c.id}/reorder`, { body: { after_id: a.id, before_id: b.id } });
+  assert.deepEqual(await tops(), ['A', 'C', 'B']);
+  // a non-admin (claude) cannot reorder projects
+  assert.equal((await call('POST', `/api/v1/projects/${c.id}/reorder`,
+    { token: TOK_CLAUDE, body: { before_id: a.id } })).status, 403);
+  // no neighbor -> 400; missing project -> 404
+  assert.equal((await call('POST', `/api/v1/projects/${c.id}/reorder`, { body: {} })).status, 400);
+  assert.equal((await call('POST', '/api/v1/projects/NOPE/reorder', { body: { before_id: a.id } })).status, 404);
+  // a neighbor under a different parent is not a sibling -> 409
+  const child = (await call('POST', '/api/v1/projects', { body: { name: 'Ac', parent_id: a.id } })).json;
+  assert.equal((await call('POST', `/api/v1/projects/${b.id}/reorder`,
+    { body: { after_id: child.id } })).status, 409);
+});
+
+test('project reorder is scoped to siblings: reordering under parent P1 never touches P2 order', async () => {
+  const { call } = makeApp();
+  const mk = async (n, parent) => (await call('POST', '/api/v1/projects',
+    { body: { name: n, ...(parent ? { parent_id: parent } : {}) } })).json;
+  const p1 = await mk('P1'), p2 = await mk('P2');
+  const a1 = await mk('a1', p1.id), a2 = await mk('a2', p1.id), a3 = await mk('a3', p1.id);
+  const b1 = await mk('b1', p2.id), b2 = await mk('b2', p2.id), b3 = await mk('b3', p2.id);
+  const kids = async pid => (await call('GET', '/api/v1/projects?limit=500')).json.items
+    .filter(p => p.parent_id === pid).map(p => p.name);
+  // move a3 to the top under P1
+  const r = await call('POST', `/api/v1/projects/${a3.id}/reorder`, { body: { before_id: a1.id } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await kids(p1.id), ['a3', 'a1', 'a2']);
+  // P2's order is untouched
+  assert.deepEqual(await kids(p2.id), ['b1', 'b2', 'b3']);
+  void a2; void b2; void b3;
+});
+
+test('project reorder: combined reparent + position sets parent_id AND rank (lands where dropped)', async () => {
+  const { call } = makeApp();
+  const mk = async (n, parent) => (await call('POST', '/api/v1/projects',
+    { body: { name: n, ...(parent ? { parent_id: parent } : {}) } })).json;
+  const q = await mk('Q');
+  const q1 = await mk('Q1', q.id), q2 = await mk('Q2', q.id);
+  const t = await mk('T'); // top-level, will move under Q between Q1 and Q2
+  const r = await call('POST', `/api/v1/projects/${t.id}/reorder`,
+    { body: { parent_id: q.id, after_id: q1.id, before_id: q2.id } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.parent_id, q.id);
+  const kids = (await call('GET', '/api/v1/projects?limit=500')).json.items
+    .filter(p => p.parent_id === q.id).map(p => p.name);
+  assert.deepEqual(kids, ['Q1', 'T', 'Q2']);
+  // reparent into its own subtree is rejected (cycle guard)
+  assert.equal((await call('POST', `/api/v1/projects/${q.id}/reorder`,
+    { body: { parent_id: q1.id, before_id: t.id } })).status, 400);
+});
+
 test('projects list paginates: limit + keyset cursor, bad cursor 400', async () => {
   const { call } = makeApp();
   for (const n of ['A', 'B', 'C', 'D', 'E']) await call('POST', '/api/v1/projects', { body: { name: n } });
