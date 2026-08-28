@@ -851,11 +851,12 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.addEventListener('click', e => { e.stopPropagation(); vetTask(task.id); });
     subline.append(chip);
   }
-  // attachment count chip: a paperclip glyph + N when the task carries images
+  // attachment count chip: a paperclip glyph + N when the task carries any
+  // attachments (images and documents both count)
   if (task.attachment_count > 0) {
     const chip = el('span', 'chip attach-count');
     chip.append(icon('paperclip', { size: 12 }), el('span', 'pill-text', String(task.attachment_count)));
-    chip.setAttribute('aria-label', `${task.attachment_count} image${task.attachment_count === 1 ? '' : 's'} attached`);
+    chip.setAttribute('aria-label', `${task.attachment_count} attachment${task.attachment_count === 1 ? '' : 's'}`);
     subline.append(chip);
   }
   // comment count chip: a small chat glyph + N when the task's timeline has activity

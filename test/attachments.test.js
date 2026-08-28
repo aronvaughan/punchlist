@@ -25,12 +25,13 @@ const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]),
 const GIF = Buffer.from('GIF89a' + '\x01\x00\x01\x00' + 'junkjunkjunk');
 const TXT = Buffer.from('hello, this is definitely not an image at all');
 
-function makeApp({ maxUpload } = {}) {
+function makeApp({ maxUpload, maxDoc, docRoots, untrusted } = {}) {
   const { db, migrate } = open(':memory:');
   migrate();
   const mediaDir = mkdtempSync(join(tmpdir(), 'punchlist-media-'));
   const app = buildApp({
-    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE }, today: () => TODAY, mediaDir, maxUpload });
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE }, today: () => TODAY, mediaDir,
+    maxUpload, maxDoc, docRoots, untrusted });
 
   const call = async (method, path, { body, token = TOK_ARON } = {}) => {
     const headers = {};
@@ -70,16 +71,16 @@ function makeApp({ maxUpload } = {}) {
 }
 
 // ---- magic-byte validation ----
-test('upload: PNG and JPEG accepted; GIF and text rejected 415', async () => {
+test('upload: PNG and JPEG accepted; GIF rejected 415', async () => {
   const a = makeApp();
   const task = await a.newTask();
   assert.equal((await a.upload(task.id, PNG, { contentType: 'image/png' })).status, 201);
   assert.equal((await a.upload(task.id, JPEG, { contentType: 'image/jpeg', filename: 'p.jpg' })).status, 201);
   const gif = await a.upload(task.id, GIF, { contentType: 'image/gif', filename: 'x.gif' });
   assert.equal(gif.status, 415);
-  assert.match(gif.json.error, /only JPEG and PNG/);
-  assert.equal((await a.upload(task.id, TXT, { contentType: 'text/plain', filename: 'x.txt' })).status, 415);
-  // sniff is authoritative: a text file RENAMED to .png with an image mime is
+  assert.match(gif.json.error, /only JPEG, PNG/);
+  // a text body declared as an IMAGE takes the image path — the sniff is
+  // authoritative, so a text file RENAMED to .png with an image mime is
   // still rejected on its bytes
   assert.equal((await a.upload(task.id, TXT, { contentType: 'image/png', filename: 'evil.png' })).status, 415);
   a.cleanup();
@@ -347,4 +348,220 @@ test('delete task: nulls spawned_from back-references so children never block it
   assert.ok(row);
   assert.equal(row.spawned_from, null);
   a.cleanup();
+});
+
+// ---- document uploads (.md/.txt): migration 010 ----
+import { mkdtempSync as mkdtmp2, writeFileSync as wf, symlinkSync } from 'node:fs';
+
+const MD = Buffer.from('# Title\n\nSome **bold** and a list:\n\n- one\n- two\n');
+const TXTDOC = Buffer.from('plain text, line one\nline two\n');
+const BINARY = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x42]); // has NUL → not text
+
+test('doc upload: .md and .txt accepted, text-validated, stored with doc mime', async () => {
+  const a = makeApp();
+  const task = await a.newTask();
+  const md = await a.upload(task.id, MD, { contentType: 'text/markdown', filename: 'notes.md' });
+  assert.equal(md.status, 201);
+  assert.equal(md.json.mime, 'text/markdown');
+  assert.equal(md.json.kind, 'file');
+  assert.equal(md.json.path, null);
+  assert.equal(md.json.filename, 'notes.md');
+  const txt = await a.upload(task.id, TXTDOC, { contentType: 'text/plain', filename: 'log.txt' });
+  assert.equal(txt.status, 201);
+  assert.equal(txt.json.mime, 'text/plain');
+  // GET returns the EXACT bytes + a text content-type + nosniff
+  const g = await a.getBytes(md.json.id);
+  assert.equal(g.status, 200);
+  assert.equal(g.buf.toString(), MD.toString());
+  assert.match(g.headers.get('Content-Type'), /^text\/markdown/);
+  assert.equal(g.headers.get('X-Content-Type-Options'), 'nosniff');
+  a.cleanup();
+});
+
+test('doc upload: oversize .md → 413 (separate doc cap)', async () => {
+  const a = makeApp({ maxDoc: 64 });
+  const task = await a.newTask();
+  const big = Buffer.from('x'.repeat(128));
+  const r = await a.upload(task.id, big, { contentType: 'text/markdown', filename: 'big.md' });
+  assert.equal(r.status, 413);
+  // a small doc still fits under the doc cap
+  assert.equal((await a.upload(task.id, Buffer.from('ok'), { contentType: 'text/markdown' })).status, 201);
+  a.cleanup();
+});
+
+test('doc upload: binary bytes declared as .md → 415 (not valid UTF-8 text)', async () => {
+  const a = makeApp();
+  const task = await a.newTask();
+  const r = await a.upload(task.id, BINARY, { contentType: 'text/markdown', filename: 'evil.md' });
+  assert.equal(r.status, 415);
+  assert.match(r.json.error, /UTF-8 text/);
+  a.cleanup();
+});
+
+test('doc upload retention: on_done doc is reaped when the task completes', async () => {
+  const a = makeApp();
+  const task = await a.newTask();
+  const md = (await a.upload(task.id, MD,
+    { contentType: 'text/markdown', filename: 'r.md', query: '?retention=on_done' })).json;
+  const f = filePathFor(a.mediaDir, md.id, md.mime);
+  assert.ok(existsSync(f));
+  a.db.prepare(`UPDATE tasks SET status='done' WHERE id=?`).run(task.id);
+  const { deleted } = reap({ db: a.db, mediaDir: a.mediaDir, today: TODAY });
+  assert.equal(deleted.length, 1);
+  assert.ok(!existsSync(f));
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM attachments WHERE id=?').get(md.id).c, 0);
+  a.cleanup();
+});
+
+test('doc upload by an untrusted actor is flagged via created_by', async () => {
+  const a = makeApp({ untrusted: ['claude'] });
+  const task = await a.newTask('t', TOK_ARON); // alex is trusted, so the task is vetted
+  const md = (await a.upload(task.id, MD,
+    { contentType: 'text/markdown', filename: 'sketchy.md', token: TOK_CLAUDE })).json;
+  assert.equal(md.created_by, 'claude'); // the UI compares this against /config untrusted_actors
+  const cfg = await a.call('GET', '/api/v1/config');
+  assert.deepEqual(cfg.json.untrusted_actors, ['claude']);
+  a.cleanup();
+});
+
+// ---- local-document links ----
+function withRoot(fn) {
+  const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+  try { return fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test('link: unconfigured roots → 403 "not configured"; config reports doc_linking off', async () => {
+  const a = makeApp(); // no docRoots
+  const task = await a.newTask();
+  const r = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`, { body: { path: '/x/y.md' } });
+  assert.equal(r.status, 403);
+  assert.match(r.json.error, /not configured/);
+  const cfg = await a.call('GET', '/api/v1/config');
+  assert.equal(cfg.json.doc_linking, false);
+  a.cleanup();
+});
+
+test('link: a .md inside an allowed root → 201, GET streams its LIVE contents', async () => {
+  await (async () => {
+    const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+    const file = join(root, 'vault-note.md');
+    wf(file, '# Live\n\nfirst version\n');
+    const a = makeApp({ docRoots: [root] });
+    const task = await a.newTask();
+    const cfg = await a.call('GET', '/api/v1/config');
+    assert.equal(cfg.json.doc_linking, true);
+    const link = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+      { body: { path: file, title: 'My Note' } });
+    assert.equal(link.status, 201);
+    assert.equal(link.json.kind, 'link');
+    assert.equal(link.json.mime, 'text/markdown');
+    assert.equal(link.json.filename, 'My Note');
+    assert.equal(link.json.bytes, 0);
+    // GET streams the current file contents
+    let g = await a.getBytes(link.json.id);
+    assert.equal(g.status, 200);
+    assert.equal(g.buf.toString(), '# Live\n\nfirst version\n');
+    // edit the file on disk → GET reflects the change (live)
+    wf(file, '# Live\n\nSECOND version\n');
+    g = await a.getBytes(link.json.id);
+    assert.equal(g.buf.toString(), '# Live\n\nSECOND version\n');
+    a.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  })();
+});
+
+test('link: path outside the roots → 403; a symlink escaping the root → 403', async () => {
+  const outside = mkdtmp2(join(tmpdir(), 'punchlist-outside-'));
+  const secret = join(outside, 'secret.md');
+  wf(secret, 'secret\n');
+  const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+  // a symlink INSIDE the root pointing OUT of it must be rejected (realpath escapes)
+  const escape = join(root, 'escape.md');
+  symlinkSync(secret, escape);
+  const a = makeApp({ docRoots: [root] });
+  const task = await a.newTask();
+  const outsideRes = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: secret } });
+  assert.equal(outsideRes.status, 403);
+  assert.match(outsideRes.json.error, /outside the allowed/);
+  const symRes = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: escape } });
+  assert.equal(symRes.status, 403);
+  a.cleanup();
+  rmSync(outside, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('link: non-.md/.txt → 415; missing file → 404 at create; untrusted actor → 403', async () => {
+  const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+  wf(join(root, 'ok.md'), 'ok\n');
+  const a = makeApp({ docRoots: [root], untrusted: ['claude'] });
+  const task = await a.newTask();
+  // a .pdf under the root is still rejected on extension
+  wf(join(root, 'doc.pdf'), '%PDF');
+  const pdf = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: join(root, 'doc.pdf') } });
+  assert.equal(pdf.status, 415);
+  // a .md that does not exist → 404
+  const missing = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: join(root, 'nope.md') } });
+  assert.equal(missing.status, 404);
+  // an untrusted actor may not create links even with a good path
+  const untrusted = await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: join(root, 'ok.md') }, token: TOK_CLAUDE });
+  assert.equal(untrusted.status, 403);
+  a.cleanup();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('link GET: 404 "linked file not found" once the file is removed', async () => {
+  const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+  const file = join(root, 'ephemeral.md');
+  wf(file, 'here now\n');
+  const a = makeApp({ docRoots: [root] });
+  const task = await a.newTask();
+  const link = (await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: file } })).json;
+  assert.equal((await a.getBytes(link.id)).status, 200);
+  rmSync(file, { force: true });
+  const g = await a.getBytes(link.id);
+  assert.equal(g.status, 404);
+  a.cleanup();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('link GET: re-validates roots — a link whose root is no longer configured → 404', async () => {
+  const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+  const file = join(root, 'note.md');
+  wf(file, 'body\n');
+  // create the link while the root is configured
+  const withRoots = makeApp({ docRoots: [root] });
+  const task = await withRoots.newTask();
+  const link = (await withRoots.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: file } })).json;
+  assert.equal((await withRoots.getBytes(link.id)).status, 200);
+  // now the DELETE-only guard: point a fresh app with NO roots at the same db
+  const noRoots = buildApp({
+    db: withRoots.db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE }, today: () => TODAY,
+    mediaDir: withRoots.mediaDir, docRoots: [] });
+  const res = await noRoots.fetch(new Request(`http://x/api/v1/attachments/${link.id}`,
+    { headers: { Authorization: `Bearer ${TOK_ARON}` } }));
+  assert.equal(res.status, 404); // re-validation fails: root no longer allowed
+  withRoots.cleanup();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('link delete: removes the row but never the linked file on disk', async () => {
+  const root = mkdtmp2(join(tmpdir(), 'punchlist-docroot-'));
+  const file = join(root, 'keepme.md');
+  wf(file, 'precious\n');
+  const a = makeApp({ docRoots: [root] });
+  const task = await a.newTask();
+  const link = (await a.call('POST', `/api/v1/tasks/${task.id}/attachments/link`,
+    { body: { path: file } })).json;
+  assert.equal((await a.call('DELETE', `/api/v1/attachments/${link.id}`)).status, 200);
+  assert.equal(a.db.prepare('SELECT COUNT(*) c FROM attachments WHERE id=?').get(link.id).c, 0);
+  assert.ok(existsSync(file)); // the real file is untouched
+  a.cleanup();
+  rmSync(root, { recursive: true, force: true });
 });

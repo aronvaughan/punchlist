@@ -16,12 +16,16 @@ import { filePathFor } from './media.js';
 // Pure selection + deletion. Returns {deleted:[{id,task_id,reason}], errors}.
 export function reap({ db, mediaDir, today = new Date().toLocaleDateString('en-CA'), log = () => {} }) {
   // A row fires when its rule is met. Report the reason for the log trail.
+  // kind='file' only: a link stores no bytes and references a file we don't own,
+  // so it is never reaped (links are always retention='keep' anyway — this is a
+  // belt-and-braces guard so the reaper can never touch a linked document).
   const rows = db.prepare(
     `SELECT a.id, a.task_id, a.mime, a.retention, a.expires_at, t.status AS task_status
        FROM attachments a
        LEFT JOIN tasks t ON t.id = a.task_id
-      WHERE (a.retention = 'on_done' AND t.status IN ('done','archived'))
-         OR (a.expires_at IS NOT NULL AND a.expires_at <= ?)`
+      WHERE a.kind = 'file'
+        AND ((a.retention = 'on_done' AND t.status IN ('done','archived'))
+         OR (a.expires_at IS NOT NULL AND a.expires_at <= ?))`
   ).all(today);
 
   const deleted = [];
