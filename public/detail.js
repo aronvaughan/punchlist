@@ -131,23 +131,61 @@ function renderDrawer() {
 function rebuild() { renderDrawer(); }
 
 // ---- when: Today | date | Someday | Clear ----
+// When as ONE calendar control (icon→value pattern, like Due). Unset = a bare
+// calendar icon; set = a pill of the value (Today / mm/dd / Someday). Both open
+// the shared #whenpick-dialog.
+export function whenLabel(t) {
+  if (t.when_type === 'someday') return 'Someday';
+  if (t.when_type === 'date' && t.when_date) {
+    return t.when_date === todayISO() ? 'Today' : dueShort(t.when_date);
+  }
+  return null;
+}
+
+// Populate + open the shared When picker, binding to a task's apply(fields)->bool
+// and a render() callback. Quick actions (Today/Someday/Clear) and a date pick
+// each apply then close; Done just closes. Reused by the drawer and the inline row.
+export function openWhenPicker(initial, apply, render) {
+  const dlg = document.getElementById('whenpick-dialog');
+  const date = document.getElementById('whenpick-date');
+  date.value = (initial.when_type === 'date' && initial.when_date) ? initial.when_date : todayISO();
+  const set = async (fields) => { if (await apply(fields)) render(); dlg.open = false; };
+  document.getElementById('whenpick-today').onclick = () => set({ when_type: 'date', when_date: todayISO() });
+  document.getElementById('whenpick-someday').onclick = () => set({ when_type: 'someday' });
+  document.getElementById('whenpick-clear').onclick = () => set({ when_type: null });
+  date.onchange = () => set({ when_type: 'date', when_date: date.value || null });
+  document.getElementById('whenpick-done').onclick = () => { render(); dlg.open = false; };
+  dlg.open = true;
+}
+
 function whenEditor() {
-  const seg = el('div', 'seg');
-  const isToday = current.when_type === 'date' && current.when_date === todayISO();
-  const mk = (label, on, fn) => {
-    const b = el('button', on ? 'on' : null, label);
-    b.addEventListener('click', async () => { if (await fn()) rebuild(); });
-    seg.append(b);
+  const wrap = el('div', 'due-editor');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('calendar', { size: 15 }));
+  btn.setAttribute('aria-label', 'Schedule (when)');
+  btn.title = 'Schedule (when)';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Edit when';
+
+  const render = () => {
+    const w = whenLabel(current);
+    if (w) {
+      pill.replaceChildren(icon('calendar', { size: 13 }), el('span', 'pill-text', w));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
   };
-  mk('Today', isToday, () => patch({ when_type: 'date', when_date: todayISO() }));
-  const dateLabel = current.when_type === 'date' && !isToday ? current.when_date : 'Date…';
-  mk(dateLabel, current.when_type === 'date' && !isToday, async () => {
-    const d = await pickWhen(current.when_date);
-    return d ? patch({ when_type: 'date', when_date: d }) : false;
-  });
-  mk('Someday', current.when_type === 'someday', () => patch({ when_type: 'someday' }));
-  mk('Clear', false, () => patch({ when_type: null }));
-  return labeled('When', seg);
+  const open = () => openWhenPicker(current, patch, render);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  render();
+  wrap.append(btn, pill);
+  return labeled('When', wrap);
 }
 
 // ---- due date + time — icon-first affordance ----

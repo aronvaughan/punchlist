@@ -2,8 +2,8 @@
 // into an editing card. One expanded at a time; PATCH on change (optimistic,
 // no full re-render while editing); collapse (Esc / outside / another row)
 // re-syncs from the server. The pencil opens the full drawer.
-import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
-import { openDetail, stepsEditorFor } from '/detail.js';
+import { api, state, reload, toast, todayISO } from '/app.js';
+import { openDetail, stepsEditorFor, openWhenPicker, whenLabel } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
 import { icon } from '/icons.js';
@@ -110,28 +110,37 @@ function controlsRow(task) {
   return wrap;
 }
 
+// Same calendar icon→value pattern as the drawer's whenEditor: unset = calendar
+// icon, set = pill (calendar + Today / mm/dd / Someday). Both open the shared
+// When picker (#whenpick-dialog) via the exported openWhenPicker.
 function whenControl(task) {
-  const seg = el('div', 'seg inline-when');
+  const wrap = el('div', 'inline-when');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('calendar', { size: 15 }));
+  btn.setAttribute('aria-label', 'Schedule (when)');
+  btn.title = 'Schedule (when)';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Edit when';
+
   const paint = () => {
-    const isToday = task.when_type === 'date' && task.when_date === todayISO();
-    const marks = [isToday, task.when_type === 'date' && !isToday, task.when_type === 'someday', false];
-    [...seg.children].forEach((b, i) => b.classList.toggle('on', marks[i]));
-    seg.children[1].textContent = marks[1] ? task.when_date : 'Date…';
+    const w = whenLabel(task);
+    if (w) {
+      pill.replaceChildren(icon('calendar', { size: 13 }), el('span', 'pill-text', w));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
   };
-  const mk = (label, fn) => {
-    const b = el('button', null, label);
-    b.addEventListener('click', async e => { e.stopPropagation(); if (await fn()) paint(); });
-    seg.append(b);
-  };
-  mk('Today', () => save(task, { when_type: 'date', when_date: todayISO() }));
-  mk('Date…', async () => {
-    const d = await pickWhen(task.when_date);
-    return d ? save(task, { when_type: 'date', when_date: d }) : false;
-  });
-  mk('Someday', () => save(task, { when_type: 'someday' }));
-  mk('Clear', () => save(task, { when_type: null }));
+  const open = () => openWhenPicker(task, f => save(task, f), paint);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
   paint();
-  return labeled('When', seg);
+  wrap.append(btn, pill);
+  return labeled('When', wrap);
 }
 
 // Same icon→value pattern as the drawer's dueEditor: unset = flag icon; set =
