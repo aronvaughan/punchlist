@@ -11,7 +11,7 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
   assert.deepEqual(versions.map(v => v.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -118,7 +118,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
 
   migrate(); // real migrations dir — applies 002 (rebuild), 003 (vetting), 004 (rebuild), 005 (attachments)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events']);
   // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
@@ -312,6 +312,31 @@ test('010-doc-attachments upgrades a lived-in 009 db: rows survive; kind/path la
   assert.throws(() => db.prepare(
     `INSERT INTO attachments (id,task_id,filename,mime,bytes,retention,created_at,kind)
      VALUES ('a3','t1','x.md','text/markdown',0,'keep','t','bogus')`).run());
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('011-task-events adds a fresh, empty task_events table with a seq cursor and cascade delete', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'punchlist.db');
+  const { db, migrate } = open(dbPath);
+  migrate();
+  assert.equal(db.prepare('SELECT version FROM schema_migrations WHERE version=?').get('011-task-events').version,
+    '011-task-events');
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM task_events').get().c, 0);
+  db.prepare(`INSERT INTO tasks (id,title,status,created_by,assignee,vetted,created_at,updated_at)
+              VALUES ('t1','x','active','alex','claude',1,'t','t')`).run();
+  db.prepare(`INSERT INTO task_events (id,task_id,event,payload,created_at)
+              VALUES ('e1','t1','task.review_requested','{}','t')`).run();
+  db.prepare(`INSERT INTO task_events (id,task_id,event,payload,created_at)
+              VALUES ('e2','t1','task.blocked','{}','t')`).run();
+  const rows = db.prepare('SELECT seq, id FROM task_events ORDER BY seq').all();
+  // seq auto-increments so a simple "since" cursor works
+  assert.deepEqual(rows.map(r => r.id), ['e1', 'e2']);
+  assert.ok(rows[1].seq > rows[0].seq);
+  // deleting the task cascades into its events, same as comments/attachments
+  db.prepare('DELETE FROM tasks WHERE id = ?').run('t1');
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM task_events').get().c, 0);
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   rmSync(dir, { recursive: true, force: true });
 });

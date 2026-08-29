@@ -1864,3 +1864,74 @@ test('expected_version: non-integer rejected 400', async () => {
   assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}`, { body: { title: 'x', expected_version: 'nope' } })).status, 400);
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/complete?expected_version=-1`)).status, 400);
 });
+
+// ---- notification events (migration 011) ----
+// The in-app polling feed the web UI reads for its "needs your attention"
+// badge/toast (owner: punchlist's own UI is the first consumer of this
+// mechanism, and it must survive a restart — hence a table, not an
+// in-memory emit). Covers the four hook points (finish->review, block,
+// answer, approve) and the since-cursor contract of GET /api/v1/events.
+
+test('events: finish->review, block, answer, approve each append exactly one event, in order', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'job', assignee: 'claude' } })).json;
+
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'which env?' } });
+  await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'prod' } });
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'done' } });
+  await call('POST', `/api/v1/tasks/${t.id}/approve`);
+
+  const res = await call('GET', '/api/v1/events');
+  assert.equal(res.status, 200);
+  const mine = res.json.items.filter(e => e.task_id === t.id);
+  assert.deepEqual(mine.map(e => e.event),
+    ['task.blocked', 'task.answered', 'task.review_requested', 'task.approved']);
+  // seq is monotonic and next_since is the highest seq seen
+  assert.ok(mine.every((e, i) => i === 0 || e.seq > mine[i - 1].seq));
+  assert.equal(res.json.next_since, mine[mine.length - 1].seq);
+  // payload carries enough for a toast without a follow-up fetch
+  const blocked = mine.find(e => e.event === 'task.blocked');
+  assert.equal(blocked.payload.task_id, t.id);
+  assert.equal(blocked.payload.title, 'job');
+  assert.equal(blocked.payload.question, 'which env?');
+  const approved = mine.find(e => e.event === 'task.approved');
+  assert.equal(approved.payload.status, 'done');
+});
+
+test('events: since= cursor excludes already-seen rows; auto_close finish (straight to done) posts no review_requested', async () => {
+  const { call } = makeApp();
+  const t1 = (await call('POST', '/api/v1/tasks', { body: { title: 'first', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t1.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
+  const first = await call('GET', '/api/v1/events');
+  const cursor = first.json.next_since;
+
+  const t2 = (await call('POST', '/api/v1/tasks', { body: { title: 'second', assignee: 'claude', auto_close: true } })).json;
+  await call('POST', `/api/v1/tasks/${t2.id}/finish`, { token: TOK_CLAUDE, body: { report: 'auto-closed' } });
+
+  const after = await call('GET', `/api/v1/events?since=${cursor}`);
+  assert.equal(after.status, 200);
+  // only the second task's events are new; auto_close skips review entirely
+  // so no task.review_requested is emitted for it
+  assert.ok(after.json.items.every(e => e.task_id === t2.id));
+  assert.equal(after.json.items.some(e => e.event === 'task.review_requested'), false);
+  // polling again with the latest cursor and nothing new returns an empty
+  // page and echoes the same cursor back (no phantom advance)
+  const empty = await call('GET', `/api/v1/events?since=${after.json.next_since}`);
+  assert.deepEqual(empty.json.items, []);
+  assert.equal(empty.json.next_since, after.json.next_since);
+});
+
+test('events: ?assignee= narrows to one actor\'s tasks; since must be a non-negative integer', async () => {
+  const { call } = makeApp();
+  const a = (await call('POST', '/api/v1/tasks', { body: { title: 'for claude', assignee: 'claude' } })).json;
+  const b = (await call('POST', '/api/v1/tasks', { body: { title: 'for hermes', assignee: 'hermes' } })).json;
+  await call('POST', `/api/v1/tasks/${a.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
+  await call('POST', `/api/v1/tasks/${b.id}/block`, { token: TOK_HERMES, body: { question: 'q?' } });
+
+  const claudeOnly = await call('GET', '/api/v1/events?assignee=claude');
+  assert.ok(claudeOnly.json.items.some(e => e.task_id === a.id));
+  assert.ok(!claudeOnly.json.items.some(e => e.task_id === b.id));
+
+  assert.equal((await call('GET', '/api/v1/events?since=-1')).status, 400);
+  assert.equal((await call('GET', '/api/v1/events?since=nope')).status, 400);
+});
