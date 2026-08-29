@@ -665,7 +665,7 @@ function retentionValue(att) {
 // Unset (0): a bare paperclip icon. Set: a pill of paperclip + count. Both open
 // #attachments-dialog, which hosts the full grid + "Attach file" + drag-drop.
 // The count comes from task.attachment_count, refreshed after add/delete.
-function attachmentsEditor(task) {
+export function attachmentsEditor(task) {
   const wrap = el('div', 'meta-field');
   const btn = el('button', 'meta-icon-btn');
   btn.type = 'button';

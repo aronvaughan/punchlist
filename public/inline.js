@@ -4,7 +4,8 @@
 // re-syncs from the server. The pencil opens the full drawer.
 import { api, state, reload, toast, todayISO, currentActor } from '/app.js';
 import { openDetail, stepsEditorFor, openWhenPicker, whenLabel,
-  openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel } from '/detail.js';
+  openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel,
+  openProjectPicker, projectLabel, openTemplatePicker, attachmentsEditor } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { icon } from '/icons.js';
 
@@ -102,11 +103,64 @@ export function expandRow(task, row) {
   setTimeout(() => title.focus({ preventScroll: true }), 30);
 }
 
-// compact controls: When | Due | Tags | Assignee — wraps on narrow screens
+// compact icon→value controls, same set + order as the drawer's meta-row — wraps
+// on narrow screens. (attachmentsEditor is already task-based; reused directly.)
 function controlsRow(task) {
   const wrap = el('div', 'inline-controls');
-  wrap.append(whenControl(task), dueControl(task), tagsControl(task), assigneeControl(task));
+  wrap.append(whenControl(task), dueControl(task), projectControl(task), assigneeControl(task),
+    templateControl(task), tagsControl(task), attachmentsEditor(task));
   return wrap;
+}
+
+// Project: folder icon → pill (folder + name) → the shared project picker.
+function projectControl(task) {
+  const wrap = el('div', 'inline-when');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('folder', { size: 15 }));
+  btn.setAttribute('aria-label', 'Set project');
+  btn.title = 'Set project';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Change project';
+  const paint = () => {
+    const label = projectLabel(task);
+    if (label) {
+      pill.replaceChildren(icon('folder', { size: 13 }), el('span', 'pill-text', label));
+      pill.hidden = false; btn.hidden = true;
+    } else { pill.hidden = true; btn.hidden = false; }
+  };
+  const open = () => openProjectPicker(task.project_id, f => save(task, f), paint);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  paint();
+  wrap.append(btn, pill);
+  return labeled('Project', wrap);
+}
+
+// Template: book icon → pill (book + name) → the shared template picker.
+function templateControl(task) {
+  const wrap = el('div', 'inline-when');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('book', { size: 15 }));
+  btn.setAttribute('aria-label', 'Use a template');
+  btn.title = 'Use a template';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Change template';
+  const paint = () => {
+    if (task.template) {
+      pill.replaceChildren(icon('book', { size: 13 }), el('span', 'pill-text', task.template));
+      pill.hidden = false; btn.hidden = true;
+    } else { pill.hidden = true; btn.hidden = false; }
+  };
+  const open = () => openTemplatePicker(task, f => save(task, f), paint);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  paint();
+  wrap.append(btn, pill);
+  return labeled('Template', wrap);
 }
 
 // Same calendar icon→value pattern as the drawer's whenEditor: unset = calendar
