@@ -75,6 +75,26 @@ test('upcoming: future when_date only', () => {
   assert.deepEqual(ids, ['up1']);
 });
 
+test('anytime: someday/no-when admin work off the daily plan, pure-inbox NOT duplicated', () => {
+  const db = seed();
+  const now = '2026-03-10T08:00:00.000Z';
+  // the orphan (C-bug): active, admin, someday, no project, no due — vanished
+  // from every lane before this view existed. MUST show in anytime.
+  db.prepare(`INSERT INTO tasks (id,title,notes,project_id,status,when_type,when_date,due_date,rank,today_rank,assignee,completed_at,created_at,updated_at)
+    VALUES ('orph','someday orphan','',NULL,'active','someday',NULL,NULL,20,NULL,'alex',NULL,?,?)`).run(now, now);
+  const ids = run(db, 'anytime').map(r => r.id);
+  assert.ok(ids.includes('orph'), 'the someday/no-project orphan MUST appear');
+  assert.ok(ids.includes('smd1'), 'someday WITH a project appears');
+  assert.ok(ids.includes('smd2'), 'parked someday appears');
+  assert.ok(ids.includes('tod3'), 'no-when task that HAS a project appears');
+  assert.ok(!ids.includes('up1'), 'a future scheduled (when-date) task does NOT appear');
+  assert.ok(!ids.includes('inb1'), 'pure-inbox (no project, no when) is NOT duplicated');
+  assert.ok(!ids.includes('inb2'), 'pure-inbox (no project, no when) is NOT duplicated');
+  assert.ok(!ids.includes('ovr1'), 'pure-inbox with only a due date stays in Inbox, not anytime');
+  assert.ok(!ids.includes('del5'), 'delegated (assignee != admin) stays out');
+  assert.deepEqual(new Set(ids), new Set(['orph', 'smd1', 'smd2', 'tod3']));
+});
+
 test('logbook: done by completed_at desc', () => {
   const ids = run(seed(), 'logbook').map(r => r.id);
   assert.deepEqual(ids, ['done2', 'done1']);
