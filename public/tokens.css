@@ -1874,10 +1874,14 @@ wa-button[variant="brand"]::part(base) {
 .tag-add-input { flex: 1; }
 /* collapsible Timeline header + the collapsed activity sparkline */
 .tl-toggle {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  padding: 4px 0; border: none; background: none; color: var(--ink);
-  font: inherit; font-weight: 600; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 8px; border: none; background: none; color: var(--ink);
+  font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; text-align: left;
+  border-radius: var(--radius);
 }
+.tl-toggle:hover { background: var(--hover); }
+.tl-caret { color: var(--ink-soft); flex: none; transition: transform .15s ease; }
+.tl-toggle.collapsed .tl-caret { transform: rotate(-90deg); } /* chevron points right when collapsed */
 .tl-spark { width: 100%; margin: 2px 0 6px; }
 .tl-svg { width: 100%; height: auto; display: block; overflow: visible; }
 .tl-axis, .tl-month-tick { stroke: var(--line); stroke-width: 1; }

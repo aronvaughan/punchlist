@@ -581,16 +581,15 @@ function timelineSection(task) {
   let collapsed = (() => { try { return localStorage.getItem(KEY) !== '0'; } catch { return true; } })();
   const header = el('button', 'tl-toggle');
   header.type = 'button';
-  const caret = el('span', 'caret');
-  caret.setAttribute('aria-hidden', 'true');
-  header.append(caret, el('span', null, 'Timeline'));
+  const caret = icon('caret-down', { size: 18, cls: 'tl-caret' });
+  header.append(caret, el('span', 'tl-title', 'Timeline'));
 
   const spark = el('div', 'tl-spark');
   const listEl = el('div', 'tl-list');
   let items = [];
 
   const applyState = () => {
-    caret.classList.toggle('closed', collapsed);
+    header.classList.toggle('collapsed', collapsed);
     header.setAttribute('aria-expanded', String(!collapsed));
     spark.hidden = !collapsed || !items.length;
     listEl.hidden = collapsed;
