@@ -1836,6 +1836,22 @@ wa-button[variant="brand"]::part(base) {
   font: inherit;
 }
 .when-quick button:hover { border-color: var(--accent); color: var(--accent); }
+/* tag picker (in #tags-dialog): all tags as toggle chips + an add-new row */
+.tag-picker { display: flex; flex-direction: column; gap: 12px; }
+.tag-picker-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-choice {
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.tag-choice:hover { border-color: var(--accent); color: var(--accent); }
+.tag-choice.sel { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.tag-add-row { display: flex; gap: 8px; }
+.tag-add-input { flex: 1; }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }

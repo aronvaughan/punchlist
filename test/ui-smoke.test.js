@@ -427,10 +427,12 @@ test('icon→pill→dialog pattern extended to project/assignee/tags/attachments
   assert.match(detail, /export function assigneeLabel/);
   assert.match(detail, /export function openAssigneePicker/);
   assert.match(detail, /replaceChildren\(assigneeField\(task, save\)\)/);
-  // tags: icon→pill→dialog hosting the shared tagsField
+  // tags: icon→pill→dialog hosting a tag PICKER (existing tags as toggle chips + add-new)
   assert.match(detail, /export function tagsLabel/);
   assert.match(detail, /export function openTagsPicker/);
-  assert.match(detail, /replaceChildren\(tagsField\(task, save\)\)/);
+  assert.match(detail, /replaceChildren\(buildTagPicker\(task, save, render\)\)/);
+  assert.match(detail, /function buildTagPicker/);
+  assert.match(detail, /tag-choice/);
   // attachments: icon→count pill, machinery moved into a hosted panel
   assert.match(detail, /function openAttachmentsPicker/);
   assert.match(detail, /function buildAttachmentsPanel/);
