@@ -1585,6 +1585,21 @@ wa-button[variant="brand"]::part(base) {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .chip.comment-count { cursor: default; color: var(--ink-soft); }
+/* pencil: AI template editor affordance beside the picker (admin, feature-gated) */
+.tpl-edit-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 8px;
+}
+.tpl-edit-btn:hover { color: var(--accent); background: var(--bg); }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
@@ -1831,3 +1846,83 @@ wa-button[variant="brand"]::part(base) {
   font-family: inherit; font-size: 14px; cursor: pointer;
 }
 .doc-gate-btn:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+/* ---- AI template editor dialog (Task 7): chat + live draft + save ---- */
+.tpl-editor-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+.tpl-dot-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.tpl-dot-label { font-size: 12px; color: var(--ink-faint); }
+/* unsaved-changes dot: an attention swatch tinted from the theme accent (no
+   hardcoded color — the palette has no dedicated amber token) */
+.tpl-unsaved-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.tpl-unsaved-dot[hidden] { display: none; }
+.tpl-status { font-size: 13px; color: var(--ink-soft); text-align: right; min-height: 18px; }
+.tpl-status-ok { color: var(--accent); }
+.tpl-status-err { color: var(--danger); }
+
+.tpl-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: stretch; }
+.tpl-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tpl-col-head {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: .03em;
+}
+
+.tpl-thread {
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 220px; max-height: 46vh; overflow-y: auto;
+  padding: 8px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg);
+}
+.tpl-msg {
+  font-size: 14px; line-height: 1.4; padding: 7px 10px;
+  border-radius: 10px; max-width: 92%; white-space: pre-wrap; word-break: break-word;
+}
+.tpl-msg.tpl-user {
+  align-self: flex-end;
+  color: var(--on-accent); background: var(--accent);
+}
+.tpl-msg.tpl-assistant {
+  align-self: flex-start;
+  color: var(--ink); background: var(--chip-bg);
+}
+
+.tpl-preview {
+  min-height: 220px; max-height: 46vh; overflow: auto;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--pane); font-size: 14px;
+}
+.tpl-preview a { color: var(--accent); }
+.tpl-preview pre { background: var(--chip-bg); padding: 8px; border-radius: 8px; overflow-x: auto; }
+.tpl-preview code { background: var(--chip-bg); border-radius: 4px; padding: 0 3px; }
+.tpl-preview :first-child { margin-top: 0; }
+
+.tpl-composer { display: flex; align-items: flex-end; gap: 8px; margin-top: 12px; }
+.tpl-instruction {
+  flex: 1; min-height: 54px; resize: vertical;
+  font-family: inherit; font-size: 14px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--pane); color: var(--ink);
+}
+.tpl-actions { display: flex; gap: 10px; margin-top: 10px; }
+.tpl-btn {
+  font-family: inherit; font-size: 14px; padding: 7px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--pane); color: var(--ink); cursor: pointer;
+}
+.tpl-btn:hover { background: var(--hover); }
+.tpl-btn:disabled { opacity: .5; cursor: default; }
+.tpl-btn-primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.tpl-btn-primary:hover { background: color-mix(in srgb, var(--accent) 85%, var(--ink)); }
+
+/* stack the two columns on narrow/phone widths */
+@media (max-width: 620px) {
+  .tpl-cols { grid-template-columns: 1fr; }
+  .tpl-msg { max-width: 100%; }
+}

@@ -1,5 +1,7 @@
 # AI-assisted template editor (design)
 
+**Shipped 2026-08-28.**
+
 *Agreed with the owner 2026-08-28. Resolves task 01M1569 ("for a task —
 there should be a way to edit a template with AI assistance"). Deferred
 scope is tracked in 01M15BR5N9QASBYAF5FZXFS38R (v2 candidates).*
@@ -23,11 +25,12 @@ gets no tools, so a template edit can never execute anything on the machine.
    `templates/authored/<name>.md` in the templates repo. Editing a shipped
    `packs/*` template forks a copy into `authored/` (an override) rather
    than mutating the pack; `plt` already resolves authored over pack.
-2. **Backend:** shell out to `claude -p` (reuses the owner's Claude Code
-   auth, no API key in env or repo). Feature is **off** — endpoints 404 —
-   unless both hold: `PUNCHLIST_TEMPLATES_DIR` is a git working tree AND the
-   `claude` binary is on PATH. Public users without Claude Code simply don't
-   see the feature; nothing breaks.
+2. **Backend:** shell out to `claude -p` with the prompt on **stdin** (reuses
+   the owner's Claude Code auth, no API key in env or repo). Feature is
+   **off** — endpoints 404 — unless ALL hold: `PUNCHLIST_TEMPLATES_DIR` is a
+   git working tree, the repo's own `bin/plt` exists (validation runs it —
+   there is no global `plt`), AND the `claude` binary is on PATH. Public users
+   without Claude Code simply don't see the feature; nothing breaks.
 3. **Interaction:** conversational chat in the task drawer with a live
    rendered draft; iterate; **Save current draft**. The draft is the source
    of truth, re-sent each turn (claude `-p` is one-shot /
@@ -69,8 +72,10 @@ All three are **admin-only** (`actor === HUMAN`, else 403) and
   1. Write `draft` to a temp file **named `<name>.md`** in a fresh temp dir
      (the filename must match so any filename↔frontmatter-`name` check in
      `plt validate` passes).
-  2. Spawn `plt validate <tempdir>/<name>.md`; a non-zero exit or any `FAIL
-     <file>:<line>: <msg>` line means invalid — capture the messages.
+  2. Spawn `node <dir>/bin/plt validate <tempdir>/<name>.md` (the repo ships
+     its own `plt`; it is not a global binary). A non-zero exit or any `FAIL
+     <file>:<line>: <msg>` line means invalid — the `plt` findings (stdout)
+     are captured and returned.
   3. If **invalid** → 422 `{ ok:false, validation }`, nothing written to the
      repo.
   4. If **valid** → write `templates/authored/<name>.md`, `git -C
@@ -136,9 +141,10 @@ Defense stack, each failing differently:
 
 1. **Admin-only.** Only `HUMAN` can read-for-edit, ai-edit, or save. Agents
    get 403 — this feature is not part of the delegated-work surface.
-2. **Text-only spawn.** The `claude -p` call is given no tools and
-   `--no-session-persistence`; it can only emit text. A prompt-injected
-   template body cannot make it act.
+2. **Text-only spawn.** The `claude -p` call passes `--tools ""` (the CLI's
+   documented way to disable ALL tools) plus `--no-session-persistence`, so
+   the process is given nothing to act with and can only emit text. A
+   prompt-injected template body cannot make it act.
 3. **Validation gate.** `plt validate` runs on a temp file *before* any repo
    write; invalid drafts never touch `authored/`.
 4. **Human review.** The owner sees the rendered draft and explicitly hits

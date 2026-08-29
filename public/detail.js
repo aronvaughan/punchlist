@@ -230,11 +230,29 @@ function templateEditor() {
   none.value = '';
   sel.append(none);
   const chip = el('span', 'chip template-chip');
+  // pencil: opens the AI template editor for the selected template. Shown only
+  // when the server reports the feature available to this actor (admin + claude
+  // present + templates repo) AND a template is currently set. The config probe
+  // is the cached getConfig() the doc-linking affordance already uses.
+  const pencil = el('button', 'tpl-edit-btn');
+  pencil.type = 'button';
+  pencil.append(icon('pencil-simple', { size: 15 }));
+  pencil.title = 'Edit this template with AI';
+  pencil.setAttribute('aria-label', 'Edit this template with AI');
+  pencil.hidden = true;
+  let editingEnabled = false;
+  const syncPencil = () => { pencil.hidden = !(editingEnabled && current.template); };
+  getConfig().then(cfg => { editingEnabled = !!cfg.template_editing; syncPencil(); });
+  pencil.addEventListener('click', async () => {
+    const { openTemplateEditor } = await import('/tpleditor.js');
+    openTemplateEditor(current.template);
+  });
   const renderChip = () => {
     if (current.template) {
       chip.replaceChildren(icon('file-text', { size: 13 }), el('span', 'pill-text', current.template));
       chip.hidden = false;
     } else chip.hidden = true;
+    syncPencil();
   };
   const populate = items => {
     // keep a stamped-but-unknown template (stale ref, or repo absent) selectable
@@ -258,7 +276,7 @@ function templateEditor() {
   });
   renderChip();
   const row = el('div', 'template-picker-row');
-  row.append(sel, chip);
+  row.append(sel, chip, pencil);
   return labeled('Template', row);
 }
 

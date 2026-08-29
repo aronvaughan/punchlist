@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
 import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted, migrateLegacyDb } from '../src/server.js';
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
@@ -31,6 +32,65 @@ function makeApp() {
     return { status: res.status, json, headers: res.headers };
   };
   return { db, app, call };
+}
+
+// A makeApp variant that wires a HERMETIC template-editing backend: a fake repo
+// dir marked available, and a stub `run` that records calls and returns canned
+// output keyed by the command. Individual tests override `runImpl`.
+function makeAppWithTemplates(runImpl) {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const calls = [];
+  const run = async (spec) => { calls.push(spec); return (runImpl || (() => ({ code: 0, stdout: '', stderr: '' })))(spec); };
+  const app = buildApp({
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    today: () => TODAY,
+    templateEditing: { dir: '/fake/templates-repo', available: true, run },
+  });
+  const call = async (method, path, { body, token = TOK_ARON } = {}) => {
+    const headers = {}; if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    let json = null; try { json = await res.json(); } catch {}
+    return { status: res.status, json };
+  };
+  return { db, app, call, calls };
+}
+
+// A real temp git repo seeded with template files, for endpoint tests that read
+// or write the fs. Returns { dir, cleanup }; cleanup tears the whole tree down.
+function realTemplatesRepo(files) {
+  const dir = mkdtempSync(join(tmpdir(), 'pl-tpl-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+  for (const [rel, body] of Object.entries(files)) {
+    const p = join(dir, 'templates', rel);
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, body);
+  }
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-qm', 'seed'], { cwd: dir });
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+// buildApp over a real templates dir, with an injectable run (default: real).
+function appWithDir(dir, runImpl) {
+  const { db, migrate } = open(':memory:'); migrate();
+  const calls = [];
+  const run = async (spec) => { calls.push(spec); return (runImpl || (() => ({ code: 0, stdout: '', stderr: '' })))(spec); };
+  const app = buildApp({
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    today: () => TODAY, templateEditing: { dir, available: true, run },
+  });
+  const call = async (method, path, { body, token = TOK_ARON } = {}) => {
+    const headers = {}; if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    let json = null; try { json = await res.json(); } catch {}
+    return { status: res.status, json };
+  };
+  return { db, app, call, calls, dir };
 }
 
 // ---- auth ----
@@ -1161,6 +1221,110 @@ test('untrusted set is configurable: buildApp untrusted option + parseUntrusted 
   assert.deepEqual(parseUntrusted(undefined), ['email']);
   assert.deepEqual(parseUntrusted('email, sms ,'), ['email', 'sms']);
   assert.deepEqual(parseUntrusted(''), []);
+});
+
+test('config: template_editing reflects the feature gate', async () => {
+  // default makeApp() wires no templateEditing -> feature off. Pin the env probe
+  // at a nonexistent dir so this holds regardless of the host machine (a dev box
+  // may have a real punchlist-templates repo + `claude` on PATH, which the
+  // production auto-probe would otherwise detect and turn the feature on).
+  const savedEnv = process.env.PUNCHLIST_TEMPLATES_DIR;
+  process.env.PUNCHLIST_TEMPLATES_DIR = join(tmpdir(), 'pl-no-such-templates-repo');
+  let off;
+  try { off = await (makeApp().call)('GET', '/api/v1/config'); }
+  finally {
+    if (savedEnv === undefined) delete process.env.PUNCHLIST_TEMPLATES_DIR;
+    else process.env.PUNCHLIST_TEMPLATES_DIR = savedEnv;
+  }
+  assert.equal(off.json.template_editing, false);
+  // a wired app with a stub runner + present dir -> on for the admin only
+  const on = makeAppWithTemplates();           // helper added below
+  assert.equal((await on.call('GET', '/api/v1/config')).json.template_editing, true);
+  assert.equal((await on.call('GET', '/api/v1/config', { token: TOK_CLAUDE })).json.template_editing, false);
+});
+
+test('GET /templates/:name: admin reads resolved md; gating + traversal', async () => {
+  const app = makeAppWithTemplates();
+  // stub resolveTemplatePath via the run seam is not enough — read goes through
+  // the fs, so this test uses a real temp repo:
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\nbody' });
+  const a = appWithDir(dir);                      // helper: buildApp with available:true, real fs
+  const ok = await a.call('GET', '/api/v1/templates/demo');
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.markdown, '---\nname: demo\n---\nbody');
+  assert.equal(ok.json.name, 'demo');
+  // non-admin -> 403
+  assert.equal((await a.call('GET', '/api/v1/templates/demo', { token: TOK_CLAUDE })).status, 403);
+  // unknown -> 404; traversal -> 404 (charset reject)
+  assert.equal((await a.call('GET', '/api/v1/templates/missing')).status, 404);
+  assert.equal((await a.call('GET', '/api/v1/templates/..%2f..%2fetc%2fpasswd')).status, 404);
+  cleanup();
+});
+
+test('POST /templates/:name/ai-edit: spawns claude text-only, returns note+draft', async () => {
+  const reply = '<<<NOTE\nAdded a priority input.\nNOTE\n<<<TEMPLATE\n---\nname: demo\n---\nnew body\nTEMPLATE';
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\nold' });
+  const a = appWithDir(dir, (spec) => spec.cmd === 'claude' ? { code: 0, stdout: reply, stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const r = await a.call('POST', '/api/v1/templates/demo/ai-edit', {
+    body: { draft: '---\nname: demo\n---\nold', messages: [{ role: 'user', content: 'add a priority input' }] },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.reply, 'Added a priority input.');
+  assert.match(r.json.draft, /new body/);
+  // it invoked claude with -p, stateless, and tools HARD-disabled (--tools ""),
+  // in the repo dir — the spawn must be text-only so a template body can't inject
+  // a tool call.
+  const claudeCall = a.calls.find(s => s.cmd === 'claude');
+  assert.ok(claudeCall.args.includes('-p'));
+  assert.ok(claudeCall.args.includes('--no-session-persistence'));
+  const ti = claudeCall.args.indexOf('--tools');
+  assert.ok(ti !== -1 && claudeCall.args[ti + 1] === '', 'tools disabled via --tools ""');
+  // the prompt rides on STDIN, never argv — `--tools` is variadic and would
+  // otherwise swallow a trailing positional prompt as a tool name (regression guard).
+  assert.equal(claudeCall.args[claudeCall.args.length - 1], '', 'no positional prompt after --tools ""');
+  assert.match(claudeCall.input || '', /add a priority input/);
+  // non-admin 403
+  assert.equal((await a.call('POST', '/api/v1/templates/demo/ai-edit', { token: TOK_CLAUDE, body: { draft: 'x', messages: [] } })).status, 403);
+  cleanup();
+});
+
+test('POST /templates/:name/ai-edit: unparseable reply -> 502, no crash', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': 'x' });
+  const a = appWithDir(dir, () => ({ code: 0, stdout: 'garbage, no delimiters', stderr: '' }));
+  const r = await a.call('POST', '/api/v1/templates/demo/ai-edit', { body: { draft: 'x', messages: [] } });
+  assert.equal(r.status, 502);
+  cleanup();
+});
+
+test('POST /templates/:name/save: valid draft validates, writes authored/, commits', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'packs/core/demo.md': '---\nname: demo\n---\norig' });
+  // stub: plt validate OK; git add/commit report success. The WRITE is real fs.
+  const isPlt = (s) => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate';
+  const a = appWithDir(dir, (s) => isPlt(s) ? { code: 0, stdout: 'OK', stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const draft = '---\nname: demo\n---\nedited body';
+  const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  // wrote the OVERRIDE into authored/, not the pack
+  assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), draft);
+  assert.equal(readFileSync(join(dir, 'templates', 'packs', 'core', 'demo.md'), 'utf8'), '---\nname: demo\n---\norig');
+  // validated a temp file named demo.md, then git add + commit ran
+  assert.ok(a.calls.some(s => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate' && s.args[2].endsWith('demo.md')));
+  assert.ok(a.calls.some(s => s.cmd === 'git' && s.args.includes('commit')));
+  cleanup();
+});
+
+test('POST /templates/:name/save: invalid draft -> 422, nothing written/committed', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\norig' });
+  const isPlt = (s) => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate';
+  const a = appWithDir(dir, (s) => isPlt(s) ? { code: 1, stdout: 'FAIL  demo.md:3: missing golden exemplar', stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft: '---\nname: demo\n---\nbad' } });
+  assert.equal(r.status, 422);
+  assert.equal(r.json.ok, false);
+  assert.match(r.json.validation, /golden exemplar/);
+  assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), '---\nname: demo\n---\norig', 'unchanged');
+  assert.ok(!a.calls.some(s => s.cmd === 'git' && s.args.includes('commit')), 'no commit on invalid');
+  cleanup();
 });
 
 // ---- needs-input (block → answer) ----
