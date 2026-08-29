@@ -1353,13 +1353,14 @@ body.drag-active .section-block.empty .task-list {
 .chip.due.arrived { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); font-weight: 600; }
 .chip.filter { background: var(--accent); color: var(--on-accent); }
 .chip.project-name { cursor: default; }
-/* delegation chips */
-.chip.agent { cursor: default; }
+/* delegation chips — list view: icon-only (no pill-text child), so pull the
+   padding in to a small round badge instead of the wider text-pill default */
+.chip.agent { cursor: default; padding: 4px; }
 .chip.agent.working {
   background: transparent;
   border: 1.5px solid var(--accent);
   color: var(--accent);
-  padding: 1.5px 7.5px;
+  padding: 2.5px 3.5px;
 }
 .chip.review-chip { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
 /* agent-security: amber quarantine chip + Agents-view subsection. The amber
