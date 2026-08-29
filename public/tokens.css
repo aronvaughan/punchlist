@@ -1585,6 +1585,21 @@ wa-button[variant="brand"]::part(base) {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .chip.comment-count { cursor: default; color: var(--ink-soft); }
+/* pencil: AI template editor affordance beside the picker (admin, feature-gated) */
+.tpl-edit-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 8px;
+}
+.tpl-edit-btn:hover { color: var(--accent); background: var(--bg); }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
