@@ -6,6 +6,7 @@ import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted, migrateLegac
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 const TOK_ARON = 'a'.repeat(32);
 const TOK_CLAUDE = 'c'.repeat(32);
@@ -54,6 +55,42 @@ function makeAppWithTemplates(runImpl) {
     return { status: res.status, json };
   };
   return { db, app, call, calls };
+}
+
+// A real temp git repo seeded with template files, for endpoint tests that read
+// or write the fs. Returns { dir, cleanup }; cleanup tears the whole tree down.
+function realTemplatesRepo(files) {
+  const dir = mkdtempSync(join(tmpdir(), 'pl-tpl-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+  for (const [rel, body] of Object.entries(files)) {
+    const p = join(dir, 'templates', rel);
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, body);
+  }
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-qm', 'seed'], { cwd: dir });
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+// buildApp over a real templates dir, with an injectable run (default: real).
+function appWithDir(dir, runImpl) {
+  const { db, migrate } = open(':memory:'); migrate();
+  const calls = [];
+  const run = async (spec) => { calls.push(spec); return (runImpl || (() => ({ code: 0, stdout: '', stderr: '' })))(spec); };
+  const app = buildApp({
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    today: () => TODAY, templateEditing: { dir, available: true, run },
+  });
+  const call = async (method, path, { body, token = TOK_ARON } = {}) => {
+    const headers = {}; if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    let json = null; try { json = await res.json(); } catch {}
+    return { status: res.status, json };
+  };
+  return { db, app, call, calls, dir };
 }
 
 // ---- auth ----
@@ -1204,6 +1241,24 @@ test('config: template_editing reflects the feature gate', async () => {
   const on = makeAppWithTemplates();           // helper added below
   assert.equal((await on.call('GET', '/api/v1/config')).json.template_editing, true);
   assert.equal((await on.call('GET', '/api/v1/config', { token: TOK_CLAUDE })).json.template_editing, false);
+});
+
+test('GET /templates/:name: admin reads resolved md; gating + traversal', async () => {
+  const app = makeAppWithTemplates();
+  // stub resolveTemplatePath via the run seam is not enough — read goes through
+  // the fs, so this test uses a real temp repo:
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\nbody' });
+  const a = appWithDir(dir);                      // helper: buildApp with available:true, real fs
+  const ok = await a.call('GET', '/api/v1/templates/demo');
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.markdown, '---\nname: demo\n---\nbody');
+  assert.equal(ok.json.name, 'demo');
+  // non-admin -> 403
+  assert.equal((await a.call('GET', '/api/v1/templates/demo', { token: TOK_CLAUDE })).status, 403);
+  // unknown -> 404; traversal -> 404 (charset reject)
+  assert.equal((await a.call('GET', '/api/v1/templates/missing')).status, 404);
+  assert.equal((await a.call('GET', '/api/v1/templates/..%2f..%2fetc%2fpasswd')).status, 404);
+  cleanup();
 });
 
 // ---- needs-input (block → answer) ----

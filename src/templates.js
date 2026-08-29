@@ -21,6 +21,9 @@ export function parseAiReply(raw) {
 export function resolveTemplatePath(dir, name) {
   if (!/^[a-z0-9-]+$/.test(name)) return null;
   const root = join(dir, 'templates');
+  // Defensive: a configured repo dir whose templates/ root is missing must not
+  // throw from realpathSync below — degrade to null (→ 404) instead of a 500.
+  if (!existsSync(root)) return null;
   const candidates = [join(root, 'authored', `${name}.md`)];
   const packs = join(root, 'packs');
   if (existsSync(packs)) {
