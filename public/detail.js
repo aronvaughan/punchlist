@@ -102,19 +102,24 @@ function renderDrawer() {
   titleInput = title;
   body.append(title);
 
-  body.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(), templateEditor());
+  // the compact icon→value fields flow in ONE horizontal wrapping row (they're
+  // just icons/pills now, so stacking them as full-width labelled rows wasted
+  // space). Attachments joins in view mode (can't attach before the task exists).
+  const metaRow = el('div', 'meta-row');
+  metaRow.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(),
+    templateEditor(), recurEditor());
+  if (!createMode) metaRow.append(attachmentsEditor(task));
+  body.append(metaRow);
   // step edits in the drawer write through to the live task; onChange reloads so
   // the list row's step indicator + review card reflect the change immediately
   // (and a reopened drawer isn't stale) — without a full page reload.
   body.append(notesEditor(),
-    createMode ? draftStepsEditor() : stepsEditorFor(task, { onChange: () => reload() }),
-    recurEditor());
+    createMode ? draftStepsEditor() : stepsEditorFor(task, { onChange: () => reload() }));
   if (createMode) {
     // tags near the bottom (rows are display-only; editing happens here)
     body.append(tagsEditor());
     body.append(createActions());
   } else {
-    body.append(attachmentsEditor(task));
     const rep = reportView();
     if (rep) body.append(rep);
     body.append(timelineSection(task));
@@ -249,7 +254,7 @@ function dueEditor() {
 
   render();
   wrap.append(btn, pill);
-  return wrap;
+  return labeled('Due', wrap);
 }
 
 // ---- project — icon→value pattern (drawer only) ----

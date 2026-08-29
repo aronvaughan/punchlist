@@ -1888,6 +1888,11 @@ wa-button[variant="brand"]::part(base) {
 .tl-today-dot { fill: var(--accent); }
 .tl-today-label { fill: var(--accent); font-weight: 600; }
 .tl-count { fill: var(--accent); font-size: 8px; font-weight: 700; }
+/* the compact icon→value fields flow horizontally (When/Due/Project/Assignee/
+   Template/Recur/Attachments), each a small labelled cell that wraps */
+.meta-row { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-start; margin: 6px 0 10px; }
+.meta-row > div { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+.meta-row > div > label { font-size: 11px; color: var(--ink-soft); font-weight: 500; }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
