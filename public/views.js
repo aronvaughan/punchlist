@@ -50,9 +50,13 @@ export function openNewTask() {
 }
 document.getElementById('new-task-btn').addEventListener('click', openNewTask);
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-// coarse pointers (touch): task rows drag only from a grip so the list
-// scrolls normally; fine pointers keep whole-row dragging
-const COARSE = matchMedia('(pointer: coarse)').matches;
+// press-and-hold to reorder: no dedicated drag-handle bar on task rows. A
+// pointer (mouse OR touch) held still on a row for DRAG_HOLD_MS arms the row
+// (Sortable's own delay/threshold mechanism — see sortableList below); a tap,
+// click, or scroll — anything shorter or that moves past the threshold —
+// cancels the hold and behaves like normal. This replaces the old grip icon
+// entirely for task-list rows, reclaiming its width for the title/subline.
+const DRAG_HOLD_MS = 450;
 
 // mirrors src/views.js SECTION / api.js sectionOf
 export function sectionOf(task, today) {
@@ -781,11 +785,8 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   if (task.when_type === 'someday') row.classList.add('someday');
   if (task.status === 'done') row.classList.add('done');
 
-  if (COARSE && sortable && task.status === 'active') {
-    const grip = el('span', 'grip');
-    grip.setAttribute('aria-hidden', 'true');
-    row.append(grip);
-  }
+  // no grip: press-and-hold (see DRAG_HOLD_MS / sortableList) arms dragging
+  // from anywhere on the row, on mouse or touch alike.
   // one status vocabulary: active/queued and done keep the checkbox; the agent
   // in-flight states (in_progress, blocked, review) show a status marker in its
   // place so board state reads at a glance across every view.
@@ -1000,16 +1001,25 @@ async function postReorder(item, list) {
 // rowsOnly: the list interleaves non-draggable cards (Human lane question
 // cards); only .task-row drags, and a successful reorder reloads so the cards
 // re-align under their rows in the new order.
+//
+// No grip handle: any row arms for dragging by press-and-hold (mouse or
+// touch) rather than a dedicated handle. Sortable's own delay + move-
+// threshold IS the "press and hold" state machine — it starts a DRAG_HOLD_MS
+// timer on pointerdown, cancels it on pointerup/pointercancel or on movement
+// past the threshold (so an ordinary tap/click/scroll is untouched), and —
+// only if the timer fires uncancelled — arms native dragging and toggles
+// chosenClass (our .drag-armed highlight) on the row.
 function sortableList(ul, { list, section, rowsOnly = false } = {}) {
   new Sortable(ul, {
     group: { name: 'tasks', put: section !== undefined, pull: true },
     animation: 150,
-    delay: 150,
-    delayOnTouchOnly: true,
+    delay: DRAG_HOLD_MS,
+    delayOnTouchOnly: false, // press-and-hold applies to mouse too, not just touch
+    touchStartThreshold: 10, // a little slack for a held (not perfectly still) finger
+    chosenClass: 'drag-armed', // the "row highlights and is in drag mode" cue
     filter: '.expanded', // the expanded editing card must not drag
     preventOnFilter: false,
     ...(rowsOnly ? { draggable: '.task-row' } : {}),
-    ...(COARSE ? { handle: '.grip' } : {}),
     // while a drag is live, empty project sections re-appear as drop targets
     onStart: () => document.body.classList.add('drag-active'),
     onEnd: async evt => {

@@ -394,6 +394,31 @@ test('drawer: deadline/repeat/tags collapse to a bare icon until set (Things-sty
   assert.match(icons, /flag:/);
 });
 
+test('task rows: press-and-hold arms dragging (no grip handle bar)', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  // the shared hold-delay constant drives Sortable's own delay/threshold
+  // state machine: pointerdown starts the timer; pointerup/pointercancel or
+  // movement past the threshold cancels it (ordinary tap/click/scroll);
+  // only an uncancelled timer arms drag mode + the highlight class.
+  assert.match(views, /const DRAG_HOLD_MS = 450/);
+  const sortableOptsBlock = views.slice(views.indexOf('function sortableList'), views.indexOf('function sortableList') + 1200);
+  assert.match(sortableOptsBlock, /delay:\s*DRAG_HOLD_MS/);
+  assert.match(sortableOptsBlock, /delayOnTouchOnly:\s*false/); // press-and-hold on mouse too, not touch-only
+  assert.match(sortableOptsBlock, /touchStartThreshold:\s*10/);
+  assert.match(sortableOptsBlock, /chosenClass:\s*'drag-armed'/); // "the row highlights and is in drag mode"
+  assert.doesNotMatch(sortableOptsBlock, /handle:\s*'\.grip'/);
+
+  // taskRow no longer appends a grip icon — the whole row is the drag surface
+  const taskRowBlock = views.slice(views.indexOf('function taskRow('), views.indexOf('function taskRow(') + 800);
+  assert.doesNotMatch(taskRowBlock, /el\('span', 'grip'\)/);
+  assert.doesNotMatch(views, /const COARSE = matchMedia/); // the coarse/fine-pointer split is gone with the grip
+
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.task-row\.drag-armed\s*\{/); // the armed-state highlight
+  assert.doesNotMatch(css, /\.task-row \.grip\s*\{/); // no reserved grip width left on task rows
+});
+
 test('step edits write through + refresh the list (review-lane bug fix)', async () => {
   const { get } = makeApp();
   const detail = await (await get('/detail.js')).text();
