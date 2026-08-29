@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
 import { parseTokens, envPermWarning, resolveAdmin, parseUntrusted, migrateLegacyDb } from '../src/server.js';
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -1289,6 +1289,35 @@ test('POST /templates/:name/ai-edit: unparseable reply -> 502, no crash', async 
   const a = appWithDir(dir, () => ({ code: 0, stdout: 'garbage, no delimiters', stderr: '' }));
   const r = await a.call('POST', '/api/v1/templates/demo/ai-edit', { body: { draft: 'x', messages: [] } });
   assert.equal(r.status, 502);
+  cleanup();
+});
+
+test('POST /templates/:name/save: valid draft validates, writes authored/, commits', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'packs/core/demo.md': '---\nname: demo\n---\norig' });
+  // stub: plt validate OK; git add/commit report success. The WRITE is real fs.
+  const a = appWithDir(dir, (s) => s.cmd === 'plt' ? { code: 0, stdout: 'OK', stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const draft = '---\nname: demo\n---\nedited body';
+  const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  // wrote the OVERRIDE into authored/, not the pack
+  assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), draft);
+  assert.equal(readFileSync(join(dir, 'templates', 'packs', 'core', 'demo.md'), 'utf8'), '---\nname: demo\n---\norig');
+  // validated a temp file named demo.md, then git add + commit ran
+  assert.ok(a.calls.some(s => s.cmd === 'plt' && s.args[0] === 'validate' && s.args[1].endsWith('/demo.md')));
+  assert.ok(a.calls.some(s => s.cmd === 'git' && s.args.includes('commit')));
+  cleanup();
+});
+
+test('POST /templates/:name/save: invalid draft -> 422, nothing written/committed', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\norig' });
+  const a = appWithDir(dir, (s) => s.cmd === 'plt' ? { code: 1, stdout: 'FAIL  demo.md:3: missing golden exemplar', stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft: '---\nname: demo\n---\nbad' } });
+  assert.equal(r.status, 422);
+  assert.equal(r.json.ok, false);
+  assert.match(r.json.validation, /golden exemplar/);
+  assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), '---\nname: demo\n---\norig', 'unchanged');
+  assert.ok(!a.calls.some(s => s.cmd === 'git' && s.args.includes('commit')), 'no commit on invalid');
   cleanup();
 });
 
