@@ -38,6 +38,7 @@ const PATHS = {
   // icon-first "add a deadline" affordance (mirrors a Things-style flag icon)
   flag: '<path d="M64,24a8,8,0,0,1,8,8V216a8,8,0,0,1-16,0V32A8,8,0,0,1,64,24Z"/><path d="M72,40h104a8,8,0,0,1,6,13.29L155.32,80l26.68,26.71A8,8,0,0,1,176,120H72a8,8,0,0,1-8-8V48A8,8,0,0,1,72,40Z"/>',
   calendar: '<path d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,176H48V96H208V208ZM48,80V48H72v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80Z"/>',
+  'caret-down': '<path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/>',
   // book: template/reference glyph (Phosphor regular)
   book: '<path d="M208,24H72A32,32,0,0,0,40,56V224a8,8,0,0,0,8,8H192a8,8,0,0,0,0-16H56a16,16,0,0,1,16-16H208a8,8,0,0,0,8-8V32A8,8,0,0,0,208,24Zm-8,160H72a31.82,31.82,0,0,0-16,4.29V56A16,16,0,0,1,72,40H200Z"/>',
   // original minimal glyphs for the two agent assignees (list-view pill,
