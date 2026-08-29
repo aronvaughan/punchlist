@@ -254,16 +254,20 @@ test('activity thread: drawer Timeline + composer, md-safe rendering (Part A)', 
   assert.match(views, /task\.comment_count > 0/);
 });
 
-test('template picker: drawer select from GET /templates + name chip (Part B)', async () => {
+test('template picker: drawer icon→pill→#template-dialog from GET /templates', async () => {
   const { get } = makeApp();
   const detail = await (await get('/detail.js')).text();
   assert.match(detail, /function templateEditor/);
-  assert.match(detail, /api\('GET', '\/templates'\)/);
-  assert.match(detail, /patch\(\{ template: sel\.value \|\| null \}\)/);
-  assert.match(detail, /templateEditor\(\)/); // wired into the drawer
-  const css = await (await get('/tokens.css')).text();
-  assert.match(css, /\.template-picker-row\s*\{/);
-  assert.match(css, /\.chip\.template-chip\s*\{/);
+  assert.match(detail, /api\('GET', '\/templates'\)/);        // loadTemplates still fetches the list
+  assert.match(detail, /export function openTemplatePicker/);
+  assert.match(detail, /save\(\{ template: value \}\)/);       // picking a row applies the template
+  assert.match(detail, /icon\('book'/);                        // book glyph for the field
+  assert.match(detail, /templateEditor\(\)/);                  // wired into the drawer
+  const html = await (await get('/')).text();
+  assert.match(html, /id="template-dialog"/);
+  assert.match(html, /id="template-dialog-mount"/);
+  const icons = await (await get('/icons.js')).text();
+  assert.match(icons, /book:\s*'<path/);
 });
 
 test('AI template editor: module exports openTemplateEditor, dialog shell + pencil wiring', async () => {

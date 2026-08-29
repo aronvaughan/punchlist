@@ -347,9 +347,9 @@ function assigneeEditor() {
   pill.title = 'Change assignee';
   const render = () => {
     const who = current.assignee ?? currentActor();
-    // icon-only pill to stay compact — the name rides on title + aria-label
-    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }));
-    pill.title = `Assignee: ${assigneeLabel(who)}`;
+    // expanded editor keeps the name beside the glyph (the collapsed row list
+    // view is the one that's icon-only — see views.js assigneePill)
+    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }), el('span', 'pill-text', assigneeLabel(who)));
     pill.setAttribute('aria-label', `Assigned to ${assigneeLabel(who)}`);
   };
   pill.addEventListener('click', () => {
@@ -376,16 +376,44 @@ async function loadTemplates() {
   return templatesCache;
 }
 
+// Host a template chooser in #template-dialog: "(none)" + each template name as
+// a picker row (a stale/unlisted stamped template stays selectable). Selecting
+// applies it and closes; repaints the pill on close.
+export function openTemplatePicker(task, save, render) {
+  const dlg = document.getElementById('template-dialog');
+  const mount = document.getElementById('template-dialog-mount');
+  const build = items => {
+    mount.replaceChildren();
+    const mk = (label, value, sel) => {
+      const b = el('button', 'picker-row' + (sel ? ' sel' : ''), label);
+      b.type = 'button';
+      b.addEventListener('click', async () => { if (await save({ template: value })) render(); dlg.open = false; });
+      mount.append(b);
+    };
+    mk('(none)', null, !task.template);
+    const names = new Set(items.map(t => t.name));
+    for (const tpl of items) mk(tpl.name, tpl.name, task.template === tpl.name);
+    if (task.template && !names.has(task.template)) mk(`${task.template} (unlisted)`, task.template, true);
+  };
+  loadTemplates().then(build);
+  document.getElementById('template-dialog-done').onclick = () => { dlg.open = false; };
+  dlg.open = true;
+}
+
+// Template as the icon→value pattern: unset = a bare `book` icon; set = a pill
+// (book + template name). Both open #template-dialog. The AI-edit pencil (opens
+// tpleditor.js) rides alongside when the feature is available and a template set.
 function templateEditor() {
-  const sel = el('select');
-  const none = el('option', null, '(none)');
-  none.value = '';
-  sel.append(none);
-  const chip = el('span', 'chip template-chip');
-  // pencil: opens the AI template editor for the selected template. Shown only
-  // when the server reports the feature available to this actor (admin + claude
-  // present + templates repo) AND a template is currently set. The config probe
-  // is the cached getConfig() the doc-linking affordance already uses.
+  const wrap = el('div', 'meta-field');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('book', { size: 15 }));
+  btn.setAttribute('aria-label', 'Use a template');
+  btn.title = 'Use a template';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Change template';
+
   const pencil = el('button', 'tpl-edit-btn');
   pencil.type = 'button';
   pencil.append(icon('pencil-simple', { size: 15 }));
@@ -399,37 +427,24 @@ function templateEditor() {
     const { openTemplateEditor } = await import('/tpleditor.js');
     openTemplateEditor(current.template);
   });
-  const renderChip = () => {
+
+  const render = () => {
     if (current.template) {
-      chip.replaceChildren(icon('file-text', { size: 13 }), el('span', 'pill-text', current.template));
-      chip.hidden = false;
-    } else chip.hidden = true;
+      pill.replaceChildren(icon('book', { size: 13 }), el('span', 'pill-text', current.template));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
     syncPencil();
   };
-  const populate = items => {
-    // keep a stamped-but-unknown template (stale ref, or repo absent) selectable
-    const names = new Set(items.map(t => t.name));
-    for (const tpl of items) {
-      const o = el('option', null, tpl.name);
-      o.value = tpl.name;
-      sel.append(o);
-    }
-    if (current.template && !names.has(current.template)) {
-      const o = el('option', null, `${current.template} (unlisted)`);
-      o.value = current.template;
-      sel.append(o);
-    }
-    sel.value = current.template ?? '';
-  };
-  loadTemplates().then(populate);
-  sel.value = current.template ?? '';
-  sel.addEventListener('change', async () => {
-    if (await patch({ template: sel.value || null })) renderChip();
-  });
-  renderChip();
-  const row = el('div', 'template-picker-row');
-  row.append(sel, chip, pencil);
-  return labeled('Template', row);
+  const open = () => openTemplatePicker(current, fields => patch(fields), render);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  render();
+  wrap.append(btn, pill, pencil);
+  return labeled('Template', wrap);
 }
 
 // ---- activity thread (Part A): the drawer's Timeline section + composer ----

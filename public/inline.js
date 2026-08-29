@@ -238,9 +238,9 @@ function assigneeControl(task) {
   pill.title = 'Change assignee';
   const paint = () => {
     const who = task.assignee ?? currentActor();
-    // icon-only pill to stay compact — the name rides on title + aria-label
-    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }));
-    pill.title = `Assignee: ${assigneeLabel(who)}`;
+    // expanded inline card keeps the name beside the glyph (only the collapsed
+    // row list view is icon-only — see views.js assigneePill)
+    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }), el('span', 'pill-text', assigneeLabel(who)));
     pill.setAttribute('aria-label', `Assigned to ${assigneeLabel(who)}`);
   };
   pill.addEventListener('click', () => openAssigneePicker(task, fields => save(task, fields), paint));
