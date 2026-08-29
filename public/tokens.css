@@ -607,7 +607,7 @@ html[data-theme="charcoal"] {
 }
 .caret {
   flex: none;
-  width: 28px;
+  width: 18px;
   height: 44px;
   border: none;
   background: none;
@@ -619,7 +619,7 @@ html[data-theme="charcoal"] {
 .caret::before { content: "▾"; display: inline-block; transition: transform .15s ease; }
 .caret.closed::before { transform: rotate(-90deg); }
 @media (prefers-reduced-motion: reduce) { .caret::before { transition: none; } }
-.caret-spacer { flex: none; width: 28px; }
+.caret-spacer { flex: none; width: 18px; }
 .rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-project { padding-left: 4px; gap: 2px; }
 .rail-heading .caret { height: 24px; }
@@ -753,14 +753,6 @@ html[data-theme="charcoal"] {
    .grip's touch-action:none). Actual reorder + view_ranks persistence is
    future work (see views.js navRow / renderRailTags). */
 .rail-project, .rail-tag { touch-action: pan-y; }
-.rail-grip {
-  flex: none;
-  width: 20px;
-  min-height: 44px;
-  padding: 12px 5px;
-  opacity: .5;
-}
-.rail-grip:hover { opacity: .8; }
 
 /* due-soon header affordance: the "30d" window chip */
 .window-chip {

@@ -326,17 +326,15 @@ test('rail Tags header: pencil opens new-tag dialog, old bottom "+ New tag" row 
   assert.match(css, /#rail-tags-head:has\(\.sec-toggle\)/);
 });
 
-test('rail rows: reused ⋮⋮ grip + touch-action so a rail drag never hijacks scroll', async () => {
+test('rail rows: no inert drag-grip (reclaimed space); scroll via touch-action', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
-  // both rail project rows and rail tag rows carry the reused .grip
-  assert.match(views, /el\('span', 'grip rail-grip'\)/);
-  // reorder-persistence is documented as future work against the view_ranks keys
-  assert.match(views, /view_ranks\('rail-projects'\)/);
-  assert.match(views, /view_ranks\('rail-tags'\)/);
+  // the inert grabber is gone from both project and tag rows — rail reorder was
+  // never wired, so it only ate horizontal space and read as a drag handle
+  assert.doesNotMatch(views, /grip rail-grip/);
   const css = await (await get('/tokens.css')).text();
-  assert.match(css, /\.rail-project, \.rail-tag \{ touch-action: pan-y; \}/);
-  assert.match(css, /\.rail-grip\s*\{/);
+  assert.match(css, /\.rail-project, \.rail-tag \{ touch-action: pan-y; \}/); // scroll still safe
+  assert.doesNotMatch(css, /\.rail-grip\s*\{/);
 });
 
 test('icon set: Phosphor inline SVGs (icons.js) replace the ad-hoc glyphs/emoji', async () => {
