@@ -151,13 +151,11 @@ function whenEditor() {
 }
 
 // ---- due date + time — icon-first affordance ----
-// Deadline as ONE flag control. Unset: a bare dashed flag icon button. Set: a
-// compact pill (flag + due text, plus the time if given) with a separate x to
-// clear. Either opens the shared #due-dialog — a small dialog with a Date and a
-// Time widget (+ Clear / Done) — so there are no always-visible date/time boxes
-// in the drawer. The clear x and the pill text are SIBLINGS, never nested
-// buttons (a <button> inside a <button> won't fire the inner click — that was
-// why clearing did nothing).
+// Deadline as ONE flag control (the icon→value pattern). Unset: a bare dashed
+// flag icon button. Set: a compact pill of the value (flag + mm/dd · countdown ·
+// time). BOTH open the shared #due-dialog — Date + Time widgets, a Clear, and a
+// Done. Clearing lives in the dialog (there is no inline x on the pill), and
+// there are no always-visible date/time boxes in the drawer.
 function dueEditor() {
   const wrap = el('div', 'due-editor');
 
@@ -167,24 +165,18 @@ function dueEditor() {
   btn.setAttribute('aria-label', 'Set deadline');
   btn.title = 'Set deadline';
 
-  const pill = el('div', 'meta-pill due-pill');
-  const pillOpen = el('button', 'due-pill-open');
-  pillOpen.type = 'button';
-  pillOpen.title = 'Edit deadline';
-  const clear = el('button', 'meta-pill-clear');
-  clear.type = 'button';
-  clear.append(icon('x', { size: 12 }));
-  clear.setAttribute('aria-label', 'Clear deadline');
-  pill.append(pillOpen, clear);
+  const pill = el('button', 'meta-pill due-pill');
+  pill.type = 'button';
+  pill.title = 'Edit deadline';
 
   const render = () => {
     if (current.due_date) {
-      // compact: flag + short date · countdown (· time). Same shape as the row
-      // chip so a set deadline reads identically in the list and the drawer.
+      // compact: flag + mm/dd · countdown (· time). Same shape as the row chip
+      // so a set deadline reads identically in the list and the drawer.
       const { text: countdown, urgent } = dueCountdown(current.due_date, todayISO());
       const bits = [dueShort(current.due_date), countdown];
       if (current.due_time) bits.push(current.due_time);
-      pillOpen.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', bits.join(' · ')));
+      pill.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', bits.join(' · ')));
       pill.classList.toggle('urgent', urgent);
       pill.hidden = false;
       btn.hidden = true;
@@ -215,11 +207,7 @@ function dueEditor() {
   };
 
   btn.addEventListener('click', openDialog);
-  pillOpen.addEventListener('click', openDialog);
-  clear.addEventListener('click', async e => {
-    e.stopPropagation();
-    if (await patch({ due_date: null, due_time: null })) render();
-  });
+  pill.addEventListener('click', openDialog);
 
   render();
   wrap.append(btn, pill);
