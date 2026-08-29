@@ -1852,6 +1852,21 @@ wa-button[variant="brand"]::part(base) {
 .tag-choice.sel { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .tag-add-row { display: flex; gap: 8px; }
 .tag-add-input { flex: 1; }
+/* collapsible Timeline header + the collapsed activity sparkline */
+.tl-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 4px 0; border: none; background: none; color: var(--ink);
+  font: inherit; font-weight: 600; cursor: pointer; text-align: left;
+}
+.tl-spark { width: 100%; margin: 2px 0 6px; }
+.tl-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.tl-axis, .tl-month-tick { stroke: var(--line); stroke-width: 1; }
+.tl-month-label { fill: var(--ink-soft); font-size: 9px; font-weight: 500; }
+.tl-dot { fill: var(--accent); }
+.tl-day-label { fill: var(--ink-soft); font-size: 8px; }
+.tl-today-ring { fill: none; stroke: var(--accent); stroke-width: 1.2; }
+.tl-today-dot { fill: var(--accent); }
+.tl-today-label { fill: var(--accent); font-weight: 600; }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
