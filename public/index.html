@@ -106,6 +106,19 @@
     <wa-button slot="footer" id="due-dialog-done" variant="brand">Done</wa-button>
   </wa-dialog>
 
+  <wa-dialog id="whenpick-dialog" label="When?">
+    <div class="when-quick">
+      <button id="whenpick-today" type="button">Today</button>
+      <button id="whenpick-someday" type="button">Someday</button>
+    </div>
+    <div class="dialog-field">
+      <label for="whenpick-date">On a date</label>
+      <input id="whenpick-date" type="date">
+    </div>
+    <wa-button slot="footer" id="whenpick-clear" appearance="plain">Clear</wa-button>
+    <wa-button slot="footer" id="whenpick-done" variant="brand">Done</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="manage-dialog" label="Manage projects">
     <div id="manage-body" class="manage-body">
       <div class="manage-toolbar">

@@ -1803,8 +1803,21 @@ wa-button[variant="brand"]::part(base) {
   cursor: pointer;
 }
 .dialog-hint { color: var(--ink-soft); font-weight: 400; font-size: .85em; }
-.due-editor, .tags-editor, .recur-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.due-editor, .tags-editor, .recur-editor, .inline-when { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .recur-editor .recur-body { width: 100%; }
+/* When picker: Today / Someday quick-choice buttons above the date field */
+.when-quick { display: flex; gap: 8px; margin-bottom: 10px; }
+.when-quick button {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--ink);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font: inherit;
+}
+.when-quick button:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
