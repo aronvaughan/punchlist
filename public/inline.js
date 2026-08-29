@@ -2,10 +2,10 @@
 // into an editing card. One expanded at a time; PATCH on change (optimistic,
 // no full re-render while editing); collapse (Esc / outside / another row)
 // re-syncs from the server. The pencil opens the full drawer.
-import { api, state, reload, toast, todayISO } from '/app.js';
-import { openDetail, stepsEditorFor, openWhenPicker, whenLabel } from '/detail.js';
+import { api, state, reload, toast, todayISO, currentActor } from '/app.js';
+import { openDetail, stepsEditorFor, openWhenPicker, whenLabel,
+  openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
-import { tagsField, assigneeField } from '/suggest.js';
 import { icon } from '/icons.js';
 
 let expanded = null; // { row, task, orig, titleSpan }
@@ -102,11 +102,10 @@ export function expandRow(task, row) {
   setTimeout(() => title.focus({ preventScroll: true }), 30);
 }
 
-// compact controls: When | Due | Tags — wraps on narrow screens
+// compact controls: When | Due | Tags | Assignee — wraps on narrow screens
 function controlsRow(task) {
   const wrap = el('div', 'inline-controls');
-  wrap.append(whenControl(task), dueControl(task), tagsControl(task),
-    labeled('Assignee', assigneeField(task, fields => save(task, fields))));
+  wrap.append(whenControl(task), dueControl(task), tagsControl(task), assigneeControl(task));
   return wrap;
 }
 
@@ -198,9 +197,53 @@ function dueControl(task) {
   return labeled('Due', box);
 }
 
-// tags: shared chips + suggestion-popover field (suggest.js)
+// tags: same icon→value pill → dialog pattern as the drawer. Unset = tag icon;
+// set = pill (tag + names / "N tags"). Both open the shared #tags-dialog, which
+// hosts the chips + suggestion-popover field; the pill repaints on close.
 function tagsControl(task) {
-  return labeled('Tags', tagsField(task, fields => save(task, fields)));
+  const wrap = el('div', 'tags-editor');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('tag', { size: 15 }));
+  btn.setAttribute('aria-label', 'Add tags');
+  btn.title = 'Add tags';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Edit tags';
+  const paint = () => {
+    const label = tagsLabel(task);
+    if (label) {
+      pill.replaceChildren(icon('tag', { size: 13 }), el('span', 'pill-text', label));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
+  };
+  const open = () => openTagsPicker(task, fields => save(task, fields), paint);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  paint();
+  wrap.append(btn, pill);
+  return labeled('Tags', wrap);
+}
+
+// assignee: always a value pill (glyph + friendly name) opening the shared
+// #assignee-dialog (segmented Me | Claude | Hermes + delegate auto-close).
+function assigneeControl(task) {
+  const wrap = el('div', 'inline-when');
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Change assignee';
+  const paint = () => {
+    const who = task.assignee ?? currentActor();
+    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }), el('span', 'pill-text', assigneeLabel(who)));
+  };
+  pill.addEventListener('click', () => openAssigneePicker(task, fields => save(task, fields), paint));
+  paint();
+  wrap.append(pill);
+  return labeled('Assignee', wrap);
 }
 
 function labeled(label, child) {

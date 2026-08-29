@@ -1803,7 +1803,25 @@ wa-button[variant="brand"]::part(base) {
   cursor: pointer;
 }
 .dialog-hint { color: var(--ink-soft); font-weight: 400; font-size: .85em; }
-.due-editor, .tags-editor, .recur-editor, .inline-when { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.due-editor, .tags-editor, .recur-editor, .inline-when, .meta-field { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+/* dialog-hosted rich field (assignee/tags) + selectable-row picker (project) */
+.dialog-mount { display: flex; flex-direction: column; gap: 10px; }
+.dialog-list { display: flex; flex-direction: column; gap: 6px; }
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--ink);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.picker-row:hover { border-color: var(--accent); color: var(--accent); }
+.picker-row.sel { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .recur-editor .recur-body { width: 100%; }
 /* When picker: Today / Someday quick-choice buttons above the date field */
 .when-quick { display: flex; gap: 8px; margin-bottom: 10px; }

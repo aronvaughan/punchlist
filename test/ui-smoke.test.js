@@ -151,14 +151,17 @@ test('status markers: themed glyphs for agent in-flight states', async () => {
 test('manage-projects dialog: shared tree renderer + dialog markup + tokens', async () => {
   const { get } = makeApp();
   const html = await (await get('/')).text();
-  // dialog scaffold present, old name-only #project-dialog retired
+  // dialog scaffold present; the old name-only project-creation dialog is gone
+  // (project creation lives in the manage tree). #project-dialog was later
+  // repurposed as the drawer's project PICKER (selectable rows → patch), which
+  // still delegates creation to the manage dialog via its "Manage…" action.
   assert.match(html, /id="manage-dialog"/);
   assert.match(html, /id="manage-tree"/);
   assert.match(html, /id="manage-top-drop"/); // (top level) unparent drop zone
   assert.match(html, /id="manage-new-name"/);
   assert.match(html, /id="manage-new-parent"/);
   assert.match(html, /id="manage-show-archived"/); // icon toggle: archived hidden by default
-  assert.doesNotMatch(html, /id="project-dialog"/);
+  assert.doesNotMatch(html, /id="project-name-input"/); // the retired inline create field
 
   const views = await (await get('/views.js')).text();
   assert.match(views, /export function openManageDialog/);
@@ -397,6 +400,53 @@ test('drawer: deadline/repeat/tags collapse to a bare icon until set (Things-sty
   assert.match(css, /\.meta-pill\s*\{/);
   const icons = await (await get('/icons.js')).text();
   assert.match(icons, /flag:/);
+});
+
+test('icon→pill→dialog pattern extended to project/assignee/tags/attachments', async () => {
+  const { get } = makeApp();
+  const html = await (await get('/')).text();
+  // the four new shared dialogs live in the app shell
+  assert.match(html, /id="project-dialog"/);
+  assert.match(html, /id="project-dialog-list"/);
+  assert.match(html, /id="project-dialog-manage"/);      // delegates creation to manage
+  assert.match(html, /id="assignee-dialog"/);
+  assert.match(html, /id="assignee-dialog-mount"/);       // hosts the shared assigneeField
+  assert.match(html, /id="tags-dialog"/);
+  assert.match(html, /id="tags-dialog-mount"/);           // hosts the shared tagsField
+  assert.match(html, /id="attachments-dialog"/);
+  assert.match(html, /id="attachments-dialog-mount"/);    // hosts the grid + upload machinery
+
+  const detail = await (await get('/detail.js')).text();
+  // project: folder icon when unset, folder+name pill when set, opens the picker
+  assert.match(detail, /function projectEditor/);
+  assert.match(detail, /export function openProjectPicker/);
+  assert.match(detail, /getElementById\('project-dialog'\)/);
+  assert.match(detail, /openManageDialog\(\)/);            // Manage… still reachable
+  // assignee: always a value pill (glyph + friendly name), no unset icon
+  assert.match(detail, /export function assigneeGlyph/);
+  assert.match(detail, /export function assigneeLabel/);
+  assert.match(detail, /export function openAssigneePicker/);
+  assert.match(detail, /replaceChildren\(assigneeField\(task, save\)\)/);
+  // tags: icon→pill→dialog hosting the shared tagsField
+  assert.match(detail, /export function tagsLabel/);
+  assert.match(detail, /export function openTagsPicker/);
+  assert.match(detail, /replaceChildren\(tagsField\(task, save\)\)/);
+  // attachments: icon→count pill, machinery moved into a hosted panel
+  assert.match(detail, /function openAttachmentsPicker/);
+  assert.match(detail, /function buildAttachmentsPanel/);
+  assert.match(detail, /task\.attachment_count = items\.length/); // pill stays truthful
+  assert.match(detail, /icon\('paperclip', \{ size: 15 \}\)/);
+
+  // inline row reuses the same shared pickers (project/attachments are drawer-only)
+  const inline = await (await get('/inline.js')).text();
+  assert.match(inline, /openTagsPicker\(task, fields => save\(task, fields\), paint\)/);
+  assert.match(inline, /openAssigneePicker\(task, fields => save\(task, fields\), paint\)/);
+  assert.match(inline, /function assigneeControl/);
+
+  // picker-row styling uses theme tokens only
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.picker-row\s*\{/);
+  assert.match(css, /\.picker-row\.sel\s*\{[^}]*var\(--accent\)/);
 });
 
 test('task rows: press-and-hold arms dragging (no grip handle bar)', async () => {

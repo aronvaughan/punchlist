@@ -252,39 +252,114 @@ function dueEditor() {
   return wrap;
 }
 
-function projectEditor() {
-  const sel = el('select');
-  const none = el('option', null, '(none — inbox)');
-  none.value = '';
-  sel.append(none);
-  for (const p of state.projects.filter(p => !p.archived)) {
-    const o = el('option', null, p.name);
-    o.value = p.id;
-    sel.append(o);
+// ---- project — icon→value pattern (drawer only) ----
+// Unset (Inbox / no project): a bare folder icon. Set: a pill of folder + the
+// project name. Both open #project-dialog, which lists the non-archived projects
+// as selectable rows plus a "(none — Inbox)" choice and a "Manage…" action.
+export function projectLabel(t) {
+  const p = state.projects.find(pr => pr.id === t.project_id);
+  return p ? p.name : null;
+}
+
+// Populate + open the shared project picker. apply(fields)->bool, render() repaints.
+export function openProjectPicker(initialId, apply, render) {
+  const dlg = document.getElementById('project-dialog');
+  const list = document.getElementById('project-dialog-list');
+  list.replaceChildren();
+  const pick = async id => { if (await apply({ project_id: id })) render(); dlg.open = false; };
+  const rows = [{ id: null, name: '(none — Inbox)' }, ...state.projects.filter(p => !p.archived)];
+  for (const p of rows) {
+    const b = el('button', 'picker-row' + ((initialId ?? null) === p.id ? ' sel' : ''), p.id ? undefined : p.name);
+    b.type = 'button';
+    if (p.id) { b.append(icon('folder', { size: 15 }), el('span', 'pill-text', p.name)); }
+    b.addEventListener('click', () => pick(p.id));
+    list.append(b);
   }
-  sel.value = current.project_id ?? '';
-  sel.addEventListener('change', () => patch({ project_id: sel.value || null }));
-  // "Manage…" opens the shared tree-admin dialog; on close the picker refreshes
-  // its options and selects a project that was just created there
-  const manage = el('button', 'link-btn', 'Manage…');
-  manage.type = 'button';
-  manage.addEventListener('click', async () => {
+  // "Manage…" opens the shared tree-admin dialog; a project created there is
+  // selected on return
+  document.getElementById('project-dialog-manage').onclick = async () => {
+    dlg.open = false;
     const { createdId } = await openManageDialog();
-    if (createdId) await patch({ project_id: createdId });
-    rebuild(); // repaint options (and selection) from fresh state.projects
-  });
-  const row = el('div', 'project-picker-row');
-  row.append(sel, manage);
-  return labeled('Project', row);
+    if (createdId) await apply({ project_id: createdId });
+    render();
+  };
+  document.getElementById('project-dialog-cancel').onclick = () => { dlg.open = false; };
+  dlg.open = true;
+}
+
+function projectEditor() {
+  const wrap = el('div', 'meta-field');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('folder', { size: 15 }));
+  btn.setAttribute('aria-label', 'Set project');
+  btn.title = 'Set project';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Change project';
+
+  const render = () => {
+    const name = projectLabel(current);
+    if (name) {
+      pill.replaceChildren(icon('folder', { size: 13 }), el('span', 'pill-text', name));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
+  };
+  const open = () => openProjectPicker(current.project_id, patch, render);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  render();
+  wrap.append(btn, pill);
+  return labeled('Project', wrap);
+}
+
+// ---- assignee — value pill → dialog (drawer + inline) ----
+// Assignee ALWAYS has a value, so there is no unset icon: always a pill of the
+// per-actor glyph (claude/hermes, else a person) + a friendly name ("Me" for the
+// current actor). The dialog hosts the shared segmented field (Me | Claude |
+// Hermes) + the delegate auto-close toggle.
+export function assigneeGlyph(who) {
+  return (who === 'claude' || who === 'hermes') ? who : 'user';
+}
+export function assigneeLabel(who) {
+  return (!who || who === currentActor()) ? 'Me' : who;
+}
+
+// Host the shared assigneeField in #assignee-dialog; repaint the pill on close.
+export function openAssigneePicker(task, save, render) {
+  const dlg = document.getElementById('assignee-dialog');
+  const mount = document.getElementById('assignee-dialog-mount');
+  mount.replaceChildren(assigneeField(task, save));
+  document.getElementById('assignee-dialog-done').onclick = () => { dlg.open = false; };
+  const onHide = e => { if (e.target !== dlg) return; dlg.removeEventListener('wa-after-hide', onHide); render(); };
+  dlg.addEventListener('wa-after-hide', onHide);
+  dlg.open = true;
 }
 
 function assigneeEditor() {
-  const t = current;
-  return labeled('Assignee', assigneeField(t, async fields => {
-    const ok = await patch(fields);
-    if (ok) Object.assign(t, current); // patch() replaced `current`; refresh the field's ref
-    return ok;
-  }));
+  const wrap = el('div', 'meta-field');
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Change assignee';
+  const render = () => {
+    const who = current.assignee ?? currentActor();
+    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }), el('span', 'pill-text', assigneeLabel(who)));
+  };
+  pill.addEventListener('click', () => {
+    const t = current;
+    openAssigneePicker(t, async fields => {
+      const ok = await patch(fields);
+      if (ok) Object.assign(t, current); // patch() replaced `current`; refresh the field's ref
+      return ok;
+    }, render);
+  });
+  render();
+  wrap.append(pill);
+  return labeled('Assignee', wrap);
 }
 
 // ---- template picker (Part B): a select from GET /templates + "(none)" ----
@@ -459,9 +534,53 @@ function retentionValue(att) {
   return att.retention === 'on_done' ? 'on_done' : 'keep';
 }
 
+// ---- attachments — icon→count pill → dialog (drawer only) ----
+// Unset (0): a bare paperclip icon. Set: a pill of paperclip + count. Both open
+// #attachments-dialog, which hosts the full grid + "Attach file" + drag-drop.
+// The count comes from task.attachment_count, refreshed after add/delete.
 function attachmentsEditor(task) {
+  const wrap = el('div', 'meta-field');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('paperclip', { size: 15 }));
+  btn.setAttribute('aria-label', 'Add attachments');
+  btn.title = 'Add attachments';
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Manage attachments';
+
+  const render = () => {
+    const n = task.attachment_count || 0;
+    if (n > 0) {
+      pill.replaceChildren(icon('paperclip', { size: 13 }), el('span', 'pill-text', String(n)));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
+  };
+  const open = () => openAttachmentsPicker(task, render);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  render();
+  wrap.append(btn, pill);
+  return labeled('Attachments', wrap);
+}
+
+function openAttachmentsPicker(task, onCount) {
+  const dlg = document.getElementById('attachments-dialog');
+  const mount = document.getElementById('attachments-dialog-mount');
+  mount.replaceChildren(buildAttachmentsPanel(task, onCount));
+  document.getElementById('attachments-dialog-done').onclick = () => { dlg.open = false; };
+  dlg.open = true;
+}
+
+// The attachment grid + "Attach file" + "Link a doc…" + drag-drop machinery,
+// hosted inside #attachments-dialog. refresh() keeps task.attachment_count and
+// the collapsed pill (onCount) in sync after each load/add/delete.
+function buildAttachmentsPanel(task, onCount = () => {}) {
   const wrap = el('div', 'attachments');
-  wrap.append(el('label', null, 'Attachments'));
 
   const input = document.createElement('input');
   input.type = 'file';
@@ -497,6 +616,8 @@ function attachmentsEditor(task) {
     let items;
     try { items = (await api('GET', `/tasks/${task.id}/attachments`)).items; }
     catch (e) { grid.append(el('div', 'att-empty', `Couldn't load attachments: ${e.message}`)); return; }
+    task.attachment_count = items.length; // keep the collapsed pill truthful
+    onCount();
     if (!items.length) { grid.append(el('div', 'att-empty', 'No attachments yet.')); return; }
     for (const att of items) {
       grid.append(isDocAtt(att) ? docRow(att, refresh) : attachmentCard(att, refresh));
@@ -737,30 +858,55 @@ async function patchAttachment(id, body) {
   catch (e) { toast(`Save failed: ${e.message}`); }
 }
 
-// ---- tags — icon-first affordance ----
-// No tags yet: a bare tag-icon button (no label, no empty input box taking
-// space). Once a tag exists, the shared chips + suggestion-popover field
-// (suggest.js) shows directly — tags themselves are already compact chips, so
-// only the "nothing here yet" state needed shrinking down to an icon.
+// ---- tags — icon→value pill → dialog ----
+// No tags yet: a bare tag-icon button. Set: a pill of the tag icon + the names
+// joined by ", " (or "N tags" past 3). Both open #tags-dialog, which hosts the
+// shared chips + suggestion-popover field (suggest.js) for editing; the pill
+// repaints from the task's tags on close.
+export function tagsLabel(t) {
+  const tags = Array.isArray(t.tags) ? t.tags : [];
+  if (!tags.length) return null;
+  return tags.length > 3 ? `${tags.length} tags` : tags.join(', ');
+}
+
+// Host the shared tagsField in #tags-dialog; repaint the pill on close.
+export function openTagsPicker(task, save, render) {
+  const dlg = document.getElementById('tags-dialog');
+  const mount = document.getElementById('tags-dialog-mount');
+  mount.replaceChildren(tagsField(task, save));
+  document.getElementById('tags-dialog-done').onclick = () => { dlg.open = false; };
+  const onHide = e => { if (e.target !== dlg) return; dlg.removeEventListener('wa-after-hide', onHide); render(); };
+  dlg.addEventListener('wa-after-hide', onHide);
+  dlg.open = true;
+}
+
 function tagsEditor() {
   const wrap = el('div', 'tags-editor');
-  // shared chips + suggestion-popover field (suggest.js); patch() refreshes
-  // `current`, the field keeps its own copy in sync on success
-  const field = tagsField(current, fields => patch(fields));
   const btn = el('button', 'meta-icon-btn');
   btn.type = 'button';
   btn.append(icon('tag', { size: 15 }));
   btn.setAttribute('aria-label', 'Add tags');
   btn.title = 'Add tags';
-  let opened = false;
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = 'Edit tags';
   const render = () => {
     const has = Array.isArray(current.tags) && current.tags.length > 0;
-    btn.hidden = has || opened;
-    field.hidden = !has && !opened;
+    if (has) {
+      pill.replaceChildren(icon('tag', { size: 13 }), el('span', 'pill-text', tagsLabel(current)));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
   };
-  btn.addEventListener('click', () => { opened = true; render(); });
+  // patch() refreshes `current`; tagsField keeps its own copy in sync on success
+  const open = () => openTagsPicker(current, fields => patch(fields), render);
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
   render();
-  wrap.append(btn, field);
+  wrap.append(btn, pill);
   return wrap;
 }
 
