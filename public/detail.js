@@ -1123,10 +1123,8 @@ export function stepsEditorFor(task, { onChange } = {}) {
   const stepRow = step => {
     const li = el('li', 'step-row');
     li.dataset.sid = step.id;
-    // grip: the ONLY drag handle — the rest of the row scrolls/edits normally
-    const grip = el('span', 'grip');
-    grip.setAttribute('aria-hidden', 'true');
-    li.append(grip);
+    // no drag-grip gutter — the step uses the full width; reorder is press-and-hold
+    // on the row (Sortable delay below), matching the task-row pattern.
     const check = el('button', 'check' + (step.done ? ' checked' : ''));
     check.setAttribute('aria-label', 'Toggle step');
     check.addEventListener('click', async () => {
@@ -1170,7 +1168,9 @@ export function stepsEditorFor(task, { onChange } = {}) {
   const ranks = new Map(task.steps.map(s => [s.id, s.rank]));
   new Sortable(ul, {
     animation: 150,
-    handle: '.grip',
+    delay: 250,           // press-and-hold to reorder; a quick tap focuses the field
+    delayOnTouchOnly: false,
+    filter: 'button',     // clicking the check/delete never starts a drag
     onEnd: async evt => {
       const sid = evt.item.dataset.sid;
       const prev = evt.item.previousElementSibling?.dataset.sid;
