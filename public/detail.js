@@ -150,31 +150,65 @@ function whenEditor() {
   return labeled('When', seg);
 }
 
-// ---- due date + time (+ live countdown line) ----
+// ---- due date + time — icon-first affordance ----
+// Unset: a small dashed flag icon button, no label, no space taken by empty
+// inputs. Set: a compact pill (flag + the existing due-line text) that toggles
+// the same date/time fields open inline on tap, with an x to clear. Mirrors
+// the reference app's pattern of a bare icon that becomes a small value chip
+// once something is set, instead of an always-visible two-field form.
 function dueEditor() {
-  const wrap = el('div');
-  const row = el('div', 'field-row');
-  const line = el('div', 'due-line');
-  const renderLine = () => {
-    if (!current.due_date) { line.hidden = true; return; }
-    const { text, urgent } = dueLine(current.due_date, todayISO());
-    line.textContent = text;
-    line.classList.toggle('urgent', urgent);
-    line.hidden = false;
-  };
+  const wrap = el('div', 'due-editor');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('flag', { size: 15 }));
+  btn.setAttribute('aria-label', 'Set deadline');
+  btn.title = 'Set deadline';
+
+  const pill = el('button', 'meta-pill due-pill');
+  pill.type = 'button';
+
+  const fields = el('div', 'field-row due-fields');
+  fields.hidden = true;
   const date = el('input');
   date.type = 'date';
-  date.value = current.due_date ?? '';
-  date.addEventListener('change', async () => {
-    if (await patch({ due_date: date.value || null })) renderLine();
-  });
   const time = el('input');
   time.type = 'time';
-  time.value = current.due_time ?? '';
+  fields.append(labeled('Deadline', date), labeled('Time', time));
+
+  const clear = el('button', 'meta-pill-clear');
+  clear.type = 'button';
+  clear.append(icon('x', { size: 12 }));
+  clear.setAttribute('aria-label', 'Clear deadline');
+
+  const toggleFields = () => { fields.hidden = !fields.hidden; if (!fields.hidden) date.focus(); };
+
+  const render = () => {
+    date.value = current.due_date ?? '';
+    time.value = current.due_time ?? '';
+    if (current.due_date) {
+      const { text, urgent } = dueLine(current.due_date, todayISO());
+      pill.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', text), clear);
+      pill.classList.toggle('urgent', urgent);
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+      fields.hidden = true;
+    }
+  };
+
+  date.addEventListener('change', async () => { if (await patch({ due_date: date.value || null })) render(); });
   time.addEventListener('change', () => patch({ due_time: time.value || null }));
-  row.append(labeled('Deadline', date), labeled('Time', time));
-  renderLine();
-  wrap.append(row, line);
+  btn.addEventListener('click', toggleFields);
+  pill.addEventListener('click', e => { if (e.target === clear || clear.contains(e.target)) return; toggleFields(); });
+  clear.addEventListener('click', async e => {
+    e.stopPropagation();
+    if (await patch({ due_date: null, due_time: null })) render();
+  });
+
+  render();
+  wrap.append(btn, pill, fields);
   return wrap;
 }
 
@@ -663,10 +697,31 @@ async function patchAttachment(id, body) {
   catch (e) { toast(`Save failed: ${e.message}`); }
 }
 
+// ---- tags — icon-first affordance ----
+// No tags yet: a bare tag-icon button (no label, no empty input box taking
+// space). Once a tag exists, the shared chips + suggestion-popover field
+// (suggest.js) shows directly — tags themselves are already compact chips, so
+// only the "nothing here yet" state needed shrinking down to an icon.
 function tagsEditor() {
+  const wrap = el('div', 'tags-editor');
   // shared chips + suggestion-popover field (suggest.js); patch() refreshes
   // `current`, the field keeps its own copy in sync on success
-  return labeled('Tags', tagsField(current, fields => patch(fields)));
+  const field = tagsField(current, fields => patch(fields));
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('tag', { size: 15 }));
+  btn.setAttribute('aria-label', 'Add tags');
+  btn.title = 'Add tags';
+  let opened = false;
+  const render = () => {
+    const has = Array.isArray(current.tags) && current.tags.length > 0;
+    btn.hidden = has || opened;
+    field.hidden = !has && !opened;
+  };
+  btn.addEventListener('click', () => { opened = true; render(); });
+  render();
+  wrap.append(btn, field);
+  return wrap;
 }
 
 function notesEditor() {
@@ -788,19 +843,63 @@ export function stepsEditorFor(task, { onChange } = {}) {
   return wrap;
 }
 
-// ---- recurrence: freq + params + anchor ----
+// ---- recurrence: freq + params + anchor — icon-first affordance ----
+// Unset: a bare repeat-icon button (the freq/params/anchor grid stays hidden
+// until tapped — most tasks don't repeat, so it shouldn't cost a whole
+// always-visible grid of buttons). Set: a compact "Daily" / "Every N days" /
+// etc. pill with an x to stop repeating; tapping the pill reopens the grid to
+// change it. Same underlying freq/params/anchor picker as before, just gated
+// behind the icon/pill the way Things gates its per-field affordances.
 function recurEditor() {
-  const wrap = el('div', 'recur-grid');
-  wrap.append(el('label', null, 'Repeat'));
+  const wrap = el('div', 'recur-editor');
   const rule = current.recur ? { ...current.recur, days: [...(current.recur.days ?? [])] } : null;
   const draft = rule ?? { freq: null, anchor: 'due', n: 2, days: ['mon'], dom: 1 };
   if (draft.n == null) draft.n = 2;
   if (!draft.days?.length) draft.days = ['mon'];
   if (draft.dom == null) draft.dom = 1;
 
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('arrow-counter-clockwise', { size: 15 }));
+  btn.setAttribute('aria-label', 'Repeat');
+  btn.title = 'Repeat';
+
+  const pill = el('button', 'meta-pill recur-pill');
+  pill.type = 'button';
+
+  const clearBtn = el('button', 'meta-pill-clear');
+  clearBtn.type = 'button';
+  clearBtn.append(icon('x', { size: 12 }));
+  clearBtn.setAttribute('aria-label', 'Stop repeating');
+
+  const body = el('div', 'recur-body');
+  body.hidden = true;
+  body.append(el('label', null, 'Repeat'));
+
   const freqSeg = el('div', 'seg');
   const paramsBox = el('div');
   const anchorSeg = el('div', 'seg');
+  body.append(freqSeg, paramsBox, anchorSeg);
+
+  let expanded = false;
+  const toggleBody = () => { expanded = !expanded; body.hidden = !expanded; };
+
+  const summary = () => {
+    const r = current.recur;
+    if (!r) return '';
+    if (r.freq === 'daily') return 'Daily';
+    if (r.freq === 'every') return `Every ${r.n} days`;
+    if (r.freq === 'weekly') return `Weekly: ${(r.days || []).join(', ')}`;
+    if (r.freq === 'monthly') return `Monthly: day ${r.dom}`;
+    return '';
+  };
+  const syncAffordance = () => {
+    const has = !!current.recur;
+    btn.hidden = has;
+    pill.hidden = !has;
+    if (has) pill.replaceChildren(icon('arrow-counter-clockwise', { size: 13 }), el('span', 'pill-text', summary()), clearBtn);
+    body.hidden = !expanded;
+  };
 
   const apply = async () => {
     if (draft.freq === null) { if (current.recur && await patch({ recur: null })) rebuild(); return; }
@@ -857,7 +956,13 @@ function recurEditor() {
     freqSeg.append(b);
   }
   renderParams();
-  wrap.append(freqSeg, paramsBox, anchorSeg);
+
+  btn.addEventListener('click', toggleBody);
+  pill.addEventListener('click', e => { if (e.target === clearBtn || clearBtn.contains(e.target)) return; toggleBody(); });
+  clearBtn.addEventListener('click', async e => { e.stopPropagation(); draft.freq = null; await apply(); });
+
+  syncAffordance();
+  wrap.append(btn, pill, body);
   return wrap;
 }
 

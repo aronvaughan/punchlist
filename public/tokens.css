@@ -1740,6 +1740,54 @@ wa-button[variant="brand"]::part(base) {
 }
 .tpl-edit-btn:hover { color: var(--accent); background: var(--bg); }
 
+/* ---- compact icon-first "add a value" affordances (deadline / repeat / tags) ----
+   Unset -> a small icon-only button (Things-style). Set -> a compact pill with
+   icon + value that opens the same inline editor on tap; a small x clears it.
+   Replaces an always-visible full-width labeled field with something that only
+   takes space once there's something to show. */
+.meta-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.meta-icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.meta-pill.urgent { color: var(--danger); border-color: var(--danger); font-weight: 600; }
+.meta-pill-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: .65;
+  cursor: pointer;
+  padding: 2px;
+}
+.meta-pill-clear:hover { opacity: 1; }
+.due-editor, .tags-editor, .recur-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.due-editor .due-fields, .recur-editor .recur-body { width: 100%; }
+
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
 .tl-list { display: flex; flex-direction: column; gap: 10px; }

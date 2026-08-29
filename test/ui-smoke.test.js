@@ -353,6 +353,28 @@ test('grip: two solid rounded vertical bars (not the old dotted ⋮⋮)', async 
   assert.doesNotMatch(css, /\.grip \{[^}]*radial-gradient/);
 });
 
+test('drawer: deadline/repeat/tags collapse to a bare icon until set (Things-style compact affordance)', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  // deadline: icon-only button when unset, compact pill (icon + due-line text)
+  // + clear-x when set, instead of an always-visible two-field form
+  assert.match(detail, /function dueEditor\(\)/);
+  assert.match(detail, /icon\('flag', \{ size: 15 \}\)/);
+  assert.match(detail, /class="?meta-icon-btn"?|'meta-icon-btn'/);
+  assert.match(detail, /pill\.replaceChildren\(icon\('flag', \{ size: 13 \}\), el\('span', 'pill-text', text\), clear\)/);
+  // repeat: same bare-icon -> pill pattern, wrapping the existing freq/params/anchor grid
+  assert.match(detail, /icon\('arrow-counter-clockwise', \{ size: 15 \}\)/);
+  assert.match(detail, /Stop repeating/);
+  // tags: bare tag-icon until the first tag exists, then the shared chips field shows
+  assert.match(detail, /Add tags/);
+  assert.match(detail, /const has = Array\.isArray\(current\.tags\) && current\.tags\.length > 0;/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.meta-icon-btn\s*\{/);
+  assert.match(css, /\.meta-pill\s*\{/);
+  const icons = await (await get('/icons.js')).text();
+  assert.match(icons, /flag:/);
+});
+
 test('step edits write through + refresh the list (review-lane bug fix)', async () => {
   const { get } = makeApp();
   const detail = await (await get('/detail.js')).text();

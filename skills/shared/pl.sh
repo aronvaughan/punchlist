@@ -20,6 +20,13 @@
 #   pl.sh answer <id> "text"           blocked -> active with the answer (admin only)
 #   pl.sh comment <id> "text"          post a comment to the task's timeline
 #                                      (non-blocking — think out loud / progress)
+#   pl.sh comments <id>                 list a task's comment timeline (read-only)
+#   pl.sh attachments <id>              list a task's attachments (id/filename/mime/bytes)
+#   pl.sh attachment <id> <att_id> [--out path]
+#                                      download one attachment's bytes (read-only;
+#                                      no upload/delete surface). Default output
+#                                      path is ./<attachment filename>; use --out -
+#                                      to print text attachments to stdout.
 #   pl.sh reorder <id> (--before <id>|--after <id>) [--list agents|inbox|human]
 #                    --reason "why"    reprioritize your backlog; as an agent you
 #                                      MUST give a reason (auto-posted to timeline)
@@ -215,6 +222,49 @@ case "$cmd" in
     [ $# -eq 2 ] || { echo "usage: pl.sh comment <id> \"text\"" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/comments" "$(jq -n --arg t "$2" '{text: $t}')"
     printf '%s' "$RESP" | jq -r '"commented on " + .task_id + " (@" + (.author // "?") + ")"' ;;
+
+  comments)
+    [ $# -eq 1 ] || { echo "usage: pl.sh comments <id>" >&2; exit 2; }
+    api GET "/tasks/$(uri "$1")/comments"
+    printf '%s' "$RESP" | jq -r '.items[] | .created_at + "  @" + .author + "  [" + .kind + "]  " + .text' ;;
+
+  attachments)
+    # Read-only listing — no upload/delete surface here (that stays server-side).
+    [ $# -eq 1 ] || { echo "usage: pl.sh attachments <id>" >&2; exit 2; }
+    api GET "/tasks/$(uri "$1")/attachments"
+    printf '%s' "$RESP" | jq -r '.items[] | .id + "  " + .filename + "  " + .mime + "  " + (.bytes|tostring) + "b  [" + .kind + "]  " + .created_at' ;;
+
+  attachment)
+    # Download one attachment's raw bytes via GET /attachments/:id. Streamed
+    # straight to disk with curl -o (never through a bash variable) so binary
+    # image bytes aren't mangled. Read-only: no upload/delete subcommand here.
+    [ $# -ge 2 ] || { echo "usage: pl.sh attachment <task_id> <attachment_id> [--out path]" >&2; exit 2; }
+    task_id="$1"; att_id="$2"; shift 2
+    out=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --out) out="$2"; shift 2 ;;
+        *) echo "pl: unknown flag $1" >&2; exit 2 ;;
+      esac
+    done
+    # Confirm the attachment belongs to the given task and get its filename
+    # (also validates the task/attachment exist before we spend a download).
+    api GET "/tasks/$(uri "$task_id")/attachments"
+    meta=$(printf '%s' "$RESP" | jq -r --arg id "$att_id" '.items[] | select(.id == $id)')
+    [ -n "$meta" ] || { echo "pl: attachment $att_id not found on task $task_id" >&2; exit 1; }
+    fname=$(printf '%s' "$meta" | jq -r '.filename')
+    if [ -z "$out" ]; then out="./$fname"; fi
+    if [ "$out" = "-" ]; then
+      curl -sS --max-time 30 -X GET "$API/attachments/$(uri "$att_id")" \
+        -H "Authorization: Bearer $TOKEN" || { echo "pl: download failed" >&2; exit 1; }
+    else
+      code=$(curl -sS --max-time 30 -w '%{http_code}' -o "$out" -X GET "$API/attachments/$(uri "$att_id")" \
+        -H "Authorization: Bearer $TOKEN") || { echo "pl: cannot reach $BASE" >&2; exit 1; }
+      case "$code" in
+        2*) echo "saved $out" ;;
+        *) rm -f "$out"; echo "pl: HTTP $code downloading attachment $att_id" >&2; exit 1 ;;
+      esac
+    fi ;;
 
   reorder)
     # Reprioritize your backlog. As an agent you MUST give a --reason: it
