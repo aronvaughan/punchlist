@@ -488,7 +488,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
 
   app.get('/api/v1/tasks', c => {
     const { view, project, tag, q, assignee, limit, cursor, window: windowRaw } = c.req.query();
-    if (view !== undefined && !['inbox', 'today', 'upcoming', 'overdue', 'due_soon', 'logbook',
+    if (view !== undefined && !['inbox', 'today', 'upcoming', 'anytime', 'overdue', 'due_soon', 'logbook',
       'review', 'delegated', 'agents', 'queue', 'unvetted', 'needs_input', 'human'].includes(view)) {
       throw new ApiError(400, `unknown view: ${view}`);
     }
@@ -1407,6 +1407,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     return c.json({
       inbox: count('inbox'), today: count('today'), upcoming: count('upcoming'),
+      anytime: count('anytime'), // someday/no-when work off the daily plan
       due_soon: count('due_soon'), review: count('review'), delegated: count('delegated'),
       unvetted: count('unvetted'), // quarantined agent work awaiting the admin's vet
       needs_input: count('needs_input'), // blocked on a question for the admin

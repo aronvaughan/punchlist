@@ -38,6 +38,7 @@ const viewRank = view => `COALESCE((SELECT vr.rank FROM view_ranks vr
 const INBOX_RANK = viewRank('inbox');
 const AGENTS_RANK = viewRank('agents');
 const HUMAN_RANK = viewRank('human');
+const ANYTIME_RANK = viewRank('anytime');
 
 const VIEWS = {
   inbox: {
@@ -57,6 +58,16 @@ const VIEWS = {
   upcoming: {
     where: `${LIVE} AND ${MINE} AND when_type = 'date' AND when_date > :today`,
     keys: ['when_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
+  // Things-style "Anytime": the admin's active work NOT scheduled to a concrete
+  // day, so someday/no-when tasks never vanish. someday OR no-when, EXCLUDING
+  // pure-inbox rows (no project AND no when — those already live in Inbox).
+  // Net effect: all someday tasks (with or without a project) + no-when tasks
+  // that DO have a project. drag-reorderable: manual view_ranks('anytime') first.
+  anytime: {
+    where: `${LIVE} AND ${MINE} AND (when_type = 'someday' OR when_type IS NULL)
+            AND NOT (project_id IS NULL AND when_type IS NULL)`,
+    keys: [ANYTIME_RANK, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   overdue: {
     where: `${LIVE} AND due_date < :today`, // strictly before (C6)

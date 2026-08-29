@@ -1112,6 +1112,9 @@ export function renderMain() {
   } else if (r.view === 'upcoming') {
     titleEl.textContent = 'Upcoming';
     renderGrouped(listEl, tasks, t => t.when_date, { showProject: true });
+  } else if (r.view === 'anytime') {
+    titleEl.textContent = 'Anytime';
+    listEl.append(taskList(tasks, { showProject: true }));
   } else if (r.view === 'logbook') {
     titleEl.textContent = 'Logbook';
     renderGrouped(listEl, tasks, t => (t.completed_at || '').slice(0, 10) || 'Earlier',
@@ -1143,6 +1146,7 @@ function emptyNote(view) {
     inbox: 'Nothing to triage — add a task with n.',
     today: 'Nothing scheduled today.',
     upcoming: 'No scheduled tasks yet.',
+    anytime: 'Nothing waiting — someday and unscheduled tasks land here.',
     logbook: 'Completed tasks land here.',
     review: 'Nothing waiting on your review.',
     'needs-input': 'Nothing waiting on a human.',
