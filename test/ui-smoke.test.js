@@ -376,11 +376,16 @@ test('drawer: deadline/repeat/tags collapse to a bare icon until set (Things-sty
   const { get } = makeApp();
   const detail = await (await get('/detail.js')).text();
   // deadline: icon-only button when unset, compact pill (icon + due-line text)
-  // + clear-x when set, instead of an always-visible two-field form
+  // when set — with the clear-x as a SEPARATE sibling (not a nested <button>,
+  // which never fired its click), and NO always-visible date/time boxes. Both
+  // the flag and the pill open the shared #due-dialog (a Date + Time widget).
   assert.match(detail, /function dueEditor\(\)/);
   assert.match(detail, /icon\('flag', \{ size: 15 \}\)/);
   assert.match(detail, /class="?meta-icon-btn"?|'meta-icon-btn'/);
-  assert.match(detail, /pill\.replaceChildren\(icon\('flag', \{ size: 13 \}\), el\('span', 'pill-text', text\), clear\)/);
+  assert.match(detail, /pillOpen\.replaceChildren\(icon\('flag', \{ size: 13 \}\)/);
+  assert.match(detail, /'due-pill-open'/);                       // pill text is its own bare button
+  assert.match(detail, /getElementById\('due-dialog'\)/);        // opens the dialog, not inline fields
+  assert.doesNotMatch(detail, /fields\.append\(labeled\('Deadline'/); // old inline boxes removed
   // repeat: same bare-icon -> pill pattern, wrapping the existing freq/params/anchor grid
   assert.match(detail, /icon\('arrow-counter-clockwise', \{ size: 15 \}\)/);
   assert.match(detail, /Stop repeating/);
