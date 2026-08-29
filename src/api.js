@@ -1581,10 +1581,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (typeof body.draft !== 'string' || !Array.isArray(body.messages)) {
       throw new ApiError(400, 'draft (string) and messages (array) required');
     }
+    // bound the stdin prompt (same 64KB draft cap as /save; plus message limits) so
+    // a runaway draft/thread can't build an unbounded prompt for the spawn.
+    if (body.draft.length > 65536) throw new ApiError(400, 'template too large');
+    if (body.messages.length > 200) throw new ApiError(400, 'too many messages');
     for (const m of body.messages) {
       if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
         throw new ApiError(400, 'each message needs role user|assistant and string content');
       }
+      if (m.content.length > 65536) throw new ApiError(400, 'message too large');
     }
     const prompt = buildEditPrompt({ name, draft: body.draft, messages: body.messages });
     // HARD text-only: `--tools ""` disables ALL tools (the CLI's documented way to
@@ -1613,14 +1618,19 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (body.draft.length > 65536) throw new ApiError(400, 'template too large');
 
     // 1) validate a temp copy NAMED <name>.md (filename must match for plt).
-    const tmp = mkdtempSync(join(tmpdir(), 'pl-tpl-save-'));
-    const tmpFile = join(tmp, `${name}.md`);
-    writeFileSync(tmpFile, body.draft);
     // `plt` is not a global binary — it ships as bin/plt INSIDE the templates repo.
     // Invoke it via node (portable, no shebang/exec-bit dependency), cwd at the repo
-    // so it resolves its own ROOT/templateNames for cross-ref checks.
-    const v = await TPL.run({ cmd: 'node', args: [join(TPL.dir, 'bin', 'plt'), 'validate', tmpFile], cwd: TPL.dir, timeoutMs: 30000 });
-    rmSync(tmp, { recursive: true, force: true });
+    // so it resolves its own ROOT/templateNames for cross-ref checks. try/finally so
+    // the temp dir is removed even if the write or spawn throws.
+    const tmp = mkdtempSync(join(tmpdir(), 'pl-tpl-save-'));
+    let v;
+    try {
+      const tmpFile = join(tmp, `${name}.md`);
+      writeFileSync(tmpFile, body.draft);
+      v = await TPL.run({ cmd: 'node', args: [join(TPL.dir, 'bin', 'plt'), 'validate', tmpFile], cwd: TPL.dir, timeoutMs: 30000 });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
     if (v.code !== 0) {
       // plt writes its FAIL findings to stdout; prefer that. stderr only carries
       // execFile's "Command failed: node <path>…" wrapper, which would leak the
