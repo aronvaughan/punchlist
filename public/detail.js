@@ -151,64 +151,75 @@ function whenEditor() {
 }
 
 // ---- due date + time — icon-first affordance ----
-// Unset: a small dashed flag icon button, no label, no space taken by empty
-// inputs. Set: a compact pill (flag + the existing due-line text) that toggles
-// the same date/time fields open inline on tap, with an x to clear. Mirrors
-// the reference app's pattern of a bare icon that becomes a small value chip
-// once something is set, instead of an always-visible two-field form.
+// Deadline as ONE flag control. Unset: a bare dashed flag icon button. Set: a
+// compact pill (flag + due text, plus the time if given) with a separate x to
+// clear. Either opens the shared #due-dialog — a small dialog with a Date and a
+// Time widget (+ Clear / Done) — so there are no always-visible date/time boxes
+// in the drawer. The clear x and the pill text are SIBLINGS, never nested
+// buttons (a <button> inside a <button> won't fire the inner click — that was
+// why clearing did nothing).
 function dueEditor() {
   const wrap = el('div', 'due-editor');
+
   const btn = el('button', 'meta-icon-btn');
   btn.type = 'button';
   btn.append(icon('flag', { size: 15 }));
   btn.setAttribute('aria-label', 'Set deadline');
   btn.title = 'Set deadline';
 
-  const pill = el('button', 'meta-pill due-pill');
-  pill.type = 'button';
-
-  const fields = el('div', 'field-row due-fields');
-  fields.hidden = true;
-  const date = el('input');
-  date.type = 'date';
-  const time = el('input');
-  time.type = 'time';
-  fields.append(labeled('Deadline', date), labeled('Time', time));
-
+  const pill = el('div', 'meta-pill due-pill');
+  const pillOpen = el('button', 'due-pill-open');
+  pillOpen.type = 'button';
+  pillOpen.title = 'Edit deadline';
   const clear = el('button', 'meta-pill-clear');
   clear.type = 'button';
   clear.append(icon('x', { size: 12 }));
   clear.setAttribute('aria-label', 'Clear deadline');
-
-  const toggleFields = () => { fields.hidden = !fields.hidden; if (!fields.hidden) date.focus(); };
+  pill.append(pillOpen, clear);
 
   const render = () => {
-    date.value = current.due_date ?? '';
-    time.value = current.due_time ?? '';
     if (current.due_date) {
       const { text, urgent } = dueLine(current.due_date, todayISO());
-      pill.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', text), clear);
+      const label = current.due_time ? `${text} · ${current.due_time}` : text;
+      pillOpen.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', label));
       pill.classList.toggle('urgent', urgent);
       pill.hidden = false;
       btn.hidden = true;
     } else {
       pill.hidden = true;
       btn.hidden = false;
-      fields.hidden = true;
     }
   };
 
-  date.addEventListener('change', async () => { if (await patch({ due_date: date.value || null })) render(); });
-  time.addEventListener('change', () => patch({ due_time: time.value || null }));
-  btn.addEventListener('click', toggleFields);
-  pill.addEventListener('click', e => { if (e.target === clear || clear.contains(e.target)) return; toggleFields(); });
+  // Populate + open the shared dialog, (re)binding handlers to THIS task's
+  // current/patch closure each open (assignment, not addEventListener, so
+  // reopening never stacks listeners).
+  const openDialog = () => {
+    const dlg = document.getElementById('due-dialog');
+    const date = document.getElementById('due-dialog-date');
+    const time = document.getElementById('due-dialog-time');
+    date.value = current.due_date ?? '';
+    time.value = current.due_time ?? '';
+    date.onchange = async () => { if (await patch({ due_date: date.value || null })) render(); };
+    time.onchange = async () => { if (await patch({ due_time: time.value || null })) render(); };
+    document.getElementById('due-dialog-clear').onclick = async () => {
+      if (await patch({ due_date: null, due_time: null })) render();
+      dlg.open = false;
+    };
+    document.getElementById('due-dialog-done').onclick = () => { render(); dlg.open = false; };
+    dlg.open = true;
+    setTimeout(() => { try { date.showPicker ? date.showPicker() : date.focus(); } catch { date.focus(); } }, 0);
+  };
+
+  btn.addEventListener('click', openDialog);
+  pillOpen.addEventListener('click', openDialog);
   clear.addEventListener('click', async e => {
     e.stopPropagation();
     if (await patch({ due_date: null, due_time: null })) render();
   });
 
   render();
-  wrap.append(btn, pill, fields);
+  wrap.append(btn, pill);
   return wrap;
 }
 

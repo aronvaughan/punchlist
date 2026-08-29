@@ -92,6 +92,19 @@
     <wa-button slot="footer" id="window-ok" variant="brand">Set</wa-button>
   </wa-dialog>
 
+  <wa-dialog id="due-dialog" label="Deadline">
+    <div class="dialog-field">
+      <label for="due-dialog-date">Date</label>
+      <input id="due-dialog-date" type="date">
+    </div>
+    <div class="dialog-field">
+      <label for="due-dialog-time">Time <span class="dialog-hint">(optional)</span></label>
+      <input id="due-dialog-time" type="time">
+    </div>
+    <wa-button slot="footer" id="due-dialog-clear" appearance="plain">Clear</wa-button>
+    <wa-button slot="footer" id="due-dialog-done" variant="brand">Done</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="manage-dialog" label="Manage projects">
     <div id="manage-body" class="manage-body">
       <div class="manage-toolbar">

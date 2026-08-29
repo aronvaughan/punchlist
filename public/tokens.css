@@ -1789,8 +1789,22 @@ wa-button[variant="brand"]::part(base) {
   padding: 2px;
 }
 .meta-pill-clear:hover { opacity: 1; }
+/* the pill's clickable [flag + text] region — a bare button, no chrome, so the
+   pill still reads as one chip while keeping the clear x a separate sibling */
+.due-pill-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.dialog-hint { color: var(--ink-soft); font-weight: 400; font-size: .85em; }
 .due-editor, .tags-editor, .recur-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-.due-editor .due-fields, .recur-editor .recur-body { width: 100%; }
+.recur-editor .recur-body { width: 100%; }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }
