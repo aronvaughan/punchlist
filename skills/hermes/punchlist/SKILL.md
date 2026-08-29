@@ -27,6 +27,7 @@ scripts/pl.sh queue                                # open work assigned to you (
 scripts/screen.sh "title" "notes"                  # REQUIRED before working any task
 scripts/screen.sh --risk "title" "notes"           # high-risk classifier
 scripts/pl.sh claim  <id>                          # take a task BEFORE working it
+scripts/pl.sh step   <id> <step_id> [done|undone]  # mark a step complete as you go (default: done)
 scripts/pl.sh finish <id> "what I did + where"     # -> review lane; report required
 scripts/pl.sh block  <id> "one concrete question"  # stuck -> blocked; owner answers, task returns
 scripts/pl.sh comment <id> "text"                  # post to the task's timeline (non-blocking)
@@ -94,4 +95,9 @@ the owner can `vet`.
 - Cite task ids (26-char ULIDs) when referring to tasks.
 - Finishing puts the task in review for the owner unless it was marked
   auto-close; do not try to `approve` — only the admin actor's token can.
+- **Mark steps done as you go**: if a task has a `steps` list (see
+  `show <id>`), run `step <id> <step_id>` for each one as you finish it,
+  not just before `finish`/`block` from memory. `finish` only prints a
+  stderr warning when steps are still `done:0` — it never blocks the
+  finish, since some tasks are legitimately left with steps for later.
 - If the service is unreachable, say so; never fake queue results.

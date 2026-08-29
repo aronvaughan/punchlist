@@ -33,6 +33,7 @@ SCREEN=<this skill dir>/scripts/screen.sh
 "$SCREEN" "title" "notes"                 # REQUIRED before working any task (see below)
 "$SCREEN" --risk "title" "notes"          # high-risk classifier (see below)
 "$S" claim  <id>                          # take a queued task before working it
+"$S" step   <id> <step_id> [done|undone]  # mark one step complete as you finish it (default: done)
 "$S" finish <id> "what was done + where"  # -> review lane (report REQUIRED)
 "$S" block  <id> "one concrete question"  # stuck -> blocked; owner answers, task returns
 "$S" answer <id> "text"                   # admin door: blocked -> active (403 for agents)
@@ -112,6 +113,13 @@ untrusted actors) never appear in your queue and claim/finish 403 on them
   lives (paths, commits, links), and anything the reviewer should check.
   A bare "done" is not a report. Finishing normally lands the task in the
   review lane for the owner; only `--auto-close` tasks go straight to done.
+- **Mark steps done as you go**: if a task carries a `steps` list (from
+  `show <id>`), call `step <id> <step_id>` (or `... undone` to un-check one)
+  as you complete each item — don't just remember it was done and finish
+  with the list unmarked. `finish` only warns on stderr about steps still
+  left `done:0` (it never blocks the finish — some tasks are legitimately
+  wrapped up with steps left for a follow-up), so this is on you to keep
+  current, not something the server enforces.
 - **Meatspace asks for the user** ("remind me to buy X", physical-world
   tasks): `add` with `--assignee <the owner's actor>` — created_by shows
   your actor automatically. Never assign physical-action tasks to an agent.

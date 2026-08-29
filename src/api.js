@@ -1101,9 +1101,19 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   // ---- steps ----
+  // Mutation gate mirrors claim/finish/block: only the task's assignee (the
+  // one actually doing the work) or the admin (owner) may add/toggle/remove
+  // steps. Anyone else authenticated gets a 403, same shape as elsewhere.
+  const requireStepEditor = (c, task) => {
+    if (c.get('actor') !== HUMAN && c.get('actor') !== task.assignee) {
+      throw new ApiError(403, 'only the assignee or admin can edit steps');
+    }
+  };
+
   app.post('/api/v1/tasks/:id/steps', async c => {
     const task = getTask(c.req.param('id'));
     if (!task) throw new ApiError(404, 'task not found');
+    requireStepEditor(c, task);
     const body = await readJson(c);
     for (const k of Object.keys(body)) if (k !== 'title') throw new ApiError(400, `unknown field: ${k}`);
     if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > CAPS.title) {
@@ -1119,8 +1129,11 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   app.patch('/api/v1/tasks/:id/steps/:sid', async c => {
+    const task = getTask(c.req.param('id'));
+    if (!task) throw new ApiError(404, 'task not found');
+    requireStepEditor(c, task);
     const step = db.prepare('SELECT * FROM steps WHERE id = ? AND task_id = ?')
-      .get(c.req.param('sid'), c.req.param('id'));
+      .get(c.req.param('sid'), task.id);
     if (!step) throw new ApiError(404, 'step not found');
     const body = await readJson(c);
     for (const k of Object.keys(body)) {
@@ -1140,8 +1153,11 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   app.delete('/api/v1/tasks/:id/steps/:sid', c => {
+    const task = getTask(c.req.param('id'));
+    if (!task) throw new ApiError(404, 'task not found');
+    requireStepEditor(c, task);
     const { changes } = db.prepare('DELETE FROM steps WHERE id = ? AND task_id = ?')
-      .run(c.req.param('sid'), c.req.param('id'));
+      .run(c.req.param('sid'), task.id);
     if (changes === 0) throw new ApiError(404, 'step not found');
     return c.json({ ok: true });
   });
