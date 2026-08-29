@@ -62,14 +62,27 @@ export function buildEditPrompt({ name, draft, messages }) {
 export function makeRunner() {
   return ({ cmd, args, cwd, input, timeoutMs = 120000 }) => new Promise((resolve) => {
     const child = execFile(cmd, args, { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
-      // On a spawn failure (ENOENT etc.) execFile yields EMPTY stdout/stderr strings,
-      // so `||` (not `??`) is required to fall through to err.message — otherwise the
-      // real reason (e.g. "spawn plt ENOENT") is lost and callers see a blank error.
       (err, stdout, stderr) => resolve({
-        code: err?.code ?? 0,
+        // A child killed by the `timeout` (or a maxBuffer overflow) reports
+        // err.signal (e.g. 'SIGTERM') and a NULL err.code — `?? 0` would mis-map
+        // that to SUCCESS, letting callers' `code !== 0` checks (the plt validation
+        // gate) pass on a draft that never actually validated. Any error must map
+        // non-zero: numeric exit code, else the signal name, else 1. (ENOENT is
+        // unaffected — err.code is the truthy string 'ENOENT'.)
+        code: err ? (typeof err.code === 'number' ? err.code : (err.signal || 1)) : 0,
         stdout: stdout ?? '',
+        // On a spawn failure execFile yields EMPTY stdout/stderr strings, so `||`
+        // (not `??`) is required to fall through to err.message — otherwise the real
+        // reason (e.g. "spawn plt ENOENT") is lost and callers see a blank error.
         stderr: (stderr || (err ? String(err.message) : '')),
       }));
-    if (input != null) { child.stdin.end(input); }
+    if (input != null) {
+      // If the child dies before draining stdin (early exit, or a timeout kill mid
+      // ~64KB write) the pipe breaks (EPIPE) and stdin emits 'error'. With no
+      // listener Node rethrows it as an unhandled stream error, crashing the whole
+      // server. Swallow it — the spawn outcome is already captured by the callback.
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
+    }
   });
 }
