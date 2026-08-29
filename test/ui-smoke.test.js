@@ -284,6 +284,25 @@ test('duplicate-create guard: client debounces both add flows', async () => {
   assert.match(detail, /setAttribute\('loading', ''\)/);
 });
 
+test('rail Tags header: pencil opens new-tag dialog, old bottom "+ New tag" row is retired', async () => {
+  const { get } = makeApp();
+  const html = await (await get('/')).text();
+  // the Tags header is always present (parity with Projects) — no longer hidden
+  // until a tag exists, since the pencil is now the only way to create the first one
+  assert.match(html, /id="rail-tags-head" class="rail-heading">Tags</);
+  assert.doesNotMatch(html, /id="rail-tags-head"[^>]*hidden/);
+  assert.doesNotMatch(html, /id="rail-new-tag"/); // bottom row removed
+
+  const views = await (await get('/views.js')).text();
+  // pencil on the Tags header line, same affordance class as Projects' pencil
+  assert.match(views, /newTagBtn = el\('button', 'rail-head-action'\)/);
+  assert.match(views, /newTagBtn\.addEventListener\('click', \(\) => openTagDialog\(\)\)/);
+  assert.doesNotMatch(views, /rail-new-tag/);
+
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /#rail-tags-head:has\(\.sec-toggle\)/);
+});
+
 test('rail rows: reused ⋮⋮ grip + touch-action so a rail drag never hijacks scroll', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
