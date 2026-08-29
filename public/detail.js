@@ -484,19 +484,107 @@ function timelineEntry(cm) {
   return entry;
 }
 
+// ---- collapsed Timeline: a compact SVG sparkline of activity over time ----
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs) => {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+};
+const dayNum = iso => Math.floor(Date.parse(`${String(iso).slice(0, 10)}T00:00:00Z`) / 86400000);
+
+// A horizontal axis with a dot per activity (dd day-label under each unique day),
+// small vertical month ticks with month names, and TODAY drawn as a thin ring
+// around a small dot. Dates are grouped by calendar day; a narrow range is padded
+// so a single day still reads. Returns an <svg> that scales to the container width.
+function buildSparkline(items, todayIso) {
+  const W = 400, PADX = 26, BASE = 42, PLOT = W - 2 * PADX;
+  const svg = svgEl('svg', { class: 'tl-svg', viewBox: `0 0 ${W} 70`, role: 'img', 'aria-label': 'Activity timeline' });
+  const todayN = dayNum(todayIso);
+  const days = items.map(cm => dayNum(cm.created_at)).filter(n => !Number.isNaN(n));
+  let lo = Math.min(todayN, ...(days.length ? days : [todayN]));
+  let hi = Math.max(todayN, ...(days.length ? days : [todayN]));
+  if (hi - lo < 6) { const mid = (hi + lo) / 2; lo = Math.floor(mid - 3); hi = Math.ceil(mid + 3); }
+  const xOf = d => PADX + ((d - lo) / (hi - lo)) * PLOT;
+
+  svg.append(svgEl('line', { x1: PADX, y1: BASE, x2: W - PADX, y2: BASE, class: 'tl-axis' }));
+
+  // month ticks + labels: each month-start day that falls in [lo,hi]
+  const start = new Date(lo * 86400000);
+  let m = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  for (let guard = 0; guard < 60; guard++) {
+    const dn = Math.floor(m.getTime() / 86400000);
+    if (dn > hi) break;
+    if (dn >= lo) {
+      const x = xOf(dn);
+      svg.append(svgEl('line', { x1: x, y1: BASE - 7, x2: x, y2: BASE + 7, class: 'tl-month-tick' }));
+      const t = svgEl('text', { x, y: 15, class: 'tl-month-label', 'text-anchor': 'middle' });
+      t.textContent = m.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' });
+      svg.append(t);
+    }
+    m = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1));
+  }
+
+  // activity dots (+ one dd label per unique day)
+  const labelled = new Set();
+  const ddLabel = (dn, cls) => {
+    if (labelled.has(dn)) return;
+    labelled.add(dn);
+    const t = svgEl('text', { x: xOf(dn), y: BASE + 17, class: `tl-day-label${cls || ''}`, 'text-anchor': 'middle' });
+    t.textContent = String(new Date(dn * 86400000).getUTCDate());
+    svg.append(t);
+  };
+  for (const cm of items) {
+    const dn = dayNum(cm.created_at);
+    if (Number.isNaN(dn) || dn === todayN) continue;
+    svg.append(svgEl('circle', { cx: xOf(dn), cy: BASE, r: 3, class: 'tl-dot' }));
+    ddLabel(dn);
+  }
+  // today: thin ring + small solid dot
+  const tx = xOf(todayN);
+  svg.append(svgEl('circle', { cx: tx, cy: BASE, r: 6, class: 'tl-today-ring' }));
+  svg.append(svgEl('circle', { cx: tx, cy: BASE, r: 2.3, class: 'tl-today-dot' }));
+  ddLabel(todayN, ' tl-today-label');
+  return svg;
+}
+
 function timelineSection(task) {
   const wrap = el('div', 'timeline');
-  wrap.append(el('label', null, 'Timeline'));
+
+  // collapsible header (default collapsed → shows the sparkline). Persisted.
+  const KEY = 'av-tasks-tl-collapsed';
+  let collapsed = (() => { try { return localStorage.getItem(KEY) !== '0'; } catch { return true; } })();
+  const header = el('button', 'tl-toggle');
+  header.type = 'button';
+  const caret = el('span', 'caret');
+  caret.setAttribute('aria-hidden', 'true');
+  header.append(caret, el('span', null, 'Timeline'));
+
+  const spark = el('div', 'tl-spark');
   const listEl = el('div', 'tl-list');
-  wrap.append(listEl);
+  let items = [];
+
+  const applyState = () => {
+    caret.classList.toggle('closed', collapsed);
+    header.setAttribute('aria-expanded', String(!collapsed));
+    spark.hidden = !collapsed || !items.length;
+    listEl.hidden = collapsed;
+    composer.hidden = collapsed;
+  };
+  header.addEventListener('click', () => {
+    collapsed = !collapsed;
+    try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch { /* private mode */ }
+    applyState();
+  });
 
   const load = async () => {
-    let items;
     try { items = (await api('GET', `/tasks/${task.id}/comments`)).items; }
-    catch (e) { listEl.replaceChildren(el('div', 'tl-empty', `Couldn't load timeline: ${e.message}`)); return; }
+    catch (e) { items = []; listEl.replaceChildren(el('div', 'tl-empty', `Couldn't load timeline: ${e.message}`)); return; }
     listEl.replaceChildren();
     if (!items.length) listEl.append(el('div', 'tl-empty', 'No activity yet.'));
     else for (const cm of items) listEl.append(timelineEntry(cm));
+    spark.replaceChildren(buildSparkline(items, todayISO()));
+    applyState();
   };
 
   const composer = el('div', 'tl-composer');
@@ -521,7 +609,8 @@ function timelineSection(task) {
   };
   post.addEventListener('click', submit);
   composer.append(ta, post);
-  wrap.append(composer);
+  wrap.append(header, spark, listEl, composer);
+  applyState();
   load();
   return wrap;
 }
