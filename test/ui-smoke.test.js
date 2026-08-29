@@ -244,6 +244,20 @@ test('template picker: drawer select from GET /templates + name chip (Part B)', 
   assert.match(css, /\.chip\.template-chip\s*\{/);
 });
 
+test('AI template editor: module exports openTemplateEditor, dialog shell + pencil wiring', async () => {
+  const { get } = makeApp();
+  // the editor module is served like any app module and exports its entry point
+  const tpleditor = await (await get('/tpleditor.js')).text();
+  assert.match(tpleditor, /export\s+async\s+function\s+openTemplateEditor/);
+  // the drawer-scoped dialog shell + its mount point live in the app shell
+  const html = await (await get('/')).text();
+  assert.match(html, /id="tpl-editor-dialog"/);
+  assert.match(html, /id="tpl-editor-mount"/);
+  // the template picker's pencil lazy-imports the editor module
+  const detail = await (await get('/detail.js')).text();
+  assert.match(detail, /tpleditor\.js/);
+});
+
 test('task delete: row overflow menu + drawer trash, tokens only, distinct from archive', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();

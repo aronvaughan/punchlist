@@ -1,5 +1,7 @@
 # AI-assisted template editor (design)
 
+**Shipped 2026-08-28.**
+
 *Agreed with the owner 2026-08-28. Resolves task 01M1569 ("for a task —
 there should be a way to edit a template with AI assistance"). Deferred
 scope is tracked in 01M15BR5N9QASBYAF5FZXFS38R (v2 candidates).*
@@ -136,9 +138,10 @@ Defense stack, each failing differently:
 
 1. **Admin-only.** Only `HUMAN` can read-for-edit, ai-edit, or save. Agents
    get 403 — this feature is not part of the delegated-work surface.
-2. **Text-only spawn.** The `claude -p` call is given no tools and
-   `--no-session-persistence`; it can only emit text. A prompt-injected
-   template body cannot make it act.
+2. **Text-only spawn.** The `claude -p` call passes `--tools ""` (the CLI's
+   documented way to disable ALL tools) plus `--no-session-persistence`, so
+   the process is given nothing to act with and can only emit text. A
+   prompt-injected template body cannot make it act.
 3. **Validation gate.** `plt validate` runs on a temp file *before* any repo
    write; invalid drafts never touch `authored/`.
 4. **Human review.** The owner sees the rendered draft and explicitly hits

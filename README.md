@@ -155,6 +155,19 @@ or **Expire on a date** — and a daily reaper (`scripts/reap-media.sh`)
 deletes files whose rule has fired. See
 [`docs/2026-08-26-attachments.md`](docs/2026-08-26-attachments.md).
 
+### Edit templates with AI
+
+Admin-only. When a task has a template set, a pencil beside it opens a
+conversational editor that revises the reusable template definition with
+the local `claude` CLI. The feature stays hidden unless the `claude` binary
+is on `PATH` and `PUNCHLIST_TEMPLATES_DIR` points at your templates repo
+(e.g. `/srv/punchlist-templates`). You describe changes in plain language,
+watch the draft re-render, and iterate; the spawned Claude is text-only and
+touches nothing on disk. **Save** validates the draft with `plt` and, only
+if it passes, writes the override to the templates repo's `authored/`
+directory and **commits** it locally — never pushes. See
+[`docs/2026-08-28-template-editor-design.md`](docs/2026-08-28-template-editor-design.md).
+
 ### Make it yours
 
 Seventeen themes — light and dark families, grouped and previewed in the
