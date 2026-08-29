@@ -5,7 +5,8 @@
 import { api, state, reload, toast, todayISO, currentActor } from '/app.js';
 import { openDetail, stepsEditorFor, openWhenPicker, whenLabel,
   openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel,
-  openProjectPicker, projectLabel, openTemplatePicker, attachmentsEditor } from '/detail.js';
+  openProjectPicker, projectLabel, openTemplatePicker, attachmentsEditor,
+  reportView, timelineSection } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { icon } from '/icons.js';
 
@@ -89,6 +90,9 @@ export function expandRow(task, row) {
 
   inner.append(stepsEditorFor(task));
   inner.append(controlsRow(task));
+  const rep = reportView(task);
+  if (rep) inner.append(rep);
+  inner.append(timelineSection(task));
   row.append(head, body);
 
   // after the expand transition, release overflow so popovers (tag

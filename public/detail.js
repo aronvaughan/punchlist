@@ -118,7 +118,7 @@ function renderDrawer() {
   if (createMode) {
     body.append(createActions());
   } else {
-    const rep = reportView();
+    const rep = reportView(task);
     if (rep) body.append(rep);
     body.append(timelineSection(task));
     body.append(actions());
@@ -569,7 +569,7 @@ function buildSparkline(items, todayIso) {
   return svg;
 }
 
-function timelineSection(task) {
+export function timelineSection(task) {
   const wrap = el('div', 'timeline');
 
   // collapsible header (default collapsed → shows the sparkline). Persisted.
@@ -636,12 +636,12 @@ function timelineSection(task) {
 }
 
 // agent's report (markdown, safe renderer) — shown for review/done delegated work
-function reportView() {
-  if (!current.report) return null;
+export function reportView(task) {
+  if (!task.report) return null;
   const wrap = el('div');
   wrap.append(el('label', null, 'Report'));
   const bodyEl = el('div', 'report-body notes-preview');
-  bodyEl.innerHTML = mdToHtml(current.report); // mdToHtml escapes ALL input
+  bodyEl.innerHTML = mdToHtml(task.report); // mdToHtml escapes ALL input
   wrap.append(bodyEl);
   return wrap;
 }
