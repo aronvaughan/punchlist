@@ -284,20 +284,17 @@ test('AI template editor: module exports openTemplateEditor, dialog shell + penc
   assert.match(detail, /tpleditor\.js/);
 });
 
-test('task delete: row overflow menu + drawer trash, tokens only, distinct from archive', async () => {
+test('task delete: drawer-only (not on the list rows), distinct from archive', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
   assert.match(views, /export async function performDelete/);
   assert.match(views, /This can't be undone/); // exact confirm copy
-  assert.match(views, /row-overflow/);          // the "…" affordance
-  assert.match(views, /function openRowMenu/);  // the one-item Delete menu
+  // delete is NOT on the list rows — no per-row overflow menu / right-click / long-press
+  assert.doesNotMatch(views, /row-overflow/);
+  assert.doesNotMatch(views, /function openRowMenu/);
   const detail = await (await get('/detail.js')).text();
-  assert.match(detail, /performDelete\(current\)/); // wired into the drawer actions
+  assert.match(detail, /performDelete\(current\)/); // only reachable from the drawer actions
   assert.match(detail, /detail-delete/);
-  const css = await (await get('/tokens.css')).text();
-  assert.match(css, /\.row-overflow\s*\{/);
-  assert.match(css, /\.row-menu\s*\{/);
-  assert.match(css, /\.row-menu-item\.danger\s*\{[^}]*var\(--danger\)/);
 });
 
 test('duplicate-create guard: client debounces both add flows', async () => {

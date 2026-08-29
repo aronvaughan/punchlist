@@ -756,28 +756,6 @@ export async function performDelete(task) {
   } catch (e) { toast(`Delete failed: ${e.message}`); return false; }
 }
 
-// tiny one-item overflow menu at (x, y): Delete (danger). Opened by the row's
-// "…" button, a right-click, or a touch long-press. Closes on outside pointer.
-function openRowMenu(task, x, y) {
-  document.querySelector('.row-menu')?.remove();
-  const menu = el('div', 'row-menu');
-  menu.setAttribute('role', 'menu');
-  const del = el('button', 'row-menu-item danger');
-  del.append(icon('trash', { size: 16 }), el('span', null, 'Delete task'));
-  del.setAttribute('role', 'menuitem');
-  del.addEventListener('click', () => { menu.remove(); performDelete(task); });
-  menu.append(del);
-  document.body.append(menu);
-  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
-  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
-  const close = e => {
-    if (menu.contains(e.target)) return;
-    menu.remove();
-    document.removeEventListener('pointerdown', close, true);
-  };
-  setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
-}
-
 function taskRow(task, { showProject = false, logbook = false, sortable = false, showClaimed = false } = {}) {
   const row = el('div', 'task-row');
   row.dataset.id = task.id;
@@ -920,28 +898,9 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   main.append(subline);
   row.append(main);
 
-  // overflow "…" → one-item Delete menu. Also reachable by right-click and, on
-  // touch, a long-press. Delete is a HARD, irreversible remove (server 200) —
-  // Archive lives in the drawer and is reversible.
-  const overflow = el('button', 'row-overflow');
-  overflow.append(icon('dots-three-vertical', { size: 18 }));
-  overflow.title = 'More actions';
-  overflow.setAttribute('aria-label', 'More actions');
-  overflow.addEventListener('click', e => {
-    e.stopPropagation();
-    const r = overflow.getBoundingClientRect();
-    openRowMenu(task, r.left, r.bottom + 4);
-  });
-  row.append(overflow);
-  row.addEventListener('contextmenu', e => { e.preventDefault(); openRowMenu(task, e.clientX, e.clientY); });
-  // touch long-press (~500ms) opens the same menu; any move/lift cancels it
-  let lpTimer = null;
-  const cancelLp = () => { clearTimeout(lpTimer); lpTimer = null; };
-  row.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'touch') return;
-    lpTimer = setTimeout(() => openRowMenu(task, e.clientX, e.clientY), 500);
-  });
-  for (const ev of ['pointerup', 'pointermove', 'pointercancel']) row.addEventListener(ev, cancelLp);
+  // Delete lives ONLY on the expanded task view (the drawer's actions) — it is a
+  // HARD, irreversible remove, so it's deliberately kept off the list rows. The
+  // list has no per-row overflow/right-click/long-press delete affordance.
 
   row.tabIndex = 0;
   // Things-style: active rows expand in place; done/archived open the drawer
