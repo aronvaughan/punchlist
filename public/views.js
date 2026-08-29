@@ -69,9 +69,10 @@ function el(tag, className, text) {
 }
 
 // per-pill-type glyphs: Phosphor icons (icons.js) that inherit the chip's color
-// via `currentColor` (theme-token driven — no hardcoded fills). assignee = user,
-// project = folder, tag = tag — the app's single icon set.
-const PILL_ICON = { assignee: 'user', project: 'folder', tag: 'tag' };
+// via `currentColor` (theme-token driven — no hardcoded fills). project = folder,
+// tag = tag — the app's single icon set. (Assignee has its own resolver below,
+// since it varies per-agent rather than being a fixed one-icon-per-pill-type.)
+const PILL_ICON = { project: 'folder', tag: 'tag' };
 function pillIcon(name) {
   return icon(PILL_ICON[name], { size: 11, cls: 'pill-icon' });
 }
@@ -79,6 +80,25 @@ function pillIcon(name) {
 function iconPill(iconName, text, { className = '', button = false } = {}) {
   const pill = el(button ? 'button' : 'span', `chip ${className}`.trim());
   pill.append(pillIcon(iconName), el('span', 'pill-text', text));
+  return pill;
+}
+
+// assignee value -> glyph: the two named agents get a dedicated small mark
+// (icons.js `claude` / `hermes`), any other value (a human actor) falls back
+// to the existing generic person icon. Used to make the list-view assignee
+// pill icon-only (see taskRow below) while the name still reaches the DOM
+// via title/aria-label for hover/screen-reader access.
+const ASSIGNEE_ICON = { claude: 'claude', hermes: 'hermes' };
+function assigneeIconName(assignee) {
+  return ASSIGNEE_ICON[assignee] || 'user';
+}
+// icon-only assignee pill for the task LIST view: no visible text, per-agent
+// glyph, name surfaced via title + aria-label so hovering/reading still works.
+function assigneePill(assignee, { className = '' } = {}) {
+  const pill = el('span', `chip ${className}`.trim());
+  pill.append(icon(assigneeIconName(assignee), { size: 11, cls: 'pill-icon' }));
+  pill.title = assignee;
+  pill.setAttribute('aria-label', `Assigned to ${assignee}`);
   return pill;
 }
 
@@ -822,8 +842,10 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     if (p) subline.append(iconPill('project', p.name, { className: 'project-name' }));
   }
   if (task.assignee && task.assignee !== currentActor()) {
-    // assignee pill: person icon + agent name; accent outline while claimed
-    subline.append(iconPill('assignee', task.assignee,
+    // assignee pill: icon-only in the list view (claude/hermes glyph, else
+    // the generic person icon) — accent outline while claimed, name still
+    // reachable via title/aria-label
+    subline.append(assigneePill(task.assignee,
       { className: 'agent' + (task.status === 'in_progress' ? ' working' : '') }));
     if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
       subline.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));

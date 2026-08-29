@@ -103,11 +103,30 @@ test('task rows: title line is title+due only; everything else on an icon-pilled
   // moved to the subline
   assert.match(views, /titleLine\.append\(el\('span', 'title', task\.title\)\)/);
   assert.match(views, /subline\.append\(iconPill\('project'/);
-  assert.match(views, /subline\.append\(iconPill\('assignee'/);
+  assert.match(views, /subline\.append\(assigneePill\(task\.assignee/);
   // tags are display-only on the row: a tag-count indicator that opens the drawer
   assert.match(views, /tags-indicator/);
   assert.match(views, /ind\.addEventListener\('click', e => \{ e\.stopPropagation\(\); openDetail\(task\); \}\)/);
   assert.doesNotMatch(views, /toggleRowTags/); // inline row tag-editing is gone
+});
+
+test('assignee pill: list view is icon-only per-agent (claude/hermes/person), name via title+aria-label', async () => {
+  const { get } = makeApp();
+  const icons = await (await get('/icons.js')).text();
+  // dedicated glyphs exist for both named agents, distinct from the generic person icon
+  assert.match(icons, /claude:\s*'<path/);
+  assert.match(icons, /hermes:\s*'<path/);
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /function assigneeIconName/);
+  assert.match(views, /ASSIGNEE_ICON\s*=\s*\{\s*claude:\s*'claude',\s*hermes:\s*'hermes'\s*\}/);
+  assert.match(views, /function assigneePill/);
+  // icon-only: no pill-text span appended, but title + aria-label carry the name
+  assert.match(views, /function assigneePill\([\s\S]{0,400}?pill\.title = assignee;/);
+  assert.match(views, /pill\.setAttribute\('aria-label', `Assigned to \$\{assignee\}`\)/);
+  assert.doesNotMatch(
+    views.slice(views.indexOf('function assigneePill'), views.indexOf('function assigneePill') + 500),
+    /pill-text/
+  );
 });
 
 test('drawer: tag editor relocated to the bottom (single edit surface)', async () => {

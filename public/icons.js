@@ -37,6 +37,13 @@ const PATHS = {
   // compact deadline glyph: rounded pole + a notched pennant — used by the
   // icon-first "add a deadline" affordance (mirrors a Things-style flag icon)
   flag: '<path d="M64,24a8,8,0,0,1,8,8V216a8,8,0,0,1-16,0V32A8,8,0,0,1,64,24Z"/><path d="M72,40h104a8,8,0,0,1,6,13.29L155.32,80l26.68,26.71A8,8,0,0,1,176,120H72a8,8,0,0,1-8-8V48A8,8,0,0,1,72,40Z"/>',
+  // original minimal glyphs for the two agent assignees (list-view pill,
+  // icon-only) — NOT a reproduction of any trademarked mark, just a simple
+  // abstract distinguisher per agent. Human assignees keep the generic `user`.
+  // claude: four-point sparkle/asterisk (common "AI assistant" shorthand)
+  claude: '<path d="M128,16 L150,106 L240,128 L150,150 L128,240 L106,150 L16,128 L106,106 Z"/>',
+  // hermes: a minimal winged-helmet motif (messenger/mercury allusion)
+  hermes: '<path d="M68,148a60,60,0,0,1,120,0v8H68Z"/><path d="M120,58a8,8,0,0,1,16,0v26h-16Z"/><path d="M66,124C40,112,26,86,30,58c20,6,38,22,44,46Z"/><path d="M190,124c26-12,40-38,36-66c-20,6-38,22-44,46Z"/>',
 };
 
 // icon(name, { size, cls }) -> <svg>. Default 16px square, `.icon` class plus
