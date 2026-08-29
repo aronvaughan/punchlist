@@ -6,6 +6,8 @@ import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, r
 import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { makeRunner, parseAiReply, resolveTemplatePath, readTemplate, buildEditPrompt } from './templates.js';
 import { ulid } from './db.js';
 import { sniffMime, normalizeMime, normalizeDocMime, docMimeForExt, isDocMime, isUtf8Text,
   filePathFor, sanitizeFilename } from './media.js';
@@ -174,6 +176,33 @@ export function pathInsideRoots(real, roots) {
   return roots.some(root => real === root || real.startsWith(root + sep));
 }
 
+// ---- AI-assisted template editing (feature gate) ----
+// Resolve the template-editing config. Accepts an explicit object (tests) or
+// falls back to env + a one-time `claude --version` probe (production). Returns
+// { dir, available, run }. `available` is the boot-time gate; routes re-check
+// dir existence per request so a repo that disappears degrades to 404.
+export function resolveTemplateEditing(cfg) {
+  if (cfg) {
+    const run = cfg.run || makeRunner();
+    const dir = cfg.dir;
+    const available = cfg.available !== undefined ? cfg.available
+      : Boolean(dir && existsSync(join(dir, '.git')) && hasClaudeBinary());
+    return { dir, available, run };
+  }
+  const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
+    join(homedir(), 'code', 'punchlist-templates');
+  const available = Boolean(dir && existsSync(join(dir, '.git')) && hasClaudeBinary());
+  return { dir, available, run: makeRunner() };
+}
+
+let _hasClaude = null;
+function hasClaudeBinary() {
+  if (_hasClaude !== null) return _hasClaude;
+  try { execFileSync('claude', ['--version'], { stdio: 'ignore', timeout: 5000 }); _hasClaude = true; }
+  catch { _hasClaude = false; }
+  return _hasClaude;
+}
+
 // section key must mirror views.js SECTION
 function sectionOf(task, today) {
   if (task.when_type === 'date') return task.when_date <= today ? 0 : 1;
@@ -182,7 +211,7 @@ function sectionOf(task, today) {
 }
 
 export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
-    maxDoc, docRoots }) {
+    maxDoc, docRoots, templateEditing }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
   // references the row. Cap is separate from (and far larger than) the JSON
@@ -200,6 +229,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   const DOC_ROOTS = resolveDocRoots(docRoots ?? process.env.PUNCHLIST_DOC_ROOTS);
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
+  // AI-assisted template editing (admin-only, feature-gated). Available only
+  // when a templates repo dir is configured AND the `claude` binary is present.
+  // Tests inject { dir, available, run } directly; production computes them.
+  const TPL = resolveTemplateEditing(templateEditing);
   // agent-security layer 1: tasks created by an untrusted actor are born
   // vetted=0 — quarantined from agent queues and the claim/finish doors
   // until the admin vets them (PUNCHLIST_UNTRUSTED_ACTORS, default "email")
@@ -1268,6 +1301,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // explicit confirm before rendering a doc uploaded by an untrusted actor.
   app.get('/api/v1/config', c => c.json({
     doc_linking: DOC_ROOTS.length > 0,
+    template_editing: TPL.available && c.get('actor') === HUMAN,
     untrusted_actors: [...UNTRUSTED],
     max_doc_bytes: MAX_DOC,
     actor: c.get('actor'),
