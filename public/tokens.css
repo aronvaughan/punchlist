@@ -3,7 +3,7 @@
    top tab bar on small screens.
 
    THEMES: every color lives in custom properties keyed by
-   html[data-theme="light|dark|paper|spruce"]. theme-boot.js resolves the
+   html[data-theme="light|dark|paper|spruce|..."]. theme-boot.js resolves the
    stored preference ("system" follows prefers-color-scheme) to a concrete
    data-theme BEFORE first paint and keeps wa-dark/wa-light in sync for
    Web Awesome. All muted/accent/danger shades hold >=4.5:1 on bg and pane. */
@@ -355,6 +355,126 @@ html[data-theme="conifer"] {
   --hover: #E6EDDB;
   --line: #DAE1CB;
   --shadow: 0 1px 3px rgba(40, 55, 30, .10), 0 8px 24px rgba(40, 55, 30, .08);
+}
+html[data-theme="clay"] {
+  /* terracotta light — warm reddish-brown, unclaimed among the light set */
+  --bg: #FBF2EC;
+  --pane: #FFFFFF;
+  --ink: #3E2A1E;
+  --ink-soft: #7C6152;
+  --ink-faint: #A88F7D;
+  --accent: #B0521F;
+  --on-accent: #FFF6EE;
+  --danger: #B0241F;
+  --chip-bg: #F1E2D4;
+  --hover: #F4E7DA;
+  --line: #E8D8C7;
+  --shadow: 0 1px 3px rgba(110, 60, 20, .10), 0 8px 24px rgba(110, 60, 20, .08);
+}
+html[data-theme="coral"] {
+  /* warm coral-salmon light — pinker/brighter than rose's muted rosewood */
+  --bg: #FFF1EF;
+  --pane: #FFFFFF;
+  --ink: #3B2320;
+  --ink-soft: #7E5B57;
+  --ink-faint: #AE8D89;
+  --accent: #E0533E;
+  --on-accent: #FFFFFF;
+  --danger: #C2271D;
+  --chip-bg: #F7DEDA;
+  --hover: #FAE5E1;
+  --line: #F0D6D0;
+  --shadow: 0 1px 3px rgba(160, 60, 45, .10), 0 8px 24px rgba(160, 60, 45, .08);
+}
+html[data-theme="mustard"] {
+  /* golden mustard light — a true yellow-gold, distinct from paper's amber */
+  --bg: #FBF6E4;
+  --pane: #FFFEF7;
+  --ink: #3A3016;
+  --ink-soft: #77693E;
+  --ink-faint: #A99C6D;
+  --accent: #B8860B;
+  --on-accent: #FFFDF3;
+  --danger: #C0392B;
+  --chip-bg: #F1E7C4;
+  --hover: #F5ECCF;
+  --line: #E9DDB0;
+  --shadow: 0 1px 3px rgba(120, 100, 20, .10), 0 8px 24px rgba(120, 100, 20, .08);
+}
+html[data-theme="fog"] {
+  /* cool neutral gray light — minimal color, steel-blue-gray accent */
+  --bg: #F2F3F5;
+  --pane: #FFFFFF;
+  --ink: #22262B;
+  --ink-soft: #5C6570;
+  --ink-faint: #96A0AA;
+  --accent: #4B5A6B;
+  --on-accent: #FFFFFF;
+  --danger: #C6323A;
+  --chip-bg: #E6E9EC;
+  --hover: #EBEDF0;
+  --line: #DEE2E6;
+  --shadow: 0 1px 3px rgba(30, 40, 50, .08), 0 8px 24px rgba(30, 40, 50, .07);
+}
+html[data-theme="maroon"] {
+  /* deep crimson-burgundy dark — a rich red accent, distinct from ember/rose */
+  --bg: #1D0E10;
+  --pane: #2A1417;
+  --ink: #F1E2E1;
+  --ink-soft: #B58C8C;
+  --ink-faint: #855D5D;
+  --accent: #E0575C;
+  --on-accent: #2A0709;
+  --danger: #FF8080;
+  --chip-bg: #3A1B1E;
+  --hover: #33171A;
+  --line: #452024;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 8px 24px rgba(20, 0, 4, .35);
+}
+html[data-theme="plum"] {
+  /* deep aubergine dark — a magenta-leaning purple, distinct from grape */
+  --bg: #1B0F1E;
+  --pane: #271729;
+  --ink: #F0E4F2;
+  --ink-soft: #B096B8;
+  --ink-faint: #7E6684;
+  --accent: #C875D6;
+  --on-accent: #2B0E30;
+  --danger: #F87171;
+  --chip-bg: #351E38;
+  --hover: #2E1A31;
+  --line: #402344;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 8px 24px rgba(15, 2, 20, .35);
+}
+html[data-theme="jade"] {
+  /* deep teal-emerald dark — greener than ocean, cooler than spruce */
+  --bg: #08201A;
+  --pane: #0F2E25;
+  --ink: #DDF0E8;
+  --ink-soft: #79A697;
+  --ink-faint: #4F7869;
+  --accent: #2DD4A0;
+  --on-accent: #03231A;
+  --danger: #F87171;
+  --chip-bg: #16392F;
+  --hover: #12332A;
+  --line: #1B4437;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 8px 24px rgba(0, 15, 10, .35);
+}
+html[data-theme="charcoal"] {
+  /* neutral graphite dark — near-monochrome, cool silver-blue accent */
+  --bg: #17191C;
+  --pane: #202327;
+  --ink: #E4E6E8;
+  --ink-soft: #9AA1A8;
+  --ink-faint: #676E75;
+  --accent: #7FA8C9;
+  --on-accent: #0C1A24;
+  --danger: #F87171;
+  --chip-bg: #2A2E33;
+  --hover: #26292D;
+  --line: #303439;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
 }
 
 /* visible keyboard focus everywhere, accent ring */
@@ -736,6 +856,22 @@ html[data-theme="conifer"] {
 .swatch-synthwave::after { background: #2FE0E0; }
 .swatch-conifer { background: #EDF1E5; }
 .swatch-conifer::after { background: #2C6B49; }
+.swatch-clay { background: #FBF2EC; }
+.swatch-clay::after { background: #B0521F; }
+.swatch-coral { background: #FFF1EF; }
+.swatch-coral::after { background: #E0533E; }
+.swatch-mustard { background: #FBF6E4; }
+.swatch-mustard::after { background: #B8860B; }
+.swatch-fog { background: #F2F3F5; }
+.swatch-fog::after { background: #4B5A6B; }
+.swatch-maroon { background: #1D0E10; }
+.swatch-maroon::after { background: #E0575C; }
+.swatch-plum { background: #1B0F1E; }
+.swatch-plum::after { background: #C875D6; }
+.swatch-jade { background: #08201A; }
+.swatch-jade::after { background: #2DD4A0; }
+.swatch-charcoal { background: #17191C; }
+.swatch-charcoal::after { background: #7FA8C9; }
 .theme-group-label {
   grid-column: 1 / -1;
   font-size: 11px;

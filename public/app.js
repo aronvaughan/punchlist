@@ -16,8 +16,8 @@ setBasePath('/vendor/webawesome');
 // by theme-boot.js (blocking, pre-CSS). This mirrors that logic for runtime.
 const THEME_GROUPS = [
   ['System', ['system']],
-  ['Light', ['light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte', 'azure', 'glass-light', 'conifer']],
-  ['Dark', ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal', 'cobalt', 'glass-dark', 'synthwave']],
+  ['Light', ['light', 'paper', 'slate', 'rose', 'solar', 'mint', 'lilac', 'latte', 'azure', 'glass-light', 'conifer', 'clay', 'coral', 'mustard', 'fog']],
+  ['Dark', ['dark', 'spruce', 'midnight', 'ember', 'nord', 'grape', 'ocean', 'terminal', 'cobalt', 'glass-dark', 'synthwave', 'maroon', 'plum', 'jade', 'charcoal']],
 ];
 const THEMES = THEME_GROUPS.flatMap(([, list]) => list);
 const DARK_THEMES = new Set(THEME_GROUPS[2][1]);
