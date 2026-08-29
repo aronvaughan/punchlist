@@ -382,20 +382,39 @@ async function loadTemplates() {
 export function openTemplatePicker(task, save, render) {
   const dlg = document.getElementById('template-dialog');
   const mount = document.getElementById('template-dialog-mount');
-  const build = items => {
+  const build = (items, canEdit) => {
     mount.replaceChildren();
-    const mk = (label, value, sel) => {
-      const b = el('button', 'picker-row' + (sel ? ' sel' : ''), label);
-      b.type = 'button';
-      b.addEventListener('click', async () => { if (await save({ template: value })) render(); dlg.open = false; });
-      mount.append(b);
+    // rows are a container div (choose-button + optional AI-edit pencil sibling)
+    // so the pencil is never a nested <button> inside the choose <button>.
+    const mk = (label, value, sel, editable) => {
+      const rowEl = el('div', 'picker-row-wrap' + (sel ? ' sel' : ''));
+      const choose = el('button', 'picker-row-choose', label);
+      choose.type = 'button';
+      choose.addEventListener('click', async () => { if (await save({ template: value })) render(); dlg.open = false; });
+      rowEl.append(choose);
+      if (editable && canEdit) {
+        const pen = el('button', 'picker-row-edit');
+        pen.type = 'button';
+        pen.append(icon('pencil-simple', { size: 14 }));
+        pen.title = `Edit "${value}" with AI`;
+        pen.setAttribute('aria-label', `Edit template ${value} with AI`);
+        pen.addEventListener('click', async e => {
+          e.stopPropagation();
+          const { openTemplateEditor } = await import('/tpleditor.js');
+          openTemplateEditor(value);
+        });
+        rowEl.append(pen);
+      }
+      mount.append(rowEl);
     };
-    mk('(none)', null, !task.template);
+    mk('(none)', null, !task.template, false);
     const names = new Set(items.map(t => t.name));
-    for (const tpl of items) mk(tpl.name, tpl.name, task.template === tpl.name);
-    if (task.template && !names.has(task.template)) mk(`${task.template} (unlisted)`, task.template, true);
+    for (const tpl of items) mk(tpl.name, tpl.name, task.template === tpl.name, true);
+    if (task.template && !names.has(task.template)) mk(`${task.template} (unlisted)`, task.template, true, true);
   };
-  loadTemplates().then(build);
+  // the AI-edit pencil now lives HERE (per template row), gated by the same
+  // template_editing config probe — not on the task detail page.
+  Promise.all([loadTemplates(), getConfig()]).then(([items, cfg]) => build(items, !!cfg.template_editing));
   document.getElementById('template-dialog-done').onclick = () => { dlg.open = false; };
   dlg.open = true;
 }
@@ -414,20 +433,6 @@ function templateEditor() {
   pill.type = 'button';
   pill.title = 'Change template';
 
-  const pencil = el('button', 'tpl-edit-btn');
-  pencil.type = 'button';
-  pencil.append(icon('pencil-simple', { size: 15 }));
-  pencil.title = 'Edit this template with AI';
-  pencil.setAttribute('aria-label', 'Edit this template with AI');
-  pencil.hidden = true;
-  let editingEnabled = false;
-  const syncPencil = () => { pencil.hidden = !(editingEnabled && current.template); };
-  getConfig().then(cfg => { editingEnabled = !!cfg.template_editing; syncPencil(); });
-  pencil.addEventListener('click', async () => {
-    const { openTemplateEditor } = await import('/tpleditor.js');
-    openTemplateEditor(current.template);
-  });
-
   const render = () => {
     if (current.template) {
       pill.replaceChildren(icon('book', { size: 13 }), el('span', 'pill-text', current.template));
@@ -437,13 +442,14 @@ function templateEditor() {
       pill.hidden = true;
       btn.hidden = false;
     }
-    syncPencil();
   };
+  // The AI-edit pencil moved INTO the #template-dialog (per template row) — the
+  // task detail page no longer carries it.
   const open = () => openTemplatePicker(current, fields => patch(fields), render);
   btn.addEventListener('click', open);
   pill.addEventListener('click', open);
   render();
-  wrap.append(btn, pill, pencil);
+  wrap.append(btn, pill);
   return labeled('Template', wrap);
 }
 
