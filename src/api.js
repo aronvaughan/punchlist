@@ -181,18 +181,24 @@ export function pathInsideRoots(real, roots) {
 // falls back to env + a one-time `claude --version` probe (production). Returns
 // { dir, available, run }. `available` is the boot-time gate; routes re-check
 // dir existence per request so a repo that disappears degrades to 404.
+export function templateEditingAvailable(dir) {
+  // The feature needs: a git working tree (to commit into), the repo's own bin/plt
+  // (to validate before writing — there is no global `plt`), and the `claude` binary
+  // (to do the editing). Missing any one → the feature stays dark, not half-broken.
+  return Boolean(dir && existsSync(join(dir, '.git')) &&
+    existsSync(join(dir, 'bin', 'plt')) && hasClaudeBinary());
+}
+
 export function resolveTemplateEditing(cfg) {
   if (cfg) {
     const run = cfg.run || makeRunner();
     const dir = cfg.dir;
-    const available = cfg.available !== undefined ? cfg.available
-      : Boolean(dir && existsSync(join(dir, '.git')) && hasClaudeBinary());
+    const available = cfg.available !== undefined ? cfg.available : templateEditingAvailable(dir);
     return { dir, available, run };
   }
   const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
     join(homedir(), 'code', 'punchlist-templates');
-  const available = Boolean(dir && existsSync(join(dir, '.git')) && hasClaudeBinary());
-  return { dir, available, run: makeRunner() };
+  return { dir, available: templateEditingAvailable(dir), run: makeRunner() };
 }
 
 let _hasClaude = null;
@@ -1585,9 +1591,11 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     // do so), so the spawned model cannot run bash / edit files / hit MCP no matter
     // what a template body tries to inject — it can only emit text. `-p` prints the
     // reply and exits; `--no-session-persistence` keeps it stateless. The prompt is
-    // a positional argv (execFile, no shell) so its content can't be shell-injected.
+    // fed on STDIN, not argv: `--tools` is variadic (`<tools...>`) so a trailing
+    // positional prompt would be swallowed as a tool name, and stdin also keeps the
+    // (large, template-derived) prompt off the command line and out of `ps`.
     const { code, stdout, stderr } = await TPL.run({
-      cmd: 'claude', args: ['-p', '--no-session-persistence', '--tools', '', prompt], cwd: TPL.dir, timeoutMs: 120000,
+      cmd: 'claude', args: ['-p', '--no-session-persistence', '--tools', ''], cwd: TPL.dir, input: prompt, timeoutMs: 120000,
     });
     if (code !== 0) throw new ApiError(502, `claude failed: ${stderr.slice(0, 500)}`);
     let parsed;
@@ -1608,10 +1616,16 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const tmp = mkdtempSync(join(tmpdir(), 'pl-tpl-save-'));
     const tmpFile = join(tmp, `${name}.md`);
     writeFileSync(tmpFile, body.draft);
-    const v = await TPL.run({ cmd: 'plt', args: ['validate', tmpFile], cwd: TPL.dir, timeoutMs: 30000 });
+    // `plt` is not a global binary — it ships as bin/plt INSIDE the templates repo.
+    // Invoke it via node (portable, no shebang/exec-bit dependency), cwd at the repo
+    // so it resolves its own ROOT/templateNames for cross-ref checks.
+    const v = await TPL.run({ cmd: 'node', args: [join(TPL.dir, 'bin', 'plt'), 'validate', tmpFile], cwd: TPL.dir, timeoutMs: 30000 });
     rmSync(tmp, { recursive: true, force: true });
     if (v.code !== 0) {
-      return c.json({ ok: false, validation: (v.stdout + v.stderr).trim() || 'validation failed' }, 422);
+      // plt writes its FAIL findings to stdout; prefer that. stderr only carries
+      // execFile's "Command failed: node <path>…" wrapper, which would leak the
+      // internal temp path — fall back to it only when stdout is empty.
+      return c.json({ ok: false, validation: v.stdout.trim() || v.stderr.trim() || 'validation failed' }, 422);
     }
 
     // 2) write the override into authored/, then commit (no push). `name` is

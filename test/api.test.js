@@ -1279,6 +1279,10 @@ test('POST /templates/:name/ai-edit: spawns claude text-only, returns note+draft
   assert.ok(claudeCall.args.includes('--no-session-persistence'));
   const ti = claudeCall.args.indexOf('--tools');
   assert.ok(ti !== -1 && claudeCall.args[ti + 1] === '', 'tools disabled via --tools ""');
+  // the prompt rides on STDIN, never argv — `--tools` is variadic and would
+  // otherwise swallow a trailing positional prompt as a tool name (regression guard).
+  assert.equal(claudeCall.args[claudeCall.args.length - 1], '', 'no positional prompt after --tools ""');
+  assert.match(claudeCall.input || '', /add a priority input/);
   // non-admin 403
   assert.equal((await a.call('POST', '/api/v1/templates/demo/ai-edit', { token: TOK_CLAUDE, body: { draft: 'x', messages: [] } })).status, 403);
   cleanup();
@@ -1295,7 +1299,8 @@ test('POST /templates/:name/ai-edit: unparseable reply -> 502, no crash', async 
 test('POST /templates/:name/save: valid draft validates, writes authored/, commits', async () => {
   const { dir, cleanup } = realTemplatesRepo({ 'packs/core/demo.md': '---\nname: demo\n---\norig' });
   // stub: plt validate OK; git add/commit report success. The WRITE is real fs.
-  const a = appWithDir(dir, (s) => s.cmd === 'plt' ? { code: 0, stdout: 'OK', stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const isPlt = (s) => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate';
+  const a = appWithDir(dir, (s) => isPlt(s) ? { code: 0, stdout: 'OK', stderr: '' } : { code: 0, stdout: '', stderr: '' });
   const draft = '---\nname: demo\n---\nedited body';
   const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft } });
   assert.equal(r.status, 200);
@@ -1304,14 +1309,15 @@ test('POST /templates/:name/save: valid draft validates, writes authored/, commi
   assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), draft);
   assert.equal(readFileSync(join(dir, 'templates', 'packs', 'core', 'demo.md'), 'utf8'), '---\nname: demo\n---\norig');
   // validated a temp file named demo.md, then git add + commit ran
-  assert.ok(a.calls.some(s => s.cmd === 'plt' && s.args[0] === 'validate' && s.args[1].endsWith('/demo.md')));
+  assert.ok(a.calls.some(s => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate' && s.args[2].endsWith('demo.md')));
   assert.ok(a.calls.some(s => s.cmd === 'git' && s.args.includes('commit')));
   cleanup();
 });
 
 test('POST /templates/:name/save: invalid draft -> 422, nothing written/committed', async () => {
   const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\norig' });
-  const a = appWithDir(dir, (s) => s.cmd === 'plt' ? { code: 1, stdout: 'FAIL  demo.md:3: missing golden exemplar', stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const isPlt = (s) => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate';
+  const a = appWithDir(dir, (s) => isPlt(s) ? { code: 1, stdout: 'FAIL  demo.md:3: missing golden exemplar', stderr: '' } : { code: 0, stdout: '', stderr: '' });
   const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft: '---\nname: demo\n---\nbad' } });
   assert.equal(r.status, 422);
   assert.equal(r.json.ok, false);

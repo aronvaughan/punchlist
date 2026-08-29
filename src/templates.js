@@ -62,7 +62,14 @@ export function buildEditPrompt({ name, draft, messages }) {
 export function makeRunner() {
   return ({ cmd, args, cwd, input, timeoutMs = 120000 }) => new Promise((resolve) => {
     const child = execFile(cmd, args, { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout: stdout ?? '', stderr: stderr ?? (err ? String(err.message) : '') }));
+      // On a spawn failure (ENOENT etc.) execFile yields EMPTY stdout/stderr strings,
+      // so `||` (not `??`) is required to fall through to err.message — otherwise the
+      // real reason (e.g. "spawn plt ENOENT") is lost and callers see a blank error.
+      (err, stdout, stderr) => resolve({
+        code: err?.code ?? 0,
+        stdout: stdout ?? '',
+        stderr: (stderr || (err ? String(err.message) : '')),
+      }));
     if (input != null) { child.stdin.end(input); }
   });
 }
