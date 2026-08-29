@@ -25,11 +25,12 @@ gets no tools, so a template edit can never execute anything on the machine.
    `templates/authored/<name>.md` in the templates repo. Editing a shipped
    `packs/*` template forks a copy into `authored/` (an override) rather
    than mutating the pack; `plt` already resolves authored over pack.
-2. **Backend:** shell out to `claude -p` (reuses the owner's Claude Code
-   auth, no API key in env or repo). Feature is **off** — endpoints 404 —
-   unless both hold: `PUNCHLIST_TEMPLATES_DIR` is a git working tree AND the
-   `claude` binary is on PATH. Public users without Claude Code simply don't
-   see the feature; nothing breaks.
+2. **Backend:** shell out to `claude -p` with the prompt on **stdin** (reuses
+   the owner's Claude Code auth, no API key in env or repo). Feature is
+   **off** — endpoints 404 — unless ALL hold: `PUNCHLIST_TEMPLATES_DIR` is a
+   git working tree, the repo's own `bin/plt` exists (validation runs it —
+   there is no global `plt`), AND the `claude` binary is on PATH. Public users
+   without Claude Code simply don't see the feature; nothing breaks.
 3. **Interaction:** conversational chat in the task drawer with a live
    rendered draft; iterate; **Save current draft**. The draft is the source
    of truth, re-sent each turn (claude `-p` is one-shot /
@@ -71,8 +72,10 @@ All three are **admin-only** (`actor === HUMAN`, else 403) and
   1. Write `draft` to a temp file **named `<name>.md`** in a fresh temp dir
      (the filename must match so any filename↔frontmatter-`name` check in
      `plt validate` passes).
-  2. Spawn `plt validate <tempdir>/<name>.md`; a non-zero exit or any `FAIL
-     <file>:<line>: <msg>` line means invalid — capture the messages.
+  2. Spawn `node <dir>/bin/plt validate <tempdir>/<name>.md` (the repo ships
+     its own `plt`; it is not a global binary). A non-zero exit or any `FAIL
+     <file>:<line>: <msg>` line means invalid — the `plt` findings (stdout)
+     are captured and returned.
   3. If **invalid** → 422 `{ ok:false, validation }`, nothing written to the
      repo.
   4. If **valid** → write `templates/authored/<name>.md`, `git -C
