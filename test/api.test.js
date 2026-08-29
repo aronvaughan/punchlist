@@ -1261,6 +1261,33 @@ test('GET /templates/:name: admin reads resolved md; gating + traversal', async 
   cleanup();
 });
 
+test('POST /templates/:name/ai-edit: spawns claude text-only, returns note+draft', async () => {
+  const reply = '<<<NOTE\nAdded a priority input.\nNOTE\n<<<TEMPLATE\n---\nname: demo\n---\nnew body\nTEMPLATE';
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': '---\nname: demo\n---\nold' });
+  const a = appWithDir(dir, (spec) => spec.cmd === 'claude' ? { code: 0, stdout: reply, stderr: '' } : { code: 0, stdout: '', stderr: '' });
+  const r = await a.call('POST', '/api/v1/templates/demo/ai-edit', {
+    body: { draft: '---\nname: demo\n---\nold', messages: [{ role: 'user', content: 'add a priority input' }] },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.reply, 'Added a priority input.');
+  assert.match(r.json.draft, /new body/);
+  // it invoked claude with -p and NO tool-enabling flags, in the repo dir
+  const claudeCall = a.calls.find(s => s.cmd === 'claude');
+  assert.ok(claudeCall.args.includes('-p'));
+  assert.ok(claudeCall.args.includes('--no-session-persistence'));
+  // non-admin 403
+  assert.equal((await a.call('POST', '/api/v1/templates/demo/ai-edit', { token: TOK_CLAUDE, body: { draft: 'x', messages: [] } })).status, 403);
+  cleanup();
+});
+
+test('POST /templates/:name/ai-edit: unparseable reply -> 502, no crash', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'authored/demo.md': 'x' });
+  const a = appWithDir(dir, () => ({ code: 0, stdout: 'garbage, no delimiters', stderr: '' }));
+  const r = await a.call('POST', '/api/v1/templates/demo/ai-edit', { body: { draft: 'x', messages: [] } });
+  assert.equal(r.status, 502);
+  cleanup();
+});
+
 // ---- needs-input (block → answer) ----
 test('needs-input round-trip: claim → block → answer → re-claim with question+answer in the payload', async () => {
   const { call } = makeApp();

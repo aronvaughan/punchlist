@@ -1568,6 +1568,31 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return c.json({ name, markdown });
   });
 
+  app.post('/api/v1/templates/:name/ai-edit', async c => {
+    requireTemplateEditing(c);
+    const name = c.req.param('name');
+    const body = await readJson(c);
+    if (typeof body.draft !== 'string' || !Array.isArray(body.messages)) {
+      throw new ApiError(400, 'draft (string) and messages (array) required');
+    }
+    for (const m of body.messages) {
+      if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
+        throw new ApiError(400, 'each message needs role user|assistant and string content');
+      }
+    }
+    const prompt = buildEditPrompt({ name, draft: body.draft, messages: body.messages });
+    // text-only: -p prints the reply and exits; --no-session-persistence keeps it
+    // stateless. No --allowedTools / no MCP: the process is given nothing to act with.
+    const { code, stdout, stderr } = await TPL.run({
+      cmd: 'claude', args: ['-p', '--no-session-persistence', prompt], cwd: TPL.dir, timeoutMs: 120000,
+    });
+    if (code !== 0) throw new ApiError(502, `claude failed: ${stderr.slice(0, 500)}`);
+    let parsed;
+    try { parsed = parseAiReply(stdout); }
+    catch { throw new ApiError(502, 'could not parse the AI reply'); }
+    return c.json({ reply: parsed.note, draft: parsed.draft });
+  });
+
   // ---- static UI (CSP on every static response — review O1) ----
   app.get('*', c => {
     let p = normalize(c.req.path).replace(/^([/\\.])+/, '');
