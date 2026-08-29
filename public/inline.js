@@ -6,7 +6,7 @@ import { api, state, reload, toast, todayISO, currentActor } from '/app.js';
 import { openDetail, stepsEditorFor, openWhenPicker, whenLabel,
   openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel,
   openProjectPicker, projectLabel, openTemplatePicker, attachmentsEditor,
-  reportView, timelineSection } from '/detail.js';
+  reportView, timelineSection, recurEditor } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { icon } from '/icons.js';
 
@@ -112,7 +112,7 @@ export function expandRow(task, row) {
 function controlsRow(task) {
   const wrap = el('div', 'inline-controls');
   wrap.append(whenControl(task), dueControl(task), projectControl(task), assigneeControl(task),
-    templateControl(task), tagsControl(task), attachmentsEditor(task));
+    templateControl(task), recurEditor(task, save, () => reload()), tagsControl(task), attachmentsEditor(task));
   return wrap;
 }
 
