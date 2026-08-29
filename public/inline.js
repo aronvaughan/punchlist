@@ -4,7 +4,7 @@
 // re-syncs from the server. The pencil opens the full drawer.
 import { api, state, reload, toast, todayISO, pickWhen } from '/app.js';
 import { openDetail, stepsEditorFor } from '/detail.js';
-import { dueCountdown } from '/dates.js';
+import { dueCountdown, dueShort } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
 import { icon } from '/icons.js';
 
@@ -134,24 +134,58 @@ function whenControl(task) {
   return labeled('When', seg);
 }
 
+// Same icon→value pattern as the drawer's dueEditor: unset = flag icon; set =
+// a compact pill (flag + mm/dd · countdown · time). Both open the shared
+// #due-dialog (Date + Time + Clear + Done) — no always-visible date box.
 function dueControl(task) {
   const box = el('div', 'inline-due');
-  const date = el('input');
-  date.type = 'date';
-  date.value = task.due_date ?? '';
-  const chip = el('span', 'chip due');
+
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('flag', { size: 15 }));
+  btn.setAttribute('aria-label', 'Set deadline');
+  btn.title = 'Set deadline';
+
+  const pill = el('button', 'meta-pill due-pill');
+  pill.type = 'button';
+  pill.title = 'Edit deadline';
+
   const paint = () => {
-    if (!task.due_date) { chip.hidden = true; return; }
-    const { text, urgent } = dueCountdown(task.due_date, todayISO());
-    chip.textContent = text;
-    chip.classList.toggle('arrived', urgent);
-    chip.hidden = false;
+    if (task.due_date) {
+      const { text: countdown, urgent } = dueCountdown(task.due_date, todayISO());
+      const bits = [dueShort(task.due_date), countdown];
+      if (task.due_time) bits.push(task.due_time);
+      pill.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', bits.join(' · ')));
+      pill.classList.toggle('urgent', urgent);
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
   };
-  date.addEventListener('change', async () => {
-    if (await save(task, { due_date: date.value || null })) paint();
-  });
+
+  const openDialog = () => {
+    const dlg = document.getElementById('due-dialog');
+    const date = document.getElementById('due-dialog-date');
+    const time = document.getElementById('due-dialog-time');
+    date.value = task.due_date ?? '';
+    time.value = task.due_time ?? '';
+    date.onchange = async () => { if (await save(task, { due_date: date.value || null })) paint(); };
+    time.onchange = async () => { if (await save(task, { due_time: time.value || null })) paint(); };
+    document.getElementById('due-dialog-clear').onclick = async () => {
+      if (await save(task, { due_date: null, due_time: null })) paint();
+      dlg.open = false;
+    };
+    document.getElementById('due-dialog-done').onclick = () => { paint(); dlg.open = false; };
+    dlg.open = true;
+    setTimeout(() => { try { date.showPicker ? date.showPicker() : date.focus(); } catch { date.focus(); } }, 0);
+  };
+
+  btn.addEventListener('click', openDialog);
+  pill.addEventListener('click', openDialog);
   paint();
-  box.append(date, chip);
+  box.append(btn, pill);
   return labeled('Due', box);
 }
 
