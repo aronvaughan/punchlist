@@ -1887,6 +1887,7 @@ wa-button[variant="brand"]::part(base) {
 .tl-today-ring { fill: none; stroke: var(--accent); stroke-width: 1.2; }
 .tl-today-dot { fill: var(--accent); }
 .tl-today-label { fill: var(--accent); font-weight: 600; }
+.tl-count { fill: var(--accent); font-size: 8px; font-weight: 700; }
 
 /* ---- activity thread (Part A): the drawer Timeline ---- */
 .timeline { display: flex; flex-direction: column; gap: 8px; }

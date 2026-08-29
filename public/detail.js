@@ -540,16 +540,30 @@ function buildSparkline(items, todayIso) {
     t.textContent = String(new Date(dn * 86400000).getUTCDate());
     svg.append(t);
   };
+  // one dot per DAY (multiple events on a day collapse to a single dot with a
+  // small count above it)
+  const byDay = new Map();
   for (const cm of items) {
     const dn = dayNum(cm.created_at);
-    if (Number.isNaN(dn) || dn === todayN) continue;
+    if (!Number.isNaN(dn)) byDay.set(dn, (byDay.get(dn) || 0) + 1);
+  }
+  const countBadge = (dn, count) => {
+    if (count <= 1) return;
+    const t = svgEl('text', { x: xOf(dn), y: BASE - 9, class: 'tl-count', 'text-anchor': 'middle' });
+    t.textContent = String(count);
+    svg.append(t);
+  };
+  for (const [dn, count] of byDay) {
+    if (dn === todayN) continue; // today is drawn as a ring below
     svg.append(svgEl('circle', { cx: xOf(dn), cy: BASE, r: 3, class: 'tl-dot' }));
+    countBadge(dn, count);
     ddLabel(dn);
   }
-  // today: thin ring + small solid dot
+  // today: thin ring + small solid dot (+ a count above if there were several)
   const tx = xOf(todayN);
   svg.append(svgEl('circle', { cx: tx, cy: BASE, r: 6, class: 'tl-today-ring' }));
   svg.append(svgEl('circle', { cx: tx, cy: BASE, r: 2.3, class: 'tl-today-dot' }));
+  countBadge(todayN, byDay.get(todayN) || 0);
   ddLabel(todayN, ' tl-today-label');
   return svg;
 }
