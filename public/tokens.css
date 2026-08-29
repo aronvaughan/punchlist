@@ -767,6 +767,9 @@ html[data-theme="conifer"] {
 /* gear on the rail's Projects section header */
 #rail-projects-head:has(.sec-toggle) { display: flex; align-items: center; gap: 4px; }
 #rail-projects-head .sec-toggle { flex: 1; }
+/* pencil on the rail's Tags section header (mirrors Projects) */
+#rail-tags-head:has(.sec-toggle) { display: flex; align-items: center; gap: 4px; }
+#rail-tags-head .sec-toggle { flex: 1; }
 .rail-gear {
   flex: none;
   width: 32px;

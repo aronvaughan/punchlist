@@ -286,10 +286,15 @@ function renderRailTags() {
   ul.replaceChildren();
   head.replaceChildren();
   const tags = state.tags ?? [];
-  head.hidden = tags.length === 0;
-  // "+ New tag" shows unless the Tags section is explicitly collapsed
-  const open = tags.length ? sectionHead(head, 'tags', 'Tags') : true;
-  document.getElementById('rail-new-tag').hidden = !open;
+  const open = sectionHead(head, 'tags', 'Tags');
+  // pencil on the header line (right-aligned) opens the new-tag dialog — mirrors
+  // the Projects pencil and replaces the old bottom "+ New tag" row.
+  const newTagBtn = el('button', 'rail-head-action');
+  newTagBtn.append(icon('pencil-simple', { size: 15 }));
+  newTagBtn.setAttribute('aria-label', 'New tag');
+  newTagBtn.title = 'New tag';
+  newTagBtn.addEventListener('click', () => openTagDialog());
+  head.append(newTagBtn);
   if (!tags.length || !open) return;
   for (const t of tags) {
     const li = el('li');
@@ -665,7 +670,6 @@ async function createTag() {
     err.hidden = false;
   }
 }
-document.getElementById('rail-new-tag').addEventListener('click', openTagDialog);
 document.getElementById('tag-create').addEventListener('click', createTag);
 document.getElementById('tag-name-input').addEventListener('keydown', e => { if (e.key === 'Enter') createTag(); });
 document.getElementById('tag-cancel').addEventListener('click', () => {
