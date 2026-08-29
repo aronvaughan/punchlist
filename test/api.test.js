@@ -33,6 +33,29 @@ function makeApp() {
   return { db, app, call };
 }
 
+// A makeApp variant that wires a HERMETIC template-editing backend: a fake repo
+// dir marked available, and a stub `run` that records calls and returns canned
+// output keyed by the command. Individual tests override `runImpl`.
+function makeAppWithTemplates(runImpl) {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const calls = [];
+  const run = async (spec) => { calls.push(spec); return (runImpl || (() => ({ code: 0, stdout: '', stderr: '' })))(spec); };
+  const app = buildApp({
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    today: () => TODAY,
+    templateEditing: { dir: '/fake/templates-repo', available: true, run },
+  });
+  const call = async (method, path, { body, token = TOK_ARON } = {}) => {
+    const headers = {}; if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    let json = null; try { json = await res.json(); } catch {}
+    return { status: res.status, json };
+  };
+  return { db, app, call, calls };
+}
+
 // ---- auth ----
 test('auth: 401 without/with bad token; health is open', async () => {
   const { call } = makeApp();
@@ -1161,6 +1184,26 @@ test('untrusted set is configurable: buildApp untrusted option + parseUntrusted 
   assert.deepEqual(parseUntrusted(undefined), ['email']);
   assert.deepEqual(parseUntrusted('email, sms ,'), ['email', 'sms']);
   assert.deepEqual(parseUntrusted(''), []);
+});
+
+test('config: template_editing reflects the feature gate', async () => {
+  // default makeApp() wires no templateEditing -> feature off. Pin the env probe
+  // at a nonexistent dir so this holds regardless of the host machine (a dev box
+  // may have a real punchlist-templates repo + `claude` on PATH, which the
+  // production auto-probe would otherwise detect and turn the feature on).
+  const savedEnv = process.env.PUNCHLIST_TEMPLATES_DIR;
+  process.env.PUNCHLIST_TEMPLATES_DIR = join(tmpdir(), 'pl-no-such-templates-repo');
+  let off;
+  try { off = await (makeApp().call)('GET', '/api/v1/config'); }
+  finally {
+    if (savedEnv === undefined) delete process.env.PUNCHLIST_TEMPLATES_DIR;
+    else process.env.PUNCHLIST_TEMPLATES_DIR = savedEnv;
+  }
+  assert.equal(off.json.template_editing, false);
+  // a wired app with a stub runner + present dir -> on for the admin only
+  const on = makeAppWithTemplates();           // helper added below
+  assert.equal((await on.call('GET', '/api/v1/config')).json.template_editing, true);
+  assert.equal((await on.call('GET', '/api/v1/config', { token: TOK_CLAUDE })).json.template_editing, false);
 });
 
 // ---- needs-input (block → answer) ----
