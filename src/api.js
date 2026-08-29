@@ -2,10 +2,12 @@
 // The API is the ONLY write path to the database (invariant).
 // tokens: {actorName: token}; server sets created_by from the token, always.
 import { Hono } from 'hono';
-import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync, mkdtempSync } from 'node:fs';
 import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { makeRunner, parseAiReply, resolveTemplatePath, readTemplate, buildEditPrompt } from './templates.js';
 import { ulid } from './db.js';
 import { sniffMime, normalizeMime, normalizeDocMime, docMimeForExt, isDocMime, isUtf8Text,
   filePathFor, sanitizeFilename } from './media.js';
@@ -174,6 +176,39 @@ export function pathInsideRoots(real, roots) {
   return roots.some(root => real === root || real.startsWith(root + sep));
 }
 
+// ---- AI-assisted template editing (feature gate) ----
+// Resolve the template-editing config. Accepts an explicit object (tests) or
+// falls back to env + a one-time `claude --version` probe (production). Returns
+// { dir, available, run }. `available` is the boot-time gate; routes re-check
+// dir existence per request so a repo that disappears degrades to 404.
+export function templateEditingAvailable(dir) {
+  // The feature needs: a git working tree (to commit into), the repo's own bin/plt
+  // (to validate before writing — there is no global `plt`), and the `claude` binary
+  // (to do the editing). Missing any one → the feature stays dark, not half-broken.
+  return Boolean(dir && existsSync(join(dir, '.git')) &&
+    existsSync(join(dir, 'bin', 'plt')) && hasClaudeBinary());
+}
+
+export function resolveTemplateEditing(cfg) {
+  if (cfg) {
+    const run = cfg.run || makeRunner();
+    const dir = cfg.dir;
+    const available = cfg.available !== undefined ? cfg.available : templateEditingAvailable(dir);
+    return { dir, available, run };
+  }
+  const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
+    join(homedir(), 'code', 'punchlist-templates');
+  return { dir, available: templateEditingAvailable(dir), run: makeRunner() };
+}
+
+let _hasClaude = null;
+function hasClaudeBinary() {
+  if (_hasClaude !== null) return _hasClaude;
+  try { execFileSync('claude', ['--version'], { stdio: 'ignore', timeout: 5000 }); _hasClaude = true; }
+  catch { _hasClaude = false; }
+  return _hasClaude;
+}
+
 // section key must mirror views.js SECTION
 function sectionOf(task, today) {
   if (task.when_type === 'date') return task.when_date <= today ? 0 : 1;
@@ -182,7 +217,7 @@ function sectionOf(task, today) {
 }
 
 export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
-    maxDoc, docRoots }) {
+    maxDoc, docRoots, templateEditing }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
   // references the row. Cap is separate from (and far larger than) the JSON
@@ -200,6 +235,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   const DOC_ROOTS = resolveDocRoots(docRoots ?? process.env.PUNCHLIST_DOC_ROOTS);
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
+  // AI-assisted template editing (admin-only, feature-gated). Available only
+  // when a templates repo dir is configured AND the `claude` binary is present.
+  // Tests inject { dir, available, run } directly; production computes them.
+  const TPL = resolveTemplateEditing(templateEditing);
   // agent-security layer 1: tasks created by an untrusted actor are born
   // vetted=0 — quarantined from agent queues and the claim/finish doors
   // until the admin vets them (PUNCHLIST_UNTRUSTED_ACTORS, default "email")
@@ -1268,6 +1307,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // explicit confirm before rendering a doc uploaded by an untrusted actor.
   app.get('/api/v1/config', c => c.json({
     doc_linking: DOC_ROOTS.length > 0,
+    template_editing: TPL.available && c.get('actor') === HUMAN,
     untrusted_actors: [...UNTRUSTED],
     max_doc_bytes: MAX_DOC,
     actor: c.get('actor'),
@@ -1515,6 +1555,100 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const data = JSON.parse(readFileSync(file, 'utf8'));
       return c.json({ items: Array.isArray(data.templates) ? data.templates : [] });
     } catch { return c.json({ items: [] }); }
+  });
+
+  // Admin + feature gate shared by every template-editing route. 404 (not 403)
+  // when the feature is off, so its existence isn't advertised to non-admins.
+  // The feature gate runs BEFORE the admin check on purpose: a non-admin on a
+  // feature-off instance gets 404, a non-admin on a feature-on instance gets 403.
+  function requireTemplateEditing(c) {
+    if (!TPL.available || !existsSync(join(TPL.dir, '.git'))) throw new ApiError(404, 'not found');
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can edit templates`);
+  }
+
+  app.get('/api/v1/templates/:name', c => {
+    requireTemplateEditing(c);
+    const name = c.req.param('name');
+    const markdown = readTemplate(TPL.dir, name);
+    if (markdown == null) throw new ApiError(404, 'template not found');
+    return c.json({ name, markdown });
+  });
+
+  app.post('/api/v1/templates/:name/ai-edit', async c => {
+    requireTemplateEditing(c);
+    const name = c.req.param('name');
+    const body = await readJson(c);
+    if (typeof body.draft !== 'string' || !Array.isArray(body.messages)) {
+      throw new ApiError(400, 'draft (string) and messages (array) required');
+    }
+    // bound the stdin prompt (same 64KB draft cap as /save; plus message limits) so
+    // a runaway draft/thread can't build an unbounded prompt for the spawn.
+    if (body.draft.length > 65536) throw new ApiError(400, 'template too large');
+    if (body.messages.length > 200) throw new ApiError(400, 'too many messages');
+    for (const m of body.messages) {
+      if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
+        throw new ApiError(400, 'each message needs role user|assistant and string content');
+      }
+      if (m.content.length > 65536) throw new ApiError(400, 'message too large');
+    }
+    const prompt = buildEditPrompt({ name, draft: body.draft, messages: body.messages });
+    // HARD text-only: `--tools ""` disables ALL tools (the CLI's documented way to
+    // do so), so the spawned model cannot run bash / edit files / hit MCP no matter
+    // what a template body tries to inject — it can only emit text. `-p` prints the
+    // reply and exits; `--no-session-persistence` keeps it stateless. The prompt is
+    // fed on STDIN, not argv: `--tools` is variadic (`<tools...>`) so a trailing
+    // positional prompt would be swallowed as a tool name, and stdin also keeps the
+    // (large, template-derived) prompt off the command line and out of `ps`.
+    const { code, stdout, stderr } = await TPL.run({
+      cmd: 'claude', args: ['-p', '--no-session-persistence', '--tools', ''], cwd: TPL.dir, input: prompt, timeoutMs: 120000,
+    });
+    if (code !== 0) throw new ApiError(502, `claude failed: ${stderr.slice(0, 500)}`);
+    let parsed;
+    try { parsed = parseAiReply(stdout); }
+    catch { throw new ApiError(502, 'could not parse the AI reply'); }
+    return c.json({ reply: parsed.note, draft: parsed.draft });
+  });
+
+  app.post('/api/v1/templates/:name/save', async c => {
+    requireTemplateEditing(c);
+    const name = c.req.param('name');
+    if (!/^[a-z0-9-]+$/.test(name)) throw new ApiError(404, 'template not found');
+    const body = await readJson(c);
+    if (typeof body.draft !== 'string' || body.draft.length === 0) throw new ApiError(400, 'draft (non-empty string) required');
+    if (body.draft.length > 65536) throw new ApiError(400, 'template too large');
+
+    // 1) validate a temp copy NAMED <name>.md (filename must match for plt).
+    // `plt` is not a global binary — it ships as bin/plt INSIDE the templates repo.
+    // Invoke it via node (portable, no shebang/exec-bit dependency), cwd at the repo
+    // so it resolves its own ROOT/templateNames for cross-ref checks. try/finally so
+    // the temp dir is removed even if the write or spawn throws.
+    const tmp = mkdtempSync(join(tmpdir(), 'pl-tpl-save-'));
+    let v;
+    try {
+      const tmpFile = join(tmp, `${name}.md`);
+      writeFileSync(tmpFile, body.draft);
+      v = await TPL.run({ cmd: 'node', args: [join(TPL.dir, 'bin', 'plt'), 'validate', tmpFile], cwd: TPL.dir, timeoutMs: 30000 });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+    if (v.code !== 0) {
+      // plt writes its FAIL findings to stdout; prefer that. stderr only carries
+      // execFile's "Command failed: node <path>…" wrapper, which would leak the
+      // internal temp path — fall back to it only when stdout is empty.
+      return c.json({ ok: false, validation: v.stdout.trim() || v.stderr.trim() || 'validation failed' }, 422);
+    }
+
+    // 2) write the override into authored/, then commit (no push). `name` is
+    // already constrained to ^[a-z0-9-]+$ above, so the join cannot traverse —
+    // that charset guard IS the containment here.
+    const authoredDir = join(TPL.dir, 'templates', 'authored');
+    mkdirSync(authoredDir, { recursive: true });
+    const dest = join(authoredDir, `${name}.md`);
+    writeFileSync(dest, body.draft);
+    const relDest = join('templates', 'authored', `${name}.md`);
+    await TPL.run({ cmd: 'git', args: ['add', '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
+    const commit = await TPL.run({ cmd: 'git', args: ['commit', '-m', `template(${name}): AI-assisted edit via punchlist`, '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
+    return c.json({ ok: true, validation: (v.stdout || 'OK').trim(), committed: commit.code === 0 });
   });
 
   // ---- static UI (CSP on every static response — review O1) ----
