@@ -41,8 +41,9 @@ const PATHS = {
   // original minimal glyphs for the two agent assignees (list-view pill,
   // icon-only) — NOT a reproduction of any trademarked mark, just a simple
   // abstract distinguisher per agent. Human assignees keep the generic `user`.
-  // claude: four-point sparkle/asterisk (common "AI assistant" shorthand)
-  claude: '<path d="M128,16 L150,106 L240,128 L150,150 L128,240 L106,150 L16,128 L106,106 Z"/>',
+  // claude: eight-point asterisk/sparkle (AI-assistant shorthand) — four cardinal
+  // points plus four diagonal points so it reads as an asterisk
+  claude: '<path d="M128,18 L141,97 L206,50 L159,115 L238,128 L159,141 L206,206 L141,159 L128,238 L115,159 L50,206 L97,141 L18,128 L97,115 L50,50 L115,97 Z"/>',
   // hermes: a minimal winged-helmet motif (messenger/mercury allusion)
   hermes: '<path d="M68,148a60,60,0,0,1,120,0v8H68Z"/><path d="M120,58a8,8,0,0,1,16,0v26h-16Z"/><path d="M66,124C40,112,26,86,30,58c20,6,38,22,44,46Z"/><path d="M190,124c26-12,40-38,36-66c-20,6-38,22-44,46Z"/>',
 };

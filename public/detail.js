@@ -7,7 +7,7 @@ import { api, state, reload, toast, todayISO, pickWhen, currentActor,
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
 import { dueShort, dueCountdown } from '/dates.js';
-import { tagsField, assigneeField } from '/suggest.js';
+import { assigneeField } from '/suggest.js';
 import { openManageDialog, animateOnce, performDelete } from '/views.js';
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -347,7 +347,10 @@ function assigneeEditor() {
   pill.title = 'Change assignee';
   const render = () => {
     const who = current.assignee ?? currentActor();
-    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }), el('span', 'pill-text', assigneeLabel(who)));
+    // icon-only pill to stay compact — the name rides on title + aria-label
+    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }));
+    pill.title = `Assignee: ${assigneeLabel(who)}`;
+    pill.setAttribute('aria-label', `Assigned to ${assigneeLabel(who)}`);
   };
   pill.addEventListener('click', () => {
     const t = current;
@@ -869,11 +872,62 @@ export function tagsLabel(t) {
   return tags.length > 3 ? `${tags.length} tags` : tags.join(', ');
 }
 
-// Host the shared tagsField in #tags-dialog; repaint the pill on close.
+// A tag PICKER for the dialog: every existing tag shown as a toggle chip
+// (selected = on the task), plus an add-a-new-tag row. Clicking a chip
+// adds/removes it; typing + Add (or Enter) creates a new tag and applies it.
+// `save({tags})` persists; `onChange` repaints the collapsed pill.
+function buildTagPicker(task, save, onChange) {
+  const box = el('div', 'tag-picker');
+  let tags = [...(task.tags ?? [])];
+  const has = name => tags.some(t => t.toLowerCase() === name.toLowerCase());
+
+  const list = el('div', 'tag-picker-list');
+  const paint = () => {
+    list.replaceChildren();
+    const all = (state.tags ?? []).map(t => t.name);
+    const names = [...new Set([...all, ...tags])].sort((a, b) => a.localeCompare(b));
+    if (!names.length) { list.append(el('div', 'att-empty', 'No tags yet — add one below.')); return; }
+    for (const name of names) {
+      const on = has(name);
+      const chip = el('button', 'chip tag tag-choice' + (on ? ' sel' : ''), `#${name}`);
+      chip.type = 'button';
+      chip.setAttribute('aria-pressed', String(on));
+      chip.addEventListener('click', async () => {
+        const next = on ? tags.filter(t => t.toLowerCase() !== name.toLowerCase()) : [...tags, name];
+        if (await save({ tags: next })) { tags = next; paint(); onChange(); }
+      });
+      list.append(chip);
+    }
+  };
+
+  const addRow = el('div', 'tag-add-row');
+  const input = el('input', 'tag-add-input');
+  input.type = 'text';
+  input.placeholder = 'New tag…';
+  input.autocomplete = 'off';
+  const addBtn = el('button', 'wa-primary tag-add-btn', 'Add');
+  addBtn.type = 'button';
+  const doAdd = async () => {
+    const v = input.value.trim().replace(/^#/, '');
+    input.value = '';
+    if (!v || has(v)) return;
+    const next = [...tags, v];
+    if (await save({ tags: next })) { tags = next; reload(); paint(); onChange(); }
+  };
+  addBtn.addEventListener('click', doAdd);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
+  addRow.append(input, addBtn);
+
+  box.append(list, addRow);
+  paint();
+  return box;
+}
+
+// Host the tag picker in #tags-dialog; repaint the pill on close.
 export function openTagsPicker(task, save, render) {
   const dlg = document.getElementById('tags-dialog');
   const mount = document.getElementById('tags-dialog-mount');
-  mount.replaceChildren(tagsField(task, save));
+  mount.replaceChildren(buildTagPicker(task, save, render));
   document.getElementById('tags-dialog-done').onclick = () => { dlg.open = false; };
   const onHide = e => { if (e.target !== dlg) return; dlg.removeEventListener('wa-after-hide', onHide); render(); };
   dlg.addEventListener('wa-after-hide', onHide);
