@@ -1581,10 +1581,13 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       }
     }
     const prompt = buildEditPrompt({ name, draft: body.draft, messages: body.messages });
-    // text-only: -p prints the reply and exits; --no-session-persistence keeps it
-    // stateless. No --allowedTools / no MCP: the process is given nothing to act with.
+    // HARD text-only: `--tools ""` disables ALL tools (the CLI's documented way to
+    // do so), so the spawned model cannot run bash / edit files / hit MCP no matter
+    // what a template body tries to inject — it can only emit text. `-p` prints the
+    // reply and exits; `--no-session-persistence` keeps it stateless. The prompt is
+    // a positional argv (execFile, no shell) so its content can't be shell-injected.
     const { code, stdout, stderr } = await TPL.run({
-      cmd: 'claude', args: ['-p', '--no-session-persistence', prompt], cwd: TPL.dir, timeoutMs: 120000,
+      cmd: 'claude', args: ['-p', '--no-session-persistence', '--tools', '', prompt], cwd: TPL.dir, timeoutMs: 120000,
     });
     if (code !== 0) throw new ApiError(502, `claude failed: ${stderr.slice(0, 500)}`);
     let parsed;

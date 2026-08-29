@@ -1271,10 +1271,14 @@ test('POST /templates/:name/ai-edit: spawns claude text-only, returns note+draft
   assert.equal(r.status, 200);
   assert.equal(r.json.reply, 'Added a priority input.');
   assert.match(r.json.draft, /new body/);
-  // it invoked claude with -p and NO tool-enabling flags, in the repo dir
+  // it invoked claude with -p, stateless, and tools HARD-disabled (--tools ""),
+  // in the repo dir — the spawn must be text-only so a template body can't inject
+  // a tool call.
   const claudeCall = a.calls.find(s => s.cmd === 'claude');
   assert.ok(claudeCall.args.includes('-p'));
   assert.ok(claudeCall.args.includes('--no-session-persistence'));
+  const ti = claudeCall.args.indexOf('--tools');
+  assert.ok(ti !== -1 && claudeCall.args[ti + 1] === '', 'tools disabled via --tools ""');
   // non-admin 403
   assert.equal((await a.call('POST', '/api/v1/templates/demo/ai-edit', { token: TOK_CLAUDE, body: { draft: 'x', messages: [] } })).status, 403);
   cleanup();
