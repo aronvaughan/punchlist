@@ -413,6 +413,59 @@ document.addEventListener('keydown', e => {
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
 });
 
+// ---- notification events (in-app polling, migration 011) ----
+// The owner's answer to "what's the first webhook consumer?" was: punchlist's
+// own web UI, and it must survive a restart. So instead of an outbound HTTP
+// webhook, the server keeps a persisted task_events log and this poller reads
+// it via GET /api/v1/events?since=<cursor> — a client that was closed (or a
+// server that restarted) never loses an event, it just catches up on the next
+// poll. The cursor is kept in localStorage so a page reload doesn't re-toast
+// events already seen in a prior session.
+const EVENTS_SINCE_KEY = 'av-tasks-events-since';
+const EVENTS_POLL_MS = 15000;
+
+function eventsSince() {
+  const v = Number(localStorage.getItem(EVENTS_SINCE_KEY));
+  return Number.isInteger(v) && v >= 0 ? v : 0;
+}
+function setEventsSince(v) {
+  try { localStorage.setItem(EVENTS_SINCE_KEY, String(v)); } catch { /* private mode */ }
+}
+
+const EVENT_MESSAGES = {
+  'task.review_requested': p => `"${p.title}" is ready for review`,
+  'task.blocked': p => `"${p.title}" is blocked: ${p.question || 'needs an answer'}`,
+  'task.answered': p => `"${p.title}" was answered — back in the queue`,
+  'task.approved': p => `"${p.title}" was approved`,
+};
+
+// First-ever run (no stored cursor): silently adopt the current tail instead
+// of toasting the whole history at once. Every poll after that toasts + a
+// quiet reload() so the rail's existing count badges (review, needs_input,
+// the "attention" dot) pick up the change without a page refresh.
+let eventsBooted = localStorage.getItem(EVENTS_SINCE_KEY) !== null;
+
+async function pollEvents() {
+  let res;
+  try { res = await api('GET', `/events?since=${eventsSince()}`); }
+  catch { return; } // offline/unauthorized — try again next tick, no toast spam
+  if (!eventsBooted) {
+    setEventsSince(res.next_since);
+    eventsBooted = true;
+    return;
+  }
+  if (res.items.length) {
+    for (const e of res.items) {
+      const describe = EVENT_MESSAGES[e.event];
+      toast(describe ? describe(e.payload) : `${e.event}: ${e.payload.title}`, 'brand');
+    }
+    setEventsSince(res.next_since);
+    reload();
+  }
+}
+setInterval(pollEvents, EVENTS_POLL_MS);
+pollEvents();
+
 // ---- boot ----
 window.addEventListener('hashchange', onRoute);
 if (!location.hash) location.replace('#/today');

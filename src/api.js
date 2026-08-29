@@ -277,6 +277,24 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     ).run(ulid(), taskId, author, kind, text, new Date().toISOString());
   }
 
+  // ---- notification event log (migration 011) ----
+  // The persisted "needs a human" / status-update feed the web UI polls
+  // (GET /api/v1/events?since=). Written at the same transitions a future
+  // outbound webhook door would use (finish->review, block, answer,
+  // approve) — kept as a separate append-only log from `comments` so a
+  // slow/absent UI poller can never lose an event to comment-thread noise,
+  // and so a later external-delivery worker has a queue to drain without
+  // touching the human-readable timeline.
+  function postEvent(task, event, extra = {}) {
+    const payload = JSON.stringify({
+      task_id: task.id, title: task.title, status: task.status,
+      assignee: task.assignee, project_id: task.project_id, ...extra,
+    });
+    db.prepare(
+      'INSERT INTO task_events (id, task_id, event, payload, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(ulid(), task.id, event, payload, new Date().toISOString());
+  }
+
   function setTags(taskId, names) {
     db.prepare('DELETE FROM task_tags WHERE task_id = ?').run(taskId);
     for (const name of names) {
@@ -779,6 +797,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
          WHERE id=? AND status IN ('active', 'in_progress')`
       ).run(report, now, id);
       if (changes !== 1) throw new ApiError(409, `cannot finish a ${task.status} task`);
+      // needs-a-human event: this round just left agent hands and landed in
+      // the review queue — the transition the owner asked to be notified of.
+      postEvent({ ...task, status: 'review' }, 'task.review_requested', { report: body.report.trim() });
       return c.json({ task: attach(getTask(id)) });
     });
   });
@@ -798,6 +819,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       const { changes, spawned_id } = toDone(task, ['review']);
       if (changes !== 1) throw new ApiError(409, `cannot approve a ${task.status} task`);
       postComment(id, c.get('actor'), 'status', 'approved');
+      postEvent({ ...task, status: 'done' }, 'task.approved');
       return doneResponse(c, id, spawned_id);
     });
   });
@@ -841,6 +863,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (changes !== 1) throw new ApiError(409, `cannot block a ${task.status} task`);
       // project this round's question into the timeline (field stays truth)
       postComment(id, c.get('actor'), 'question', q);
+      // needs-a-human event: an agent is stuck and waiting on the admin.
+      postEvent({ ...task, status: 'blocked' }, 'task.blocked', { question: q });
       return c.json({ task: attach(getTask(id)) });
     });
   });
@@ -872,6 +896,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (changes !== 1) throw new ApiError(409, `cannot answer a ${task.status} task`);
       // project this round's answer into the timeline (field stays truth)
       postComment(id, c.get('actor'), 'answer', body.answer.trim());
+      // status update event: the assignee (often an agent) can be notified
+      // its blocker is cleared without polling the task itself.
+      postEvent({ ...task, status: 'active' }, 'task.answered', { answer: body.answer.trim() });
       return c.json({ task: attach(getTask(id)) });
     });
   });
@@ -923,6 +950,38 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       'SELECT id, task_id, author, kind, text, created_at FROM comments WHERE task_id = ? ORDER BY created_at, rowid'
     ).all(id);
     return c.json({ items });
+  });
+
+  // ---- notification events (migration 011) ----
+  // GET /api/v1/events?since=<seq>&limit=<n> — the polling endpoint the web
+  // UI reads for its "needs your attention" badge/toast. `since` is the
+  // `seq` cursor of the last event the caller has already seen (0 or
+  // omitted = from the beginning); the response's `next_since` is always the
+  // highest seq returned (or the caller's own `since` when there is nothing
+  // new), so a client can poll in a tight `since = next_since` loop without
+  // ever re-fetching an event or losing one across a server restart (the log
+  // is a table, not an in-memory buffer). Optional ?assignee= narrows to one
+  // actor's tasks, same filter shape as GET /tasks.
+  app.get('/api/v1/events', c => {
+    const { since: sinceRaw, limit: limitRaw, assignee } = c.req.query();
+    let since = 0;
+    if (sinceRaw !== undefined) {
+      since = Number(sinceRaw);
+      if (!Number.isInteger(since) || since < 0) throw new ApiError(400, 'since must be a non-negative integer');
+    }
+    const lim = Math.min(Math.max(1, Number(limitRaw) || 100), 500);
+    const wheres = ['e.seq > ?'];
+    const args = [since];
+    if (assignee) { wheres.push('t.assignee = ?'); args.push(assignee); }
+    const rows = db.prepare(
+      `SELECT e.seq, e.id, e.task_id, e.event, e.payload, e.created_at
+         FROM task_events e JOIN tasks t ON t.id = e.task_id
+        WHERE ${wheres.join(' AND ')}
+        ORDER BY e.seq ASC LIMIT ?`
+    ).all(...args, lim);
+    const items = rows.map(r => ({ ...r, payload: JSON.parse(r.payload) }));
+    const next_since = items.length ? items[items.length - 1].seq : since;
+    return c.json({ items, next_since });
   });
 
   app.post('/api/v1/tasks/:id/reorder', async c => {
