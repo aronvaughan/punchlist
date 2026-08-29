@@ -14,6 +14,12 @@
 #   pl.sh show <id>                    one task, full JSON
 #   pl.sh claim <id>                   active -> in_progress (assignee only, vetted only)
 #   pl.sh finish <id> "report"         -> review (or done if auto_close); report required
+#                                      (warns on stderr, non-fatally, if the task
+#                                      still has incomplete steps[])
+#   pl.sh step <task_id> <step_id> [done|undone]
+#                                      toggle one step's done flag (default: done);
+#                                      assignee or admin only — use this as you
+#                                      complete each step, before finishing/blocking
 #   pl.sh block <id> "question"        stuck? -> blocked with ONE concrete question
 #                                      for the admin (assignee only); returns to the
 #                                      queue with the answer attached once answered
@@ -130,7 +136,7 @@ resolve_project() { # name-or-id -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -208,7 +214,25 @@ case "$cmd" in
 
   finish)
     [ $# -eq 2 ] || { echo "usage: pl.sh finish <id> \"report\"" >&2; exit 2; }
-    api POST "/tasks/$(uri "$1")/finish" "$(jq -n --arg r "$2" '{report: $r}')"; one ;;
+    api POST "/tasks/$(uri "$1")/finish" "$(jq -n --arg r "$2" '{report: $r}')"
+    # Passive nudge, not a hard block: some tasks are legitimately finished
+    # with steps left for a future increment. Warn on stderr only.
+    incomplete=$(printf '%s' "$RESP" | jq '[(.task // .).steps[]? | select(.done == 0)] | length')
+    if [ "${incomplete:-0}" -gt 0 ]; then
+      echo "Warning: $incomplete step(s) still marked incomplete — consider \`pl.sh step $1 <step_id>\` first" >&2
+    fi
+    one ;;
+
+  step)
+    [ $# -ge 2 ] || { echo "usage: pl.sh step <task_id> <step_id> [done|undone]" >&2; exit 2; }
+    tid="$1"; sid="$2"; action="${3:-done}"
+    case "$action" in
+      done)   val=true ;;
+      undone) val=false ;;
+      *) echo "usage: pl.sh step <task_id> <step_id> [done|undone]" >&2; exit 2 ;;
+    esac
+    api PATCH "/tasks/$(uri "$tid")/steps/$(uri "$sid")" "$(jq -n --argjson d "$val" '{done: $d}')"
+    printf '%s' "$RESP" | jq -r '(if .done == 1 then "[x] " else "[ ] " end) + .title' ;;
 
   block)
     [ $# -eq 2 ] || { echo "usage: pl.sh block <id> \"question\"" >&2; exit 2; }
@@ -340,6 +364,6 @@ case "$cmd" in
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac

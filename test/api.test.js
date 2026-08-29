@@ -647,6 +647,40 @@ test('steps: create/patch/delete + validation and caps', async () => {
   assert.equal((await call('POST', `/api/v1/tasks/NOPE/steps`, { body: { title: 'x' } })).status, 404);
 });
 
+test('steps: mutations are gated to the task assignee or admin', async () => {
+  const { call } = makeApp();
+  // task assigned to claude; hermes is neither the assignee nor the admin
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'gated steps', assignee: 'claude' } })).json;
+  const s = (await call('POST', `/api/v1/tasks/${t.id}/steps`, { body: { title: 'one' } })).json; // as admin
+  // a bystander agent may not add, toggle, or delete steps
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/steps`,
+    { token: TOK_HERMES, body: { title: 'nope' } })).status, 403);
+  assert.equal((await call('PATCH', `/api/v1/tasks/${t.id}/steps/${s.id}`,
+    { token: TOK_HERMES, body: { done: true } })).status, 403);
+  assert.equal((await call('DELETE', `/api/v1/tasks/${t.id}/steps/${s.id}`,
+    { token: TOK_HERMES })).status, 403);
+  // the assignee CAN toggle its own task's step
+  const upd = await call('PATCH', `/api/v1/tasks/${t.id}/steps/${s.id}`,
+    { token: TOK_CLAUDE, body: { done: true } });
+  assert.equal(upd.status, 200);
+  assert.equal(upd.json.done, 1);
+  // the admin can also toggle/delete regardless of assignee
+  assert.equal((await call('DELETE', `/api/v1/tasks/${t.id}/steps/${s.id}`)).status, 200);
+});
+
+test('finish response reports remaining steps so clients can warn', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', {
+    body: { title: 'steps left', assignee: 'claude', steps: ['a', 'b'] } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  const stepId = t.steps[0].id;
+  await call('PATCH', `/api/v1/tasks/${t.id}/steps/${stepId}`, { token: TOK_CLAUDE, body: { done: true } });
+  const fin = await call('POST', `/api/v1/tasks/${t.id}/finish`, { token: TOK_CLAUDE, body: { report: 'done enough' } });
+  assert.equal(fin.status, 200);
+  const remaining = fin.json.task.steps.filter(s => s.done === 0);
+  assert.equal(remaining.length, 1, 'one step ("b") still incomplete after finish');
+});
+
 // ---- quickadd ----
 test('quickadd endpoint parses tokens; email-style literal goes through POST instead', async () => {
   const { call } = makeApp();
