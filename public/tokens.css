@@ -1822,6 +1822,26 @@ wa-button[variant="brand"]::part(base) {
 }
 .picker-row:hover { border-color: var(--accent); color: var(--accent); }
 .picker-row.sel { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* template picker rows: a choose-button + an optional AI-edit pencil sibling */
+.picker-row-wrap {
+  display: flex; align-items: stretch; gap: 6px;
+  border: 1px solid var(--line); background: var(--chip-bg);
+  border-radius: var(--radius); overflow: hidden;
+}
+.picker-row-wrap.sel { border-color: var(--accent); }
+.picker-row-wrap:hover { border-color: var(--accent); }
+.picker-row-choose {
+  flex: 1; text-align: left; padding: 10px 12px;
+  border: none; background: none; color: var(--ink); font: inherit; cursor: pointer;
+}
+.picker-row-wrap.sel .picker-row-choose { color: var(--accent); font-weight: 600; }
+.picker-row-choose:hover { color: var(--accent); }
+.picker-row-edit {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-left: 1px solid var(--line); background: none;
+  color: var(--ink-soft); cursor: pointer; padding: 0 12px;
+}
+.picker-row-edit:hover { color: var(--accent); background: var(--hover); }
 .recur-editor .recur-body { width: 100%; }
 /* When picker: Today / Someday quick-choice buttons above the date field */
 .when-quick { display: flex; gap: 8px; margin-bottom: 10px; }
