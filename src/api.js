@@ -2,10 +2,10 @@
 // The API is the ONLY write path to the database (invariant).
 // tokens: {actorName: token}; server sets created_by from the token, always.
 import { Hono } from 'hono';
-import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync, mkdtempSync } from 'node:fs';
 import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { makeRunner, parseAiReply, resolveTemplatePath, readTemplate, buildEditPrompt } from './templates.js';
 import { ulid } from './db.js';
@@ -1594,6 +1594,37 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     try { parsed = parseAiReply(stdout); }
     catch { throw new ApiError(502, 'could not parse the AI reply'); }
     return c.json({ reply: parsed.note, draft: parsed.draft });
+  });
+
+  app.post('/api/v1/templates/:name/save', async c => {
+    requireTemplateEditing(c);
+    const name = c.req.param('name');
+    if (!/^[a-z0-9-]+$/.test(name)) throw new ApiError(404, 'template not found');
+    const body = await readJson(c);
+    if (typeof body.draft !== 'string' || body.draft.length === 0) throw new ApiError(400, 'draft (non-empty string) required');
+    if (body.draft.length > 65536) throw new ApiError(400, 'template too large');
+
+    // 1) validate a temp copy NAMED <name>.md (filename must match for plt).
+    const tmp = mkdtempSync(join(tmpdir(), 'pl-tpl-save-'));
+    const tmpFile = join(tmp, `${name}.md`);
+    writeFileSync(tmpFile, body.draft);
+    const v = await TPL.run({ cmd: 'plt', args: ['validate', tmpFile], cwd: TPL.dir, timeoutMs: 30000 });
+    rmSync(tmp, { recursive: true, force: true });
+    if (v.code !== 0) {
+      return c.json({ ok: false, validation: (v.stdout + v.stderr).trim() || 'validation failed' }, 422);
+    }
+
+    // 2) write the override into authored/, then commit (no push). `name` is
+    // already constrained to ^[a-z0-9-]+$ above, so the join cannot traverse —
+    // that charset guard IS the containment here.
+    const authoredDir = join(TPL.dir, 'templates', 'authored');
+    mkdirSync(authoredDir, { recursive: true });
+    const dest = join(authoredDir, `${name}.md`);
+    writeFileSync(dest, body.draft);
+    const relDest = join('templates', 'authored', `${name}.md`);
+    await TPL.run({ cmd: 'git', args: ['add', '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
+    const commit = await TPL.run({ cmd: 'git', args: ['commit', '-m', `template(${name}): AI-assisted edit via punchlist`, '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
+    return c.json({ ok: true, validation: (v.stdout || 'OK').trim(), committed: commit.code === 0 });
   });
 
   // ---- static UI (CSP on every static response — review O1) ----
