@@ -1551,6 +1551,23 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     } catch { return c.json({ items: [] }); }
   });
 
+  // Admin + feature gate shared by every template-editing route. 404 (not 403)
+  // when the feature is off, so its existence isn't advertised to non-admins.
+  // The feature gate runs BEFORE the admin check on purpose: a non-admin on a
+  // feature-off instance gets 404, a non-admin on a feature-on instance gets 403.
+  function requireTemplateEditing(c) {
+    if (!TPL.available || !existsSync(join(TPL.dir, '.git'))) throw new ApiError(404, 'not found');
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can edit templates`);
+  }
+
+  app.get('/api/v1/templates/:name', c => {
+    requireTemplateEditing(c);
+    const name = c.req.param('name');
+    const markdown = readTemplate(TPL.dir, name);
+    if (markdown == null) throw new ApiError(404, 'template not found');
+    return c.json({ name, markdown });
+  });
+
   // ---- static UI (CSP on every static response — review O1) ----
   app.get('*', c => {
     let p = normalize(c.req.path).replace(/^([/\\.])+/, '');
