@@ -823,16 +823,19 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     const p = state.projects.find(x => x.id === task.project_id);
     if (p) subline.append(iconPill('project', p.name, { className: 'project-name' }));
   }
-  if (task.assignee && task.assignee !== currentActor()) {
-    // assignee pill: icon-only in the list view (claude/hermes glyph, else
-    // the generic person icon) — accent outline while claimed, name still
-    // reachable via title/aria-label
-    subline.append(assigneePill(task.assignee,
-      { className: 'agent' + (task.status === 'in_progress' ? ' working' : '') }));
-    if (task.status === 'in_progress' && task.claimed_at && showClaimed) {
+  {
+    // assignee pill: icon-only in the list view (claude/hermes glyph, else the
+    // generic person icon), shown for EVERY task incl. your own — name still
+    // reachable via title/aria-label. The delegated extras (accent "working"
+    // outline, claimed-at, the review chip) only apply to agent-assigned tasks.
+    const who = task.assignee || currentActor();
+    const delegated = task.assignee && task.assignee !== currentActor();
+    subline.append(assigneePill(who,
+      { className: (delegated ? 'agent' : '') + (delegated && task.status === 'in_progress' ? ' working' : '') }));
+    if (delegated && task.status === 'in_progress' && task.claimed_at && showClaimed) {
       subline.append(el('span', 'claimed-at', `claimed ${task.claimed_at.slice(5, 16).replace('T', ' ')}`));
     }
-    if (task.status === 'review') {
+    if (delegated && task.status === 'review') {
       const chip = el('button', 'chip review-chip', 'review');
       chip.setAttribute('aria-label', `Review ${task.assignee}'s report`);
       chip.addEventListener('click', e => { e.stopPropagation(); openReviewDialog(task); });

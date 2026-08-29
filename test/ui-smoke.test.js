@@ -103,7 +103,7 @@ test('task rows: title line is title+due only; everything else on an icon-pilled
   // moved to the subline
   assert.match(views, /titleLine\.append\(el\('span', 'title', task\.title\)\)/);
   assert.match(views, /subline\.append\(iconPill\('project'/);
-  assert.match(views, /subline\.append\(assigneePill\(task\.assignee/);
+  assert.match(views, /subline\.append\(assigneePill\(who/); // assignee glyph on every row (incl. self)
   // tags are display-only on the row: a tag-count indicator that opens the drawer
   assert.match(views, /tags-indicator/);
   assert.match(views, /ind\.addEventListener\('click', e => \{ e\.stopPropagation\(\); openDetail\(task\); \}\)/);
