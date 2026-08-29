@@ -107,7 +107,7 @@ function renderDrawer() {
   // space). Attachments joins in view mode (can't attach before the task exists).
   const metaRow = el('div', 'meta-row');
   metaRow.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(),
-    templateEditor(), recurEditor(), tagsEditor());
+    templateEditor(), recurEditor(current, (t, f) => patch(f), () => {}), tagsEditor());
   if (!createMode) metaRow.append(attachmentsEditor(task));
   body.append(metaRow);
   // step edits in the drawer write through to the live task; onChange reloads so
@@ -1214,10 +1214,14 @@ export function stepsEditorFor(task, { onChange } = {}) {
 // etc. pill with an x to stop repeating; tapping the pill reopens the grid to
 // change it. Same underlying freq/params/anchor picker as before, just gated
 // behind the icon/pill the way Things gates its per-field affordances.
-function recurEditor() {
+// Repeat-rule editor. Parameterized on (task, save, onChange) so the drawer and
+// the inline card share it. `applied` tracks the persisted rule locally (never
+// re-reads task.recur) so it's immune to the drawer's current-reassignment; the
+// segments self-render on every change, so no external rebuild is needed.
+export function recurEditor(task, save, onChange = () => {}) {
   const wrap = el('div', 'recur-editor');
-  const rule = current.recur ? { ...current.recur, days: [...(current.recur.days ?? [])] } : null;
-  const draft = rule ?? { freq: null, anchor: 'due', n: 2, days: ['mon'], dom: 1 };
+  let applied = task.recur ? { ...task.recur, days: [...(task.recur.days ?? [])] } : null;
+  const draft = applied ? { ...applied, days: [...(applied.days ?? [])] } : { freq: null, anchor: 'due', n: 2, days: ['mon'], dom: 1 };
   if (draft.n == null) draft.n = 2;
   if (!draft.days?.length) draft.days = ['mon'];
   if (draft.dom == null) draft.dom = 1;
@@ -1249,7 +1253,7 @@ function recurEditor() {
   const toggleBody = () => { expanded = !expanded; body.hidden = !expanded; };
 
   const summary = () => {
-    const r = current.recur;
+    const r = applied;
     if (!r) return '';
     if (r.freq === 'daily') return 'Daily';
     if (r.freq === 'every') return `Every ${r.n} days`;
@@ -1258,7 +1262,7 @@ function recurEditor() {
     return '';
   };
   const syncAffordance = () => {
-    const has = !!current.recur;
+    const has = !!applied;
     btn.hidden = has;
     pill.hidden = !has;
     if (has) pill.replaceChildren(icon('arrow-counter-clockwise', { size: 13 }), el('span', 'pill-text', summary()), clearBtn);
@@ -1266,12 +1270,15 @@ function recurEditor() {
   };
 
   const apply = async () => {
-    if (draft.freq === null) { if (current.recur && await patch({ recur: null })) rebuild(); return; }
+    if (draft.freq === null) {
+      if (applied && await save(task, { recur: null })) { applied = null; renderSegs(); syncAffordance(); onChange(); }
+      return;
+    }
     const out = { freq: draft.freq, anchor: draft.anchor };
     if (draft.freq === 'every') out.n = Number(draft.n) || 1;
     if (draft.freq === 'weekly') out.days = draft.days;
     if (draft.freq === 'monthly') out.dom = Number(draft.dom) || 1;
-    if (await patch({ recur: out })) rebuild();
+    if (await save(task, { recur: out })) { applied = out; renderSegs(); syncAffordance(); onChange(); }
   };
 
   const renderParams = () => {
@@ -1313,13 +1320,17 @@ function recurEditor() {
     }
   };
 
-  const freqs = [[null, 'None'], ['daily', 'Daily'], ['every', 'Every N'], ['weekly', 'Weekly'], ['monthly', 'Monthly']];
-  for (const [val, label] of freqs) {
-    const b = el('button', draft.freq === val ? 'on' : null, label);
-    b.addEventListener('click', () => { draft.freq = val; renderParams(); apply(); });
-    freqSeg.append(b);
-  }
-  renderParams();
+  const renderSegs = () => {
+    freqSeg.replaceChildren();
+    const freqs = [[null, 'None'], ['daily', 'Daily'], ['every', 'Every N'], ['weekly', 'Weekly'], ['monthly', 'Monthly']];
+    for (const [val, label] of freqs) {
+      const b = el('button', draft.freq === val ? 'on' : null, label);
+      b.addEventListener('click', () => { draft.freq = val; apply(); });
+      freqSeg.append(b);
+    }
+    renderParams();
+  };
+  renderSegs();
 
   btn.addEventListener('click', toggleBody);
   pill.addEventListener('click', e => { if (e.target === clearBtn || clearBtn.contains(e.target)) return; toggleBody(); });
