@@ -1171,55 +1171,6 @@ body.drag-active .section-block.empty .task-list {
 /* any chip carrying a leading icon lays out icon + text inline */
 .chip:has(.icon) { display: inline-flex; align-items: center; gap: 5px; }
 
-/* row overflow "…": hover-reveal on desktop, always shown on touch. Opens the
-   one-item Delete menu (right-click and long-press open it too). */
-.row-overflow {
-  flex: none;
-  align-self: center;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  min-height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--ink-faint);
-  line-height: 1;
-  cursor: pointer;
-}
-.row-overflow:hover { background: var(--chip-bg); color: var(--ink); }
-@media (hover: hover) and (pointer: fine) {
-  .task-row:hover .row-overflow, .task-row:focus-within .row-overflow { display: inline-flex; }
-}
-@media (pointer: coarse) { .row-overflow { display: inline-flex; } }
-
-/* floating one-item overflow menu (Delete — danger toned) */
-.row-menu {
-  position: fixed;
-  z-index: 50;
-  min-width: 160px;
-  padding: 4px;
-  background: var(--pane);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-}
-.row-menu-item {
-  display: block;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.row-menu-item:hover { background: var(--hover); }
-.row-menu-item.danger { color: var(--danger); }
-.row-menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
 /* drawer delete: danger-toned, pushed apart from the outlined (reversible) Archive */
 .detail-delete { margin-left: auto; }
