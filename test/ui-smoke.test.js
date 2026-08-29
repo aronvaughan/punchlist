@@ -129,13 +129,12 @@ test('assignee pill: list view is icon-only per-agent (claude/hermes/person), na
   );
 });
 
-test('drawer: tag editor relocated to the bottom (single edit surface)', async () => {
+test('drawer: tags field lives in the top meta-row with the other icon fields', async () => {
   const { get } = makeApp();
   const detail = await (await get('/detail.js')).text();
-  // tags no longer in the top field group; appended just before the actions row
-  assert.doesNotMatch(detail, /assigneeEditor\(\), templateEditor\(\), tagsEditor\(\)/);
-  assert.match(detail, /assigned tags \+ editor at the BOTTOM/);
-  assert.match(detail, /body\.append\(tagsEditor\(\)\);\n\s*body\.append\(actions\(\)\)/);
+  // tags is part of the horizontal meta-row cluster (top), not a bottom block
+  assert.match(detail, /metaRow\.append\([\s\S]{0,160}tagsEditor\(\)\)/);
+  assert.doesNotMatch(detail, /body\.append\(tagsEditor\(\)\)/);
 });
 
 test('status markers: themed glyphs for agent in-flight states', async () => {

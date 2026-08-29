@@ -107,7 +107,7 @@ function renderDrawer() {
   // space). Attachments joins in view mode (can't attach before the task exists).
   const metaRow = el('div', 'meta-row');
   metaRow.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(),
-    templateEditor(), recurEditor());
+    templateEditor(), recurEditor(), tagsEditor());
   if (!createMode) metaRow.append(attachmentsEditor(task));
   body.append(metaRow);
   // step edits in the drawer write through to the live task; onChange reloads so
@@ -116,15 +116,11 @@ function renderDrawer() {
   body.append(notesEditor(),
     createMode ? draftStepsEditor() : stepsEditorFor(task, { onChange: () => reload() }));
   if (createMode) {
-    // tags near the bottom (rows are display-only; editing happens here)
-    body.append(tagsEditor());
     body.append(createActions());
   } else {
     const rep = reportView();
     if (rep) body.append(rep);
     body.append(timelineSection(task));
-    // assigned tags + editor at the BOTTOM of the drawer (single edit surface)
-    body.append(tagsEditor());
     body.append(actions());
     const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
     if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
@@ -1089,7 +1085,7 @@ function tagsEditor() {
   pill.addEventListener('click', open);
   render();
   wrap.append(btn, pill);
-  return wrap;
+  return labeled('Tags', wrap);
 }
 
 function notesEditor() {
