@@ -2066,7 +2066,12 @@ wa-button[variant="brand"]::part(base) {
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.tpl-unsaved-dot[hidden] { display: none; }
+/* The `hidden` attribute must always win. Author `display` rules (e.g.
+   .meta-icon-btn/.meta-pill are display:inline-flex) otherwise override the UA
+   [hidden]{display:none}, so a toggled-off flag icon or pill would still show
+   next to its set-state counterpart. One global guard fixes due/recur/tags and
+   any future icon↔pill toggle. */
+[hidden] { display: none !important; }
 .tpl-status { font-size: 13px; color: var(--ink-soft); text-align: right; min-height: 18px; }
 .tpl-status-ok { color: var(--accent); }
 .tpl-status-err { color: var(--danger); }

@@ -6,7 +6,7 @@ import { api, state, reload, toast, todayISO, pickWhen, currentActor,
   uploadAttachment, attachmentObjectURL, attachmentText, linkDoc, getConfig } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
-import { dueLine } from '/dates.js';
+import { dueShort, dueCountdown } from '/dates.js';
 import { tagsField, assigneeField } from '/suggest.js';
 import { openManageDialog, animateOnce, performDelete } from '/views.js';
 
@@ -179,9 +179,12 @@ function dueEditor() {
 
   const render = () => {
     if (current.due_date) {
-      const { text, urgent } = dueLine(current.due_date, todayISO());
-      const label = current.due_time ? `${text} · ${current.due_time}` : text;
-      pillOpen.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', label));
+      // compact: flag + short date · countdown (· time). Same shape as the row
+      // chip so a set deadline reads identically in the list and the drawer.
+      const { text: countdown, urgent } = dueCountdown(current.due_date, todayISO());
+      const bits = [dueShort(current.due_date), countdown];
+      if (current.due_time) bits.push(current.due_time);
+      pillOpen.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', bits.join(' · ')));
       pill.classList.toggle('urgent', urgent);
       pill.hidden = false;
       btn.hidden = true;

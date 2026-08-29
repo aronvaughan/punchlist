@@ -3,7 +3,7 @@
 import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor } from '/app.js';
 import { openDetail, openCreate } from '/detail.js';
-import { dueCountdown } from '/dates.js';
+import { dueCountdown, dueShort } from '/dates.js';
 import { expandRow } from '/inline.js';
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
@@ -829,10 +829,13 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   const titleLine = el('div', 'row-title-line');
   titleLine.append(el('span', 'title', task.title));
   if (task.due_date) {
-    // countdown chip stays on the title line (right) — a deadline reads best there
-    const { text, urgent } = dueCountdown(task.due_date, t);
-    const chip = el('span', 'chip due' + (urgent && task.status === 'active' ? ' arrived' : ''),
-      `${text}${task.due_time ? ' · ' + task.due_time : ''}`);
+    // deadline chip stays on the title line (right) — flag + short date · countdown
+    // (· time), the same compact shape the drawer pill uses.
+    const { text: countdown, urgent } = dueCountdown(task.due_date, t);
+    const bits = [dueShort(task.due_date), countdown];
+    if (task.due_time) bits.push(task.due_time);
+    const chip = el('span', 'chip due' + (urgent && task.status === 'active' ? ' arrived' : ''));
+    chip.append(icon('flag', { size: 11 }), el('span', 'pill-text', bits.join(' · ')));
     titleLine.append(chip);
   }
   main.append(titleLine);
