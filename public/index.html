@@ -151,6 +151,34 @@
     <div id="tpl-editor-mount"></div>
   </wa-dialog>
 
+  <!-- project picker: selectable rows for the non-archived projects + an Inbox
+       (none) choice; the footer "Manage…" opens the shared tree-admin dialog -->
+  <wa-dialog id="project-dialog" label="Project">
+    <div id="project-dialog-list" class="dialog-list"></div>
+    <wa-button slot="footer" id="project-dialog-manage" appearance="plain">Manage…</wa-button>
+    <wa-button slot="footer" id="project-dialog-cancel" appearance="plain">Cancel</wa-button>
+  </wa-dialog>
+
+  <!-- assignee picker: hosts the shared segmented [Me | Claude | Hermes] field
+       (+ the delegate auto-close toggle) — same component the row/drawer share -->
+  <wa-dialog id="assignee-dialog" label="Assignee">
+    <div id="assignee-dialog-mount" class="dialog-mount"></div>
+    <wa-button slot="footer" id="assignee-dialog-done" variant="brand">Done</wa-button>
+  </wa-dialog>
+
+  <!-- tags picker: hosts the shared chips + suggestion-popover field (suggest.js) -->
+  <wa-dialog id="tags-dialog" label="Tags">
+    <div id="tags-dialog-mount" class="dialog-mount"></div>
+    <wa-button slot="footer" id="tags-dialog-done" variant="brand">Done</wa-button>
+  </wa-dialog>
+
+  <!-- attachments manager: hosts the grid + Attach file + drag-drop machinery;
+       the collapsed drawer field is just the paperclip icon / count pill -->
+  <wa-dialog id="attachments-dialog" label="Attachments">
+    <div id="attachments-dialog-mount" class="dialog-mount"></div>
+    <wa-button slot="footer" id="attachments-dialog-done" variant="brand">Done</wa-button>
+  </wa-dialog>
+
   <div id="backdrop"></div>
   <div id="toasts" aria-live="assertive"></div>
 </body>
