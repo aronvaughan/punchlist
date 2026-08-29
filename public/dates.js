@@ -15,11 +15,11 @@ export function dueCountdown(dueISO, todayISO) {
   return { text: `in ${d}d`, urgent: d <= URGENT_WINDOW };
 }
 
-// compact date for chips/pills: "Aug 25" (no weekday, no year) — pairs with the
-// dueCountdown to read "Aug 25 · in 2d" on both a row and the drawer pill.
+// compact date for chips/pills: "mm/dd" straight off the ISO date (no Date
+// parsing → no timezone drift) — pairs with dueCountdown to read
+// "09/15 · in 2d" on both a row and the drawer pill.
 export function dueShort(dueISO) {
-  return new Date(`${dueISO}T00:00:00Z`).toLocaleDateString('en-US',
-    { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return dueISO.slice(5).replace('-', '/');
 }
 
 // drawer line: "Due Tue, Aug 25 — in 2 days"
