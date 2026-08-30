@@ -121,7 +121,7 @@ function renderDrawer() {
     const rep = reportView(task);
     if (rep) body.append(rep);
     body.append(timelineSection(task));
-    body.append(actions());
+    body.append(actionsFor(current, { save: (t, f) => patch(f), onDone: closeDetail }));
     const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
     if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
     body.append(el('div', 'meta-line', meta.join(' · ')));
@@ -1417,39 +1417,35 @@ function createActions() {
   return row;
 }
 
-function actions() {
+export function actionsFor(task, { save, onDone = () => {} } = {}) {
   const row = el('div', 'detail-actions');
   const primaryDoor = async (path, okMsg) => {
     try {
-      const res = await api('POST', `/tasks/${current.id}${path}`);
+      const res = await api('POST', `/tasks/${task.id}${path}`);
       if (res.spawned_id) toast('Done — next occurrence scheduled', 'success');
       else if (okMsg) toast(okMsg, 'success');
-      closeDetail();
+      onDone();
       reload();
     } catch (e) { toast(`Failed: ${e.message}`); }
   };
   const complete = document.createElement('wa-button');
   complete.setAttribute('variant', 'brand');
-  if (current.status === 'review') {
-    // review lane: the admin approves (→ done) or reopens (→ active, report kept)
+  if (task.status === 'review') {
     complete.textContent = 'Approve';
     complete.addEventListener('click', () => primaryDoor('/approve', 'Approved'));
     const reopen = document.createElement('wa-button');
     reopen.setAttribute('appearance', 'plain');
     reopen.textContent = 'Reopen';
     reopen.addEventListener('click', async () => {
-      // optional reopen comment (skippable) rides with the review→active flip;
-      // the server posts it (kind=answer) before reopening and lifts the task
-      // to the top of the agent backlog
       const reason = (prompt('Reason for reopening (optional — leave blank to skip):') || '').trim();
-      if (await patch(reason ? { status: 'active', comment: reason } : { status: 'active' })) closeDetail();
+      if (await save(task, reason ? { status: 'active', comment: reason } : { status: 'active' })) onDone();
     });
     row.append(reopen);
-  } else if (current.status === 'done') {
+  } else if (task.status === 'done') {
     complete.textContent = 'Completed';
     complete.setAttribute('disabled', '');
-  } else if (current.status === 'in_progress') {
-    complete.textContent = `In progress (${current.assignee})`;
+  } else if (task.status === 'in_progress') {
+    complete.textContent = `In progress (${task.assignee})`;
     complete.setAttribute('disabled', '');
   } else {
     complete.textContent = 'Complete';
@@ -1457,30 +1453,26 @@ function actions() {
   }
   const archive = document.createElement('wa-button');
   archive.setAttribute('appearance', 'outlined');
-  archive.textContent = current.status === 'archived' ? 'Unarchive' : 'Archive';
+  archive.textContent = task.status === 'archived' ? 'Unarchive' : 'Archive';
   archive.addEventListener('click', async () => {
-    if (current.status === 'archived') { if (await patch({ status: 'active' })) closeDetail(); return; }
-    // archiving: reuse the completion fade+collapse on the list row so the task
-    // doesn't vanish abruptly, then close + reload from server truth
-    const id = current.id;
-    const row = document.querySelector(`.task-row[data-id="${CSS.escape(id)}"]`);
-    const wait = (reducedMotion() || !row) ? Promise.resolve()
-      : new Promise(r => { row.classList.add('removing'); setTimeout(r, 250); });
+    if (task.status === 'archived') { if (await save(task, { status: 'active' })) onDone(); return; }
+    const id = task.id;
+    const rowEl = document.querySelector(`.task-row[data-id="${CSS.escape(id)}"]`);
+    const wait = (reducedMotion() || !rowEl) ? Promise.resolve()
+      : new Promise(r => { rowEl.classList.add('removing'); setTimeout(r, 250); });
     try {
       const [updated] = await Promise.all([api('PATCH', `/tasks/${id}`, { status: 'archived' }), wait]);
-      current = updated;
-      closeDetail();
+      Object.assign(task, updated);
+      onDone();
       reload();
-    } catch (e) { row?.classList.remove('removing'); toast(`Archive failed: ${e.message}`); }
+    } catch (e) { rowEl?.classList.remove('removing'); toast(`Archive failed: ${e.message}`); }
   });
-  // hard delete: irreversible, admin-only server-side. Set apart from Archive
-  // (reversible) by danger styling and its own confirm ("can't be undone").
   const del = document.createElement('wa-button');
   del.setAttribute('variant', 'danger');
   del.setAttribute('appearance', 'plain');
   del.className = 'detail-delete';
   del.textContent = 'Delete';
-  del.addEventListener('click', async () => { if (await performDelete(current)) closeDetail(); });
+  del.addEventListener('click', async () => { if (await performDelete(task)) onDone(); });
   row.append(complete, archive, del);
   return row;
 }
