@@ -659,3 +659,49 @@ test('step edits write through + refresh the list (review-lane bug fix)', async 
   const css = await (await get('/tokens.css')).text();
   assert.match(css, /\.chip\.step-count\s*\{/);
 });
+
+test('waiting-on-you pencil: blocked/review rows get an explicit "open full editor" affordance', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  // pencil chip only for blocked/review, opens the full inline editor (open() ==
+  // expandRow), not just the blocked-chip's jump-to-lane or the review-chip's
+  // quick-approve popup
+  assert.match(views, /el\('button', 'chip pencil-chip'\)/);
+  const pencilIdx = views.indexOf("el('button', 'chip pencil-chip')");
+  const pencilBlock = views.slice(views.lastIndexOf('if (', pencilIdx), pencilIdx + 600);
+  assert.match(pencilBlock, /task\.status === 'blocked' \|\| task\.status === 'review'/);
+  assert.match(pencilBlock, /pencil-simple/);
+  assert.match(pencilBlock, /pencil\.addEventListener\('click', e => \{ e\.stopPropagation\(\); open\(\); \}\)/);
+  // scoped to taskRow (the compact Project/Agents row), not some other renderer
+  const taskRowBlock = views.slice(views.indexOf('function taskRow('), views.indexOf('function taskRow(') + 6000);
+  assert.match(taskRowBlock, /pencil-chip/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.chip\.pencil-chip\s*\{/);
+});
+
+test('blocked task opened from a compact row exposes the real answer control (not a "Complete" button)', async () => {
+  const { get } = makeApp();
+  const inline = await (await get('/inline.js')).text();
+  // expandRow (the full editor opened by the row click / pencil) renders the
+  // answer box for blocked tasks
+  assert.match(inline, /if \(task\.status === 'blocked'\) inner\.append\(answerCard\(task/);
+  assert.match(inline, /function answerCard\(task, onDone\)/);
+  assert.match(inline, /api\('POST', `\/tasks\/\$\{task\.id\}\/answer`, \{ answer: v \}\)/);
+  // completing the answer collapses/re-syncs this module's expanded state
+  // (not a bare reload that would leave `expanded` pointing at stale DOM)
+  assert.match(inline, /if \(task\.status === 'blocked'\) inner\.append\(answerCard\(task, \(\) => collapseInline\(\)\)\)/);
+  // the generic action bar no longer offers a misleading "Complete" for
+  // blocked tasks — it's disabled/informational instead
+  const detail = await (await get('/detail.js')).text();
+  assert.match(detail, /task\.status === 'blocked'/);
+  assert.match(detail, /complete\.textContent = 'Waiting for your answer'/);
+});
+
+test('review task opened from a compact row exposes Approve\\/Reopen (already the full editor\'s action bar)', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  const actionsBlock = detail.slice(detail.indexOf('export function actionsFor'), detail.indexOf('export function actionsFor') + 1200);
+  assert.match(actionsBlock, /task\.status === 'review'/);
+  assert.match(actionsBlock, /complete\.textContent = 'Approve'/);
+  assert.match(actionsBlock, /reopen\.textContent = 'Reopen'/);
+});

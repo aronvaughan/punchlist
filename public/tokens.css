@@ -1419,6 +1419,11 @@ body.drag-active .section-block.empty .task-list {
 }
 /* needs-input: the agent's question (accent-left like report cards) + chip */
 .chip.blocked-chip { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
+/* pencil: explicit "open the full editor" affordance on blocked/review rows in
+   the compact Project/Agents views, where the answer box / approve-reopen
+   buttons that drive the state transition aren't rendered inline. */
+.chip.pencil-chip { color: var(--ink-soft); cursor: pointer; padding: 4px; }
+.chip.pencil-chip:hover { color: var(--accent); }
 .question-card {
   margin: 0 8px 8px 42px;
   padding: 10px 12px;
