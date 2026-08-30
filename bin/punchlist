@@ -12,7 +12,7 @@
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -189,6 +189,64 @@ function genToken(argv) {
   console.log(`PUNCHLIST_TOKEN=${token}`);
 }
 
+// ---- doctor: prerequisites + config + service + health, one checklist ----
+// Cross-platform: uses the same serviceSpec() to know where the unit lives, and
+// /health for liveness. Never reads token *values* — only stats data/.env.
+async function doctor() {
+  const platform = process.platform;
+  const home = homedir();
+  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const port = 8600;
+  let hardFail = false;
+  const ok = (l, x = '') => console.log(`  ✓ ${l}${x ? `  — ${x}` : ''}`);
+  const bad = (l, x = '') => { console.log(`  ✗ ${l}${x ? `  — ${x}` : ''}`); hardFail = true; };
+  const warn = (l, x = '') => console.log(`  ⚠ ${l}${x ? `  — ${x}` : ''}`);
+  const onPath = c => spawnSync('sh', ['-c', `command -v ${c}`], { stdio: 'ignore' }).status === 0;
+
+  console.log('punchlist doctor\n\nPrerequisites:');
+  const nmaj = Number(process.versions.node.split('.')[0]);
+  nmaj >= 26 ? ok(`node ${process.versions.node}`) : bad(`node ${process.versions.node}`, 'need >= 26');
+  onPath('jq') ? ok('jq') : bad('jq', 'required by pl.sh');
+  onPath('curl') ? ok('curl') : bad('curl');
+  onPath('claude') ? ok('claude CLI') : warn('claude CLI not on PATH', 'needed for the agent sweep');
+  if (platform === 'darwin') (onPath('gtimeout') ? ok('gtimeout (coreutils)') : warn('gtimeout missing', 'sweep runs unbounded — brew install coreutils'));
+  onPath('tailscale') ? ok('tailscale') : warn('tailscale not found', 'optional — for tailnet access');
+
+  console.log('\nConfig:');
+  const envFile = join(dataDir, '.env');
+  if (existsSync(envFile)) {
+    const mode = statSync(envFile).mode & 0o777;
+    mode === 0o600 ? ok('data/.env present', 'mode 600') : warn('data/.env present', `mode ${mode.toString(8)} — should be 600`);
+  } else bad('data/.env missing', 'run: punchlist gen-token <actor>');
+
+  console.log('\nService:');
+  const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: process.execPath, home });
+  existsSync(spec.path) ? ok(`${spec.kind} unit installed`, spec.path) : warn(`${spec.kind} unit not installed`, 'run: punchlist install-service');
+  if (spec.kind === 'systemd') {
+    const r = spawnSync('systemctl', ['--user', 'is-active', 'punchlist.service'], { encoding: 'utf8' });
+    (r.stdout || '').trim() === 'active' ? ok('service active') : warn('service not active', (r.stdout || '').trim() || 'not started');
+  } else if (spec.kind === 'launchd') {
+    spawnSync('launchctl', ['list', spec.label], { stdio: 'ignore' }).status === 0 ? ok('LaunchAgent loaded') : warn('LaunchAgent not loaded');
+  }
+
+  console.log('\nHealth:');
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
+    if (r.ok) { const h = await r.json().catch(() => ({})); ok(`server up on :${port}`, `build ${h.build ?? '?'}`); }
+    else bad(`server responded HTTP ${r.status}`);
+  } catch { bad(`server not reachable on :${port}`, 'is the service running?'); }
+
+  console.log('\nAgent sweep:');
+  const cron = spawnSync('crontab', ['-l'], { encoding: 'utf8' }).stdout || '';
+  const sweepCron = /claude-queue-sweep\.sh/.test(cron);
+  const sweepLaunchd = platform === 'darwin' && spawnSync('launchctl', ['list', 'com.punchlist.sweep'], { stdio: 'ignore' }).status === 0;
+  (sweepCron || sweepLaunchd) ? ok('sweep scheduled', sweepCron ? 'crontab' : 'launchd') : warn('sweep not scheduled', 'add the cron (directives.json) or a launchd timer');
+
+  console.log('');
+  if (hardFail) { console.error('doctor: one or more REQUIRED checks failed'); process.exitCode = 1; }
+  else console.log('doctor: OK');
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 switch (cmd) {
@@ -210,6 +268,10 @@ switch (cmd) {
 
   case 'gen-token':
     genToken(rest);
+    break;
+
+  case 'doctor':
+    await doctor();
     break;
 
   case 'snapshot':
@@ -240,7 +302,7 @@ Now give each agent its token (this tool never edits your env files):
 
   default:
     console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
-      'install-service [--print] [--no-start] | gen-token <actor> | ' +
+      'install-service [--print] [--no-start] | gen-token <actor> | doctor | ' +
       'install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);
 }
