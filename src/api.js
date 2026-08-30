@@ -474,7 +474,17 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return body;
   }
 
-  app.get('/api/v1/health', c => c.json({ ok: true, version: VERSION }));
+  // `build` = newest mtime across the served front-end files. It changes on every
+  // deploy (any edit to a public asset), so an open tab can poll /health, compare
+  // build, and offer a reload when a new version has shipped.
+  const buildStamp = () => {
+    let m = 0;
+    for (const f of ['index.html', 'app.js', 'views.js', 'detail.js', 'inline.js', 'suggest.js', 'dates.js', 'md.js', 'icons.js', 'tokens.css', 'theme-boot.js']) {
+      try { m = Math.max(m, Math.round(statSync(join(PUBLIC_DIR, f)).mtimeMs)); } catch { /* missing file: skip */ }
+    }
+    return m;
+  };
+  app.get('/api/v1/health', c => c.json({ ok: true, version: VERSION, build: buildStamp() }));
 
   // ---- tasks ----
   // due_soon window: ?window= days ahead (integer 1..365, default 30)
