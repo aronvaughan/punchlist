@@ -1,6 +1,7 @@
 # Local-agent projects + instance identity — design
 
-**Status:** approved design (2026-08-30), pending implementation
+**Status:** implemented (2026-08-30) — steps 0–4 landed; see git log. Follow-ups
+(template linking, central dashboard, auto-inject on every session) remain.
 **Task:** punchlist#01M19ZFZHBNJPPQNXJ8GT92ESK ("context notepad field on projects" — expanded)
 
 ## Goal
