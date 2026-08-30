@@ -7,8 +7,7 @@
 export const APP_NAME = 'Punchlist';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
 import { renderRail, renderMain, openNewTask, animateOnce } from '/views.js';
-import { closeDetail } from '/detail.js';
-import { collapseInline } from '/inline.js';
+import { collapseInline, cancelCreate } from '/inline.js';
 
 setBasePath('/vendor/webawesome');
 
@@ -318,7 +317,8 @@ function onRoute() {
     animateOnce.list = true; // entering a view: rows slide in once
   }
   closeNav();
-  closeDetail();
+  cancelCreate();
+  collapseInline({ sync: false }); // reload() below re-renders the list fresh
   reload();
 }
 
@@ -420,9 +420,8 @@ search.addEventListener('input', () => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (collapseInline()) return; // inline editor first, then nav/drawer
+    if (collapseInline() || cancelCreate()) return; // inline editor / create card first
     closeNav();
-    closeDetail();
     return;
   }
   const t = e.target;

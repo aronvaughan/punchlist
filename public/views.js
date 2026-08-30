@@ -2,7 +2,6 @@
 // textContent (titles/tags/names) — never innerHTML.
 import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor } from '/app.js';
-import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { expandRow, createInline } from '/inline.js';
 import { mdToHtml } from '/md.js';
@@ -879,13 +878,13 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     subline.append(chip);
   }
   // tags are DISPLAY-ONLY on the row now: a single tag icon + count when the
-  // task has any. Tapping it opens the drawer, where tags are edited (bottom).
+  // task has any. Tapping it expands the row inline, where tags are edited.
   const tagCount = task.tags?.length ?? 0;
   if (tagCount > 0) {
     const ind = iconPill('tag', String(tagCount), { className: 'tags-indicator', button: true });
-    ind.title = `${tagCount} tag${tagCount === 1 ? '' : 's'}: ${task.tags.join(', ')} — edit in the drawer`;
-    ind.setAttribute('aria-label', `${tagCount} tag${tagCount === 1 ? '' : 's'} (${task.tags.join(', ')}) — open to edit`);
-    ind.addEventListener('click', e => { e.stopPropagation(); openDetail(task); });
+    ind.title = `${tagCount} tag${tagCount === 1 ? '' : 's'}: ${task.tags.join(', ')} — expand to edit`;
+    ind.setAttribute('aria-label', `${tagCount} tag${tagCount === 1 ? '' : 's'} (${task.tags.join(', ')}) — expand to edit`);
+    ind.addEventListener('click', e => { e.stopPropagation(); expandRow(task, row); });
     subline.append(ind);
   }
   main.append(subline);
@@ -896,14 +895,15 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
   // list has no per-row overflow/right-click/long-press delete affordance.
 
   row.tabIndex = 0;
-  // Things-style: active rows expand in place; done/archived open the drawer
+  // Things-style: every row (active OR done/archived) expands in place. The
+  // inline card's actions adapt to status (Complete / Completed / Unarchive).
   const open = () => {
     // remember which section the user last worked in per project — the new-task
     // button seeds its when-prefill from it
     if (state.route.view === 'project' && state.route.projectId) {
       lastSection.set(state.route.projectId, sectionOf(task, todayISO()));
     }
-    return task.status === 'active' ? expandRow(task, row) : openDetail(task);
+    return expandRow(task, row);
   };
   row.addEventListener('click', e => {
     if (row.classList.contains('expanded')) return; // clicks inside the editor

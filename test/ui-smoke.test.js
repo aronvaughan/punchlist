@@ -104,9 +104,9 @@ test('task rows: title line is title+due only; everything else on an icon-pilled
   assert.match(views, /titleLine\.append\(el\('span', 'title', task\.title\)\)/);
   assert.match(views, /subline\.append\(iconPill\('project'/);
   assert.match(views, /subline\.append\(assigneePill\(who/); // assignee glyph on every row (incl. self)
-  // tags are display-only on the row: a tag-count indicator that opens the drawer
+  // tags are display-only on the row: a tag-count indicator that expands the row inline
   assert.match(views, /tags-indicator/);
-  assert.match(views, /ind\.addEventListener\('click', e => \{ e\.stopPropagation\(\); openDetail\(task\); \}\)/);
+  assert.match(views, /ind\.addEventListener\('click', e => \{ e\.stopPropagation\(\); expandRow\(task, row\); \}\)/);
   assert.doesNotMatch(views, /toggleRowTags/); // inline row tag-editing is gone
 });
 
