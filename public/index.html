@@ -48,12 +48,8 @@
     </main>
   </div>
 
-  <wa-drawer id="detail" label="Task" placement="end">
-    <div id="detail-body"></div>
-  </wa-drawer>
-
   <!-- rendered-document viewer: fetches the raw text and renders it client-side
-       via md.js (XSS-safe). Nested over the detail drawer. -->
+       via md.js (XSS-safe). Opened from a task's attachments. -->
   <wa-drawer id="doc-viewer" label="Document" placement="end">
     <div id="doc-viewer-body" class="doc-viewer-body"></div>
   </wa-drawer>

@@ -129,12 +129,14 @@ test('assignee pill: list view is icon-only per-agent (claude/hermes/person), na
   );
 });
 
-test('drawer: tags field lives in the top meta-row with the other icon fields', async () => {
+test('inline card: tags lives in the horizontal controls cluster with the other icon fields', async () => {
   const { get } = makeApp();
+  const inline = await (await get('/inline.js')).text();
+  // tags is part of the horizontal controls cluster, not a separate bottom block
+  assert.match(inline, /wrap\.append\([\s\S]{0,220}tagsControl\(task, saveFn\)/);
+  // the drawer's tags editor is gone entirely
   const detail = await (await get('/detail.js')).text();
-  // tags is part of the horizontal meta-row cluster (top), not a bottom block
-  assert.match(detail, /metaRow\.append\([\s\S]{0,160}tagsEditor\(\)\)/);
-  assert.doesNotMatch(detail, /body\.append\(tagsEditor\(\)\)/);
+  assert.doesNotMatch(detail, /function tagsEditor/);
 });
 
 test('status markers: themed glyphs for agent in-flight states', async () => {
@@ -253,15 +255,16 @@ test('activity thread: drawer Timeline + composer, md-safe rendering (Part A)', 
   assert.match(views, /task\.comment_count > 0/);
 });
 
-test('template picker: drawer icon→pill→#template-dialog from GET /templates', async () => {
+test('template picker: inline icon→pill→#template-dialog from GET /templates', async () => {
   const { get } = makeApp();
   const detail = await (await get('/detail.js')).text();
-  assert.match(detail, /function templateEditor/);
   assert.match(detail, /api\('GET', '\/templates'\)/);        // loadTemplates still fetches the list
-  assert.match(detail, /export function openTemplatePicker/);
+  assert.match(detail, /export function openTemplatePicker/); // shared picker (the inline card uses it)
   assert.match(detail, /save\(\{ template: value \}\)/);       // picking a row applies the template
-  assert.match(detail, /icon\('book'/);                        // book glyph for the field
-  assert.match(detail, /templateEditor\(\)/);                  // wired into the drawer
+  const inline = await (await get('/inline.js')).text();
+  assert.match(inline, /function templateControl/);            // book icon→pill field on the inline card
+  assert.match(inline, /icon\('book'/);
+  assert.match(inline, /openTemplatePicker\(task, f => saveFn\(task, f\), paint\)/);
   const html = await (await get('/')).text();
   assert.match(html, /id="template-dialog"/);
   assert.match(html, /id="template-dialog-mount"/);
@@ -301,9 +304,9 @@ test('duplicate-create guard: client debounces both add flows', async () => {
   const app = await (await get('/app.js')).text();
   assert.match(app, /quickAdding/);         // quick-add in-flight flag
   assert.match(app, /quickadd\.disabled = true/);
-  const detail = await (await get('/detail.js')).text();
-  assert.match(detail, /if \(creating\) return/); // drawer Create re-entrancy guard
-  assert.match(detail, /setAttribute\('loading', ''\)/);
+  const inline = await (await get('/inline.js')).text();
+  assert.match(inline, /if \(creating\) return/); // inline Create re-entrancy guard
+  assert.match(inline, /create\.setAttribute\('loading', ''\)/);
 });
 
 test('rail Tags header: pencil opens new-tag dialog, old bottom "+ New tag" row is retired', async () => {
@@ -373,27 +376,28 @@ test('grip: two solid rounded vertical bars (not the old dotted ⋮⋮)', async 
   assert.doesNotMatch(css, /\.grip \{[^}]*radial-gradient/);
 });
 
-test('drawer: deadline/repeat/tags collapse to a bare icon until set (Things-style compact affordance)', async () => {
+test('inline card: deadline/repeat/tags collapse to a bare icon until set (Things-style compact affordance)', async () => {
   const { get } = makeApp();
-  const detail = await (await get('/detail.js')).text();
+  const inline = await (await get('/inline.js')).text();
   // deadline (icon→value pattern): icon-only button when unset, a compact pill
   // of the value when set. BOTH open the shared #due-dialog (Date + Time widgets
   // + a Clear); clearing lives in the dialog, not an inline x, and there are no
   // always-visible date/time boxes.
-  assert.match(detail, /function dueEditor\(\)/);
-  assert.match(detail, /icon\('flag', \{ size: 15 \}\)/);
-  assert.match(detail, /class="?meta-icon-btn"?|'meta-icon-btn'/);
-  assert.match(detail, /pill\.replaceChildren\(icon\('flag', \{ size: 13 \}\)/);
-  assert.match(detail, /getElementById\('due-dialog'\)/);            // opens the dialog
-  assert.match(detail, /getElementById\('due-dialog-clear'\)/);      // clear is in the dialog
-  assert.doesNotMatch(detail, /fields\.append\(labeled\('Deadline'/); // old inline boxes removed
-  // repeat: bare-icon -> pill -> #recur-dialog (freq/params/anchor stay open across picks)
+  assert.match(inline, /function dueControl\(task, saveFn = save\)/);
+  assert.match(inline, /icon\('flag', \{ size: 15 \}\)/);
+  assert.match(inline, /'meta-icon-btn'/);
+  assert.match(inline, /pill\.replaceChildren\(icon\('flag', \{ size: 13 \}\)/);
+  assert.match(inline, /getElementById\('due-dialog'\)/);            // opens the dialog
+  assert.match(inline, /getElementById\('due-dialog-clear'\)/);      // clear is in the dialog
+  // tags: bare tag-icon until the first tag exists (inline tagsControl)
+  assert.match(inline, /function tagsControl\(task, saveFn = save\)/);
+  assert.match(inline, /Add tags/);
+  // repeat: bare-icon -> pill -> #recur-dialog stays a shared editor in detail.js
+  // (freq/params/anchor stay open across picks)
+  const detail = await (await get('/detail.js')).text();
   assert.match(detail, /icon\('arrow-counter-clockwise', \{ size: 15 \}\)/);
   assert.match(detail, /getElementById\('recur-dialog'\)/);
   assert.match(detail, /getElementById\('recur-dialog-clear'\)/);
-  // tags: bare tag-icon until the first tag exists, then the shared chips field shows
-  assert.match(detail, /Add tags/);
-  assert.match(detail, /const has = Array\.isArray\(current\.tags\) && current\.tags\.length > 0;/);
   const css = await (await get('/tokens.css')).text();
   assert.match(css, /\.meta-icon-btn\s*\{/);
   assert.match(css, /\.meta-pill\s*\{/);
@@ -416,8 +420,9 @@ test('icon→pill→dialog pattern extended to project/assignee/tags/attachments
   assert.match(html, /id="attachments-dialog-mount"/);    // hosts the grid + upload machinery
 
   const detail = await (await get('/detail.js')).text();
-  // project: folder icon when unset, folder+name pill when set, opens the picker
-  assert.match(detail, /function projectEditor/);
+  // project: shared picker (folder icon when unset, folder+name pill when set) —
+  // the drawer's projectEditor field is gone; the inline projectControl uses it
+  assert.doesNotMatch(detail, /function projectEditor/);
   assert.match(detail, /export function openProjectPicker/);
   assert.match(detail, /getElementById\('project-dialog'\)/);
   assert.match(detail, /openManageDialog\(\)/);            // Manage… still reachable
@@ -484,8 +489,9 @@ test('step edits write through + refresh the list (review-lane bug fix)', async 
   assert.match(detail, /task\.steps\.push\(step\)/);       // add writes through
   assert.match(detail, /task\.steps\.splice\(i, 1\)/);     // delete writes through
   assert.match(detail, /step\.done = done \? 1 : 0/);      // toggle writes through
-  // the drawer passes a background reload so the list row + review card refresh
-  assert.match(detail, /stepsEditorFor\(task, \{ onChange: \(\) => reload\(\) \}\)/);
+  // the inline card composes the shared step editor (its collapse re-syncs the list)
+  const inline = await (await get('/inline.js')).text();
+  assert.match(inline, /stepsEditorFor\(task\)/);
   // the row carries a step-progress indicator that reflects the write-through
   const views = await (await get('/views.js')).text();
   assert.match(views, /chip step-count/);
