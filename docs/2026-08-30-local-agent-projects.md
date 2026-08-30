@@ -18,6 +18,77 @@ therefore inherently machine-local — no cross-machine sync. "Machine scope" is
 just "this instance." A person may run several instances (e.g. two work Macs +
 the Linux box), each with its own name, projects, and queue.
 
+## Data governance & isolation (foundational — read first)
+
+**Principle: private by default; publish deliberately.** Two planes:
+
+- **Public / open-source-safe** — the ONLY plane that leaves a machine: punchlist
+  code, the templates/workflows we ship (`packs/`), the global pl skills + KB that
+  ship with punchlist. Generic, with **no client *or personal* specifics**. When
+  punchlist is open-sourced, only this plane is exposed.
+- **Private (the default for everything else):** an instance's task data, client
+  codebases, **and Aron's own personal work.** Personal work follows the SAME
+  isolation rules as client work — open-sourcing pl would leak it too. Private
+  content never enters the public plane.
+
+Classification is therefore binary and default-private: an artifact is either
+**generic → open-source-safe (global)** or **private (client OR personal) → local,
+isolation applies.**
+
+### Artifact homes (global vs `data/`)
+
+| Kind | Global (shipped, tracked, publishable) | Instance-local (private, under `data/`) |
+|---|---|---|
+| Templates | `punchlist-templates/**/packs/` (+ pl-shipped) | `data/templates/` |
+| Skills | pl-shipped + global `~/.claude/skills/**` (generic only) | `data/skills/` |
+| KB articles | pl-shipped KB | `data/kb/` |
+| Task data | — (never global) | `data/` (SQLite) |
+
+`data/` is already gitignored from the pl repo, so everything private sits under
+one boundary. Instance skills under `data/skills/` are surfaced to the local
+Claude via a known path/symlink (e.g. a gitignored `~/.claude/skills-local` →
+`data/skills`) so agents can use them without them entering tracked
+`~/.claude/skills/`.
+
+**Gap to close:** templates `authored/` is currently *tracked* — on an isolated
+instance, locally-authored templates must live in `data/templates/`, not the
+shared repo.
+
+### Instance data persistence (the private plane needs a safe home)
+
+`data/` holds private IP and must be durable **without leaking**. pl gains a
+per-instance **backup config**:
+
+- **`backup_mode`**: `repo` | `snapshot` | `both`
+- **`repo`** — commit a *scrubbed* dump (tasks/projects/context +
+  `data/{skills,templates,kb}`; **never `.env`/tokens/secrets**) to a **private,
+  safe-to-push repo** (configurable path/remote + `gh` login). This is "the data
+  dir optionally committed to a repo safe to push to."
+- **`snapshot`** — the existing nightly WAL-safe `scripts/db-snapshot.sh` +
+  `nightly-restic-backup.sh` (the cron you remembered).
+- **`both`** — repo for portability/history + snapshot for disaster recovery.
+
+Secrets are ALWAYS excluded from any pushable backup.
+
+### Making agents comply
+
+`data_isolation` (default **ON**) drives the sweep directive:
+- Default every new artifact to `data/` (private).
+- Write to a global/tracked location ONLY when the content is generic and
+  open-source-safe — and even then via a task/local-commit the human reviews
+  (push = ask).
+- Client code → local commits to its own `working_dir` repo.
+- Routing is **structural**: tracked path = publishable, `data/` = private; the
+  agent is handed both paths and the rule.
+
+### Governance audit (compliance check — do before relying on this)
+
+Evaluate existing on-disk artifacts (skills, templates, KB, notes) and classify
+each: keep in the **global/open-source** plane, or move to **private** (`data/`,
+isolation applies — client OR personal). Verify nothing private currently sits in
+a to-be-published location, and that we comply going forward. Tracked as its own
+audit task(s).
+
 ## Core primitives
 
 ### 1. Project → working directory  (the primitive that unlocks everything)
@@ -66,7 +137,9 @@ small **config** surface:
   ```sql
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '');
   ```
-  Keys used now: `instance_name`, `instance_context`. Seed both to `''`.
+  Keys used now: `instance_name`, `instance_context`, `data_isolation` (default
+  `'1'` = on), `backup_mode` (`repo|snapshot|both`, default `snapshot`),
+  `backup_repo` (path/remote, default `''`). Seed strings to `''` / defaults above.
 
 ## API
 
@@ -139,12 +212,19 @@ commit-local only; screen every task; block rather than guess).
 
 ## Build order
 
+0. **Governance foundation** *(bumped ahead — everything else assumes it):*
+   settings store + `data_isolation` flag; create the `data/{skills,templates,kb}`
+   private dirs + the `~/.claude/skills-local → data/skills` surface; the sweep
+   directive that routes artifacts (private-by-default); and the **audit** pass to
+   classify existing on-disk artifacts (global vs private) and verify compliance.
 1. **`projects.working_dir`** — migration + API + project-view UI + sweep `cd` +
    inject project context. *(core)*
-2. **Instance identity** — settings store + `/instance` endpoints + footer name +
-   Instance dialog (name + context) + sweep injects instance context.
-3. **Install wiring** — `setup.sh` runs `install -t claude` + `install-skills`
-   (punchlist + plt); add the `CLAUDE.base.md` punchlist stanza.
+2. **Instance identity** — `/instance` endpoints (name, context, isolation) +
+   footer name + Instance dialog + sweep injects instance context.
+3. **Instance data persistence** — `backup_mode`/`backup_repo`; a scrubbed dump
+   command (never secrets) + wire `repo`/`snapshot`/`both` to the existing crons.
+4. **Install wiring** — `setup.sh` runs `install -t claude` + `install-skills`
+   (punchlist + plt); add the `CLAUDE.base.md` punchlist + two-planes stanza.
 
 ## Out of scope (follow-ups)
 
