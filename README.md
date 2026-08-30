@@ -18,6 +18,36 @@ token, so you always know who put what on the list.
 - Ships skills for Claude Code and Hermes, all backed by one canonical
   `pl.sh` CLI (`skills/shared/pl.sh`).
 
+## Basic walkthrough
+
+The three screenshots below are one continuous flow against a fresh local
+instance: capture a task for yourself, delegate one to an agent, and see
+both land where they belong.
+
+1. **Capture.** Press `n`, type a task with quick-add tokens, hit enter. Here
+   `Draft Q3 roadmap notes #planning ^today` lands in Today, and
+   `Summarize last week's server logs #ops >hermes !friday` is delegated to
+   `hermes` with a deadline — deadlines you delegate still surface in your
+   Today/Due Soon, they just can't clutter Upcoming or Inbox.
+
+   ![Today view with a planned task and a delegated deadline](docs/screenshots/flow-01-today.png)
+
+2. **Delegate.** The delegated task shows up on the **Agents** board under
+   its assignee's backlog — this is the queue an agent's `pl.sh queue` reads
+   from.
+
+   ![Agents board showing the delegated task in backlog](docs/screenshots/flow-02-agents.png)
+
+3. **Edit inline.** Click any row (here, the task you kept for yourself) and
+   it expands in place into title/notes/tags/dates — no drawer, no modal.
+
+   ![Task row expanded into the inline editor](docs/screenshots/flow-03-inline-editor.png)
+
+From here the delegated task's lifecycle is: agent claims it off the queue →
+works it → finishes with a written report → it lands in **Review** for you
+to approve into the logbook. See "Delegate to an AI agent" and "Stay in
+control" below for that loop in detail.
+
 ## Use cases
 
 ### Plan your day
@@ -170,14 +200,17 @@ directory and **commits** it locally — never pushes. See
 
 ### Make it yours
 
-Seventeen themes — light and dark families, grouped and previewed in the
-picker. Keyboard throughout: `n` focuses quick-add, `Shift+N` opens the
-full new-task form, `/` jumps to search, `Esc` backs out. The same page
-works on a phone: the rail collapses to tabs and drag-and-drop still works
-by touch.
+Thirty themes (plus "System", which follows the OS) — 15 light and 15 dark
+families, grouped and previewed in the picker (`public/tokens.css`,
+`THEME_GROUPS` in `public/app.js`). Keyboard throughout: `n` focuses
+quick-add, `Shift+N` opens the full new-task form, `/` jumps to search,
+`Esc` backs out. The same page works on a phone: the rail collapses to
+tabs and drag-and-drop still works by touch.
 
-![Theme picker](docs/screenshots/theme-picker.png)
-![Spruce theme](docs/screenshots/theme-spruce.png)
+![Theme picker](docs/screenshots/theme-picker-full.png)
+
+See the full [theme gallery](#theme-gallery) below for a screenshot of
+every theme.
 
 ## Quickstart
 
@@ -253,6 +286,122 @@ as native tools in every MCP-speaking client — pick per agent, they coexist.
 Design records live in [`docs/`](docs/) — product analysis, PRD,
 architecture, module design (the API contract), the delegation design, the
 agent security design, and the image-attachments design.
+
+## Theme gallery
+
+Every theme, captured from the Today view. Pick one from the theme picker
+(nav rail → **Theme**) or leave it on **System** to follow the OS.
+
+### Light
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-light.png" width="260"><br><sub>Light</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-paper.png" width="260"><br><sub>Paper</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-slate.png" width="260"><br><sub>Slate</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-rose.png" width="260"><br><sub>Rose</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-solar.png" width="260"><br><sub>Solar</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-mint.png" width="260"><br><sub>Mint</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-lilac.png" width="260"><br><sub>Lilac</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-latte.png" width="260"><br><sub>Latte</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-azure.png" width="260"><br><sub>Azure</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-glass-light.png" width="260"><br><sub>Glass Light</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-conifer.png" width="260"><br><sub>Conifer</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-clay.png" width="260"><br><sub>Clay</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-coral.png" width="260"><br><sub>Coral</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-mustard.png" width="260"><br><sub>Mustard</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-fog.png" width="260"><br><sub>Fog</sub></td>
+  </tr>
+</table>
+
+### Dark
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-dark.png" width="260"><br><sub>Dark</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-spruce.png" width="260"><br><sub>Spruce</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-midnight.png" width="260"><br><sub>Midnight</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-ember.png" width="260"><br><sub>Ember</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-nord.png" width="260"><br><sub>Nord</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-grape.png" width="260"><br><sub>Grape</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-ocean.png" width="260"><br><sub>Ocean</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-terminal.png" width="260"><br><sub>Terminal</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-cobalt.png" width="260"><br><sub>Cobalt</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-glass-dark.png" width="260"><br><sub>Glass Dark</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-synthwave.png" width="260"><br><sub>Synthwave</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-maroon.png" width="260"><br><sub>Maroon</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-plum.png" width="260"><br><sub>Plum</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-jade.png" width="260"><br><sub>Jade</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/themes/theme-charcoal.png" width="260"><br><sub>Charcoal</sub></td>
+  </tr>
+</table>
+
+## Publishing punchlist publicly / as an npm package
+
+This repo is currently private and unpublished — the checklist below is
+**advice for the owner to execute manually**; nothing here has been run
+automatically as part of writing these docs. It has not been decided that
+punchlist should be published, so no repository visibility was changed and
+`npm publish` was not run.
+
+If you (the owner) later decide to publish, roughly in order:
+
+1. **Decide the package name.** `punchlist` is very likely already taken on
+   the public npm registry — check `npm view punchlist` first. If it's
+   taken, either pick a scoped name (`@aronvaughan/punchlist`, published
+   with `npm publish --access public` since scoped packages default to
+   private) or an unscoped alternative (`punchlist-agent`, `punchlist-cli`,
+   etc.) and update `"name"` in `package.json` accordingly.
+2. **Make the git repo public** (if you want the source visible, separate
+   from npm publishing). On GitHub: repo Settings → General → Danger Zone →
+   *Change visibility*. This is a one-way-feeling decision (secrets, past
+   commit history, and `data/.env`-shaped mistakes in old commits all
+   become visible) — audit history for accidentally committed tokens first
+   (`git log -p -- data/.env` should show nothing; the `.gitignore` already
+   excludes `data/`).
+3. **Add/confirm a `LICENSE` file** — already present ([MIT](LICENSE)) and
+   already listed in `package.json`'s `"files"`, so it will ship in the
+   published tarball.
+4. **Fill out `package.json` metadata** — `repository.url`,
+   `description`, and `keywords` are already set; consider adding
+   `"author"`, `"homepage"`, and `"bugs"` fields pointing at the GitHub
+   repo/issues page.
+5. **Sanity-check the publish contents.** `"files"` in `package.json`
+   already scopes the tarball to `src`, `migrations`, `public`, `skills`,
+   `scripts`, `bin`, `README.md`, `LICENSE` — run `npm pack --dry-run`
+   locally to see exactly what would ship, and confirm no `data/`,
+   `.env`, or local secrets are included.
+6. **Bump the version** from `0.1.0` to whatever first-publish version you
+   want (npm won't let you reuse a version number once published).
+7. **Run the test suite** (`npm test`) and a fresh `npm ci` in a scratch
+   clone to make sure the package installs and runs cleanly outside your
+   dev environment.
+8. **Publish.** `npm login`, then `npm publish` (add `--access public` if
+   using a scoped name). This step — like making the repo public — is a
+   deliberate, one-way action for the owner to take; it is not something
+   any agent should run on your behalf.
+9. **After publishing**, double check `npm view <name>` shows what you
+   expect, and that the `bin.punchlist` entry actually works via
+   `npx <name>` in a clean environment.
+
+None of the above was executed by this task — no visibility was changed,
+nothing was published, and no `package.json` version was bumped.
 
 ## License
 
