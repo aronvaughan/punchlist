@@ -1474,12 +1474,32 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   // ---- tags ----
+  // tags gain the same "context notepad" projects have (migration 015):
+  // tags.notes (a readme agents read for background on everything that tag
+  // touches) + tags.template (a free-string pointer to a punchlist-templates
+  // template, mirroring projects.template / migration 012). No actor
+  // restriction on writing notes/template — same as project PATCH — only
+  // DELETE stays admin-only.
+  const TAG_FIELDS = new Set(['notes', 'template']);
+  function validateTagTemplate(body) {
+    if (body.template !== undefined && body.template !== null &&
+        (typeof body.template !== 'string' || body.template.length > CAPS.template)) {
+      throw new ApiError(400, `template must be a string of at most ${CAPS.template} chars, or null`);
+    }
+  }
+  function validateTagNotes(body) {
+    if (body.notes !== undefined &&
+        (typeof body.notes !== 'string' || body.notes.length > CAPS.notes)) {
+      throw new ApiError(400, `notes must be a string of at most ${CAPS.notes} chars`);
+    }
+  }
+
   app.get('/api/v1/tags', c => {
     // nav listing: every tag with its open-task count (open = the statuses the
     // tag-filtered list view shows, delegated in-flight work included).
     // Small bounded set in practice — no pagination (unlike /tasks, /projects).
     const items = db.prepare(
-      `SELECT g.id, g.name, COUNT(t.id) AS count
+      `SELECT g.id, g.name, g.notes, g.template, COUNT(t.id) AS count
        FROM tags g
        LEFT JOIN task_tags tt ON tt.tag_id = g.id
        LEFT JOIN tasks t ON t.id = tt.task_id AND t.status IN ('active', 'in_progress', 'blocked', 'review')
@@ -1491,18 +1511,42 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
 
   app.post('/api/v1/tags', async c => {
     const body = await readJson(c);
-    for (const k of Object.keys(body)) if (k !== 'name') throw new ApiError(400, `unknown field: ${k}`);
+    for (const k of Object.keys(body)) if (k !== 'name' && !TAG_FIELDS.has(k)) throw new ApiError(400, `unknown field: ${k}`);
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > CAPS.title) {
       throw new ApiError(400, 'name required (<=500 chars)');
     }
+    validateTagNotes(body);
+    validateTagTemplate(body);
     const name = body.name.trim().replace(/^#/, '');
     if (!name) throw new ApiError(400, 'name required (<=500 chars)');
     if (db.prepare('SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE').get(name)) {
       throw new ApiError(409, 'tag already exists');
     }
     const id = ulid();
-    db.prepare('INSERT INTO tags (id, name) VALUES (?, ?)').run(id, name);
-    return c.json({ id, name, count: 0 }, 201);
+    db.prepare('INSERT INTO tags (id, name, notes, template) VALUES (?, ?, ?, ?)')
+      .run(id, name, body.notes ?? '', body.template ?? null);
+    return c.json({ id, name, notes: body.notes ?? '', template: body.template ?? null, count: 0 }, 201);
+  });
+
+  // Update a tag's context notepad / template pointer. Mirrors PATCH
+  // /projects/:id (no actor restriction beyond auth — any actor may write
+  // context, same as a project's notepad).
+  app.patch('/api/v1/tags/:id', async c => {
+    const id = c.req.param('id');
+    const tag = db.prepare('SELECT * FROM tags WHERE id = ?').get(id);
+    if (!tag) throw new ApiError(404, 'tag not found');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (!TAG_FIELDS.has(k)) throw new ApiError(400, `unknown field: ${k}`);
+    validateTagNotes(body);
+    validateTagTemplate(body);
+    const merged = { ...tag, ...body };
+    db.prepare('UPDATE tags SET notes=?, template=? WHERE id=?')
+      .run(merged.notes ?? '', merged.template ?? null, id);
+    const count = db.prepare(
+      `SELECT COUNT(*) c FROM task_tags tt JOIN tasks t ON t.id = tt.task_id
+       WHERE tt.tag_id = ? AND t.status IN ('active', 'in_progress', 'blocked', 'review')`
+    ).get(id).c;
+    return c.json({ id, name: tag.name, notes: merged.notes ?? '', template: merged.template ?? null, count });
   });
 
   // admin-only: delete a tag and its task_tags rows. Tasks are untouched —

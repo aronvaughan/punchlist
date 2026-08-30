@@ -109,3 +109,43 @@ test('pl.sh finish: no warning when all steps are done (or there are none)', asy
   assert.equal(finished2.status, 0, finished2.stderr);
   assert.equal(finished2.stderr.trim(), '');
 });
+
+// tag context notepad (mirrors the project one): `pl.sh tags` lists with a
+// [context] marker, `pl.sh tag <name>` prints the readme — the same shape
+// `pl.sh project` already has. This is the CLI surface the sweep orchestrator
+// reads to assemble a subagent brief: root (instance) -> project -> tag.
+test("pl.sh tags/tag: lists with [context] marker; reads one tag's readme by name or id", async () => {
+  await pl(TOK_ARON, ['add', 'cli tag task', '--tags', 'sre,plain']);
+  const tagsBefore = (await pl(TOK_ARON, ['tags'])).stdout;
+  assert.match(tagsBefore, /#sre/);
+  assert.match(tagsBefore, /#plain/);
+  assert.doesNotMatch(tagsBefore.split('\n').find(l => l.includes('#sre')) || '', /\[context\]/);
+
+  // set context + template on #sre directly through the HTTP API, same path
+  // the UI's tag-context dialog PATCHes
+  const list = await (await fetch(`${url}/api/v1/tags`,
+    { headers: { Authorization: `Bearer ${TOK_ARON}` } })).json();
+  const sre = list.items.find(t => t.name === 'sre');
+  const patched = await fetch(`${url}/api/v1/tags/${sre.id}`, {
+    method: 'PATCH', headers: { Authorization: `Bearer ${TOK_ARON}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ notes: '# sre\nrunbooks live here', template: 'incident-checklist' }),
+  });
+  assert.equal(patched.status, 200);
+
+  const tagsAfter = (await pl(TOK_ARON, ['tags'])).stdout;
+  const sreLine = tagsAfter.split('\n').find(l => l.includes('#sre'));
+  assert.match(sreLine, /\[context\]/);
+
+  const single = (await pl(TOK_ARON, ['tag', 'sre'])).stdout;
+  assert.match(single, /# #sre/);
+  assert.match(single, /\[template: incident-checklist\]/);
+  assert.match(single, /runbooks live here/);
+
+  // resolvable by id too
+  const byId = (await pl(TOK_ARON, ['tag', sre.id])).stdout;
+  assert.match(byId, /runbooks live here/);
+
+  // unknown tag -> exit 1
+  const unknown = await pl(TOK_ARON, ['tag', 'no-such-tag']);
+  assert.notEqual(unknown.status, 0);
+});

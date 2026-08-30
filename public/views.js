@@ -1061,6 +1061,8 @@ export function renderMain() {
     sortableList(ul, { list: 'today' });
   } else if (r.view === 'tag') {
     titleEl.textContent = `#${r.tag}`;
+    const tag = state.tags.find(g => g.name.toLowerCase() === r.tag.toLowerCase());
+    if (tag) listEl.append(tagContextPanel(tag));
     listEl.append(taskList(tasks, { showProject: true }));
   } else if (r.view === 'upcoming') {
     titleEl.textContent = 'Upcoming';
@@ -1403,6 +1405,74 @@ function projectWorkingDir(project) {
   });
   wrap.append(label, val);
   return wrap;
+}
+
+// Tag "Context" notepad: same primitive as projectContextPanel, mirrored
+// 1:1 for tags (tag.notes, migration 015). A readme agents read for
+// background on everything a tag touches; injected AFTER root (instance) +
+// project context, per the tag-context design (root -> project -> tag).
+// Can also point at a punchlist-templates template (tag.template) via the
+// same openTemplatePicker + tpleditor.js AI-edit affordance projects use.
+function tagContextPanel(tag) {
+  const card = el('div', 'project-context');
+  const head = el('div', 'pc-head');
+  head.append(icon('book', { size: 14 }), el('span', 'pc-label', 'Context'));
+
+  const tplBtn = el('button', 'pc-template');
+  const paintTpl = () => {
+    tplBtn.replaceChildren(icon('file-text', { size: 13 }),
+      el('span', 'pc-template-text', tag.template || 'No template'));
+    tplBtn.title = tag.template ? `Template: ${tag.template} (change or AI-edit)` : 'Point this tag at a template';
+  };
+  paintTpl();
+  const saveTemplate = async patch => {
+    try {
+      const updated = await api('PATCH', `/tags/${tag.id}`, patch);
+      tag.template = updated.template;
+      const i = state.tags.findIndex(g => g.id === tag.id);
+      if (i >= 0) state.tags[i] = { ...state.tags[i], template: updated.template };
+      return true;
+    } catch (e) { toast(`Save failed: ${e.message}`); return false; }
+  };
+  tplBtn.addEventListener('click', () => openTemplatePicker(tag, saveTemplate, paintTpl));
+  head.append(tplBtn);
+
+  const edit = el('button', 'pc-edit');
+  edit.append(icon('pencil-simple', { size: 14 }));
+  edit.setAttribute('aria-label', 'Edit tag context');
+  edit.title = 'Edit tag context';
+  head.append(edit);
+
+  const body = el('div', 'pc-body');
+  const paint = () => {
+    const notes = tag.notes ?? '';
+    if (notes.trim()) { body.innerHTML = mdToHtml(notes); body.classList.remove('empty'); }
+    else { body.textContent = 'No context yet — a readme agents read for an overview of this tag. Click to add.'; body.classList.add('empty'); }
+  };
+  paint();
+
+  const open = () => {
+    const dlg = document.getElementById('tag-context-dialog');
+    const ta = document.getElementById('tag-context-text');
+    ta.value = tag.notes ?? '';
+    document.getElementById('tag-context-save').onclick = async () => {
+      try {
+        const updated = await api('PATCH', `/tags/${tag.id}`, { notes: ta.value });
+        tag.notes = updated.notes;
+        const i = state.tags.findIndex(g => g.id === tag.id);
+        if (i >= 0) state.tags[i] = { ...state.tags[i], notes: updated.notes };
+        paint();
+      } catch (e) { toast(`Save failed: ${e.message}`); }
+      dlg.open = false;
+    };
+    document.getElementById('tag-context-cancel').onclick = () => { dlg.open = false; };
+    dlg.open = true;
+    setTimeout(() => ta.focus(), 0);
+  };
+  edit.addEventListener('click', open);
+  body.addEventListener('click', () => { if (body.classList.contains('empty')) open(); });
+  card.append(head, body);
+  return card;
 }
 
 function renderProject(listEl, tasks) {

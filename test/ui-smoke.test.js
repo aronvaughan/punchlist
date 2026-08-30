@@ -165,6 +165,36 @@ test('project context notepad: can point to a template via the shared AI-edit pi
   assert.match(mcp, /p\.template \? \{ template: p\.template \}/);
 });
 
+test('tag context notepad: UI panel + dialog + agent read paths (pl.sh) — mirrors project context', async () => {
+  const { get } = makeApp();
+  // UI: the tag view renders a Context panel (tag.notes) editable via a dialog
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /function tagContextPanel/);
+  assert.match(views, /if \(tag\) listEl\.append\(tagContextPanel\(tag\)\)/);
+  assert.match(views, /PATCH', `\/tags\/\$\{tag\.id\}`, \{ notes: ta\.value \}/); // saves to tag.notes
+  const html = await (await get('/')).text();
+  assert.match(html, /id="tag-context-dialog"/);
+  assert.match(html, /id="tag-context-text"/);
+  // Agent read: pl.sh marks tags with context and can print one tag's readme,
+  // AFTER instance + project context per the injection order (root -> project -> tag)
+  const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
+  assert.match(pl, /\[context\]/);              // list marker (shared with projects)
+  assert.match(pl, /^\s*tag\)/m);               // `pl.sh tag <name|id>` subcommand
+  assert.match(pl, /root -> project -> tag/);   // documents the injection order
+});
+
+test('tag context notepad: can point to a template via the shared AI-edit picker', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  // reuses the shared template picker (openTemplatePicker + tpleditor.js), not
+  // a bespoke tag-only mechanism
+  assert.match(views, /openTemplatePicker\(tag, saveTemplate, paintTpl\)/);
+  assert.match(views, /PATCH', `\/tags\/\$\{tag\.id\}`, patch\)/);
+  // Agent read: pl.sh surfaces the template pointer alongside context
+  const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
+  assert.match(pl, /\[template: /);
+});
+
 test('instance identity: footer name link + Instance dialog + PATCH /instance', async () => {
   const { get } = makeApp();
   const app = await (await get('/app.js')).text();
