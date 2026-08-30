@@ -3,7 +3,7 @@
 // no full re-render while editing); collapse (Esc / outside / another row)
 // re-syncs from the server. The pencil opens the full drawer.
 import { api, state, reload, toast, todayISO, currentActor } from '/app.js';
-import { openDetail, stepsEditorFor, openWhenPicker, whenLabel,
+import { stepsEditorFor, openWhenPicker, whenLabel,
   openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel,
   openProjectPicker, projectLabel, openTemplatePicker, attachmentsEditor,
   reportView, timelineSection, recurEditor, actionsFor } from '/detail.js';
@@ -59,7 +59,7 @@ export function expandRow(task, row) {
   row.classList.add('expanded');
   row.replaceChildren();
 
-  // header: title input + pencil (opens the full drawer)
+  // header: title input (the inline card IS the full editor now — no drawer)
   const head = el('div', 'inline-head');
   const title = el('input', 'inline-title');
   title.type = 'text';
@@ -69,15 +69,7 @@ export function expandRow(task, row) {
     if (!v) { title.value = task.title; return; }
     if (await save(task, { title: v }) && titleSpan) titleSpan.textContent = v;
   });
-  const pencil = el('button', 'inline-pencil');
-  pencil.append(icon('pencil-simple', { size: 16 }));
-  pencil.setAttribute('aria-label', 'Open full details');
-  pencil.addEventListener('click', e => {
-    e.stopPropagation();
-    collapseInline({ sync: false });
-    openDetail(task);
-  });
-  head.append(title, pencil);
+  head.append(title);
 
   // body (grid-rows 0fr -> 1fr for the height transition)
   const body = el('div', 'inline-body');
