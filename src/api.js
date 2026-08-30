@@ -1030,9 +1030,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     // today_rank, so they can't be dragged or used as reorder neighbors.
     const inTodayView = x => x.status === 'active' && x.assignee === HUMAN &&
       ((x.when_type === 'date' && x.when_date <= t) || (x.due_date != null && x.due_date <= t));
+    // Project sections mirror the _default view (views.js OPEN): in_progress/
+    // blocked/review tasks are still shown (and dragged) alongside active ones
+    // there, so the reorder scope must accept them as neighbors too — not just
+    // 'active' — or any drag touching a delegated row's neighbor 409s and the
+    // client reverts with "restoring server order" even though nothing is wrong.
+    const OPEN_STATUSES = ['active', 'in_progress', 'blocked', 'review'];
     const inScope = list === 'today'
       ? inTodayView
-      : x => x.status === 'active' && x.project_id === task.project_id &&
+      : x => OPEN_STATUSES.includes(x.status) && x.project_id === task.project_id &&
              sectionOf(x, t) === sectionOf(task, t);
 
     const scopeRows = () => {
@@ -1061,7 +1067,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
             where: `status='active' AND assignee=? AND ((when_type='date' AND when_date<=?) OR due_date<=?)`,
             args: [HUMAN, t, t] }
         : { table: 'tasks', column: 'rank',
-            where: `status='active' AND project_id IS ? AND
+            where: `status IN ('active','in_progress','blocked','review') AND project_id IS ? AND
                     (CASE WHEN when_type='date' AND when_date<=? THEN 0
                           WHEN when_type='date' THEN 1
                           WHEN when_type IS NULL THEN 2 ELSE 3 END) = ?`,
