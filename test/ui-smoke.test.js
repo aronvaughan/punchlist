@@ -32,13 +32,18 @@ test('GET / returns the app shell with CSP', async () => {
   assert.match(html, /src="\/app\.js"/);
   assert.match(html, /data-webawesome="\/vendor\/webawesome"/);
   assert.match(html, /data-view="review"/); // delegation: Review nav entry
-  assert.match(html, /data-view="needs-input"/); // needs-input lane between Review and Agents
+  assert.match(html, /data-view="needs-input"/); // Human lane (route stays #/needs-input)
   assert.match(html, /data-view="needs-input">Human</); // relabelled "Human" (route stays #/needs-input)
   assert.match(html, /data-view="agents"/); // delegation: Agents nav entry
-  // nav order: Review → Needs input → Agents
-  assert.ok(html.indexOf('data-view="review"') < html.indexOf('data-view="needs-input"') &&
-            html.indexOf('data-view="needs-input"') < html.indexOf('data-view="agents"'));
-  assert.match(html, /id="new-task-btn"/); // header + button opens the create drawer
+  // two nav sections: Tasks then Agent flows (the latter carries an (i) explainer)
+  assert.match(html, /class="rail-heading">Tasks</);
+  assert.match(html, /rail-heading rail-heading-info">\s*<span>Agent flows<\/span>/);
+  assert.match(html, /id="agentflows-info"/);
+  assert.match(html, /id="agentflows-dialog"/);
+  // Agent flows are in workflow (pipeline) order: Agents → Human → Review
+  assert.ok(html.indexOf('data-view="agents"') < html.indexOf('data-view="needs-input"') &&
+            html.indexOf('data-view="needs-input"') < html.indexOf('data-view="review"'));
+  assert.match(html, /id="new-task-btn"/); // header + button opens the inline create card
   assert.match(html, />agent/); // quick-add placeholder hints the assignee token
   // favicon is an inline data: SVG (no extra request; CSP img-src allows data:)
   assert.match(html, /rel="icon" href="data:image\/svg\+xml,/);

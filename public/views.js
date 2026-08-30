@@ -164,7 +164,7 @@ function toggleCollapsed(id) {
 export function renderRail() {
   const rootUl = document.getElementById('rail-projects');
   rootUl.replaceChildren();
-  for (const a of document.querySelectorAll('#rail-views a')) {
+  for (const a of document.querySelectorAll('.rail-views a')) {
     a.classList.toggle('active',
       state.route.view === a.dataset.view && state.route.projectId === null);
   }
@@ -172,7 +172,7 @@ export function renderRail() {
   // Agents badge = delegated (which already includes its review rows —
   // summing delegated+review would double-count); accent while reviews wait.
   const counts = state.counts ?? {};
-  for (const a of document.querySelectorAll('#rail-views a')) {
+  for (const a of document.querySelectorAll('.rail-views a')) {
     a.querySelector('.nav-count')?.remove();
     if (a.dataset.view === 'logbook') continue;
     const n = a.dataset.view === 'agents' ? (counts.delegated ?? 0)
