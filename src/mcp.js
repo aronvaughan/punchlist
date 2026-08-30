@@ -341,8 +341,9 @@ const TOOLS = [
   },
   {
     name: 'punchlist_projects',
-    description: 'List projects (id, name, archived). Pass name to create a new project ' +
-      'instead (optional parent = existing project name or id).',
+    description: 'List projects (id, name, archived, and context — a per-project readme/overview ' +
+      'the owner maintains; read it for project background before working its tasks). Pass name ' +
+      'to create a new project instead (optional parent = existing project name or id).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -358,7 +359,9 @@ const TOOLS = [
         return text({ id: p.id, name: p.name });
       }
       const { items } = await api('GET', '/projects?limit=500');
-      return text({ items: items.map(p => ({ id: p.id, name: p.name, ...(p.archived ? { archived: true } : {}) })) });
+      return text({ items: items.map(p => ({ id: p.id, name: p.name,
+        ...(p.archived ? { archived: true } : {}),
+        ...(p.notes ? { context: p.notes } : {}) })) });
     },
   },
   {

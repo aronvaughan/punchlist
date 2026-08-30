@@ -1301,7 +1301,55 @@ function renderAgents(listEl, tasks) {
   }
 }
 
+// Project "Context" notepad: a per-project readme/overview (stored in
+// project.notes) that agents read for background before working the project's
+// tasks. Rendered markdown (mdToHtml escapes all input — the safe sink); edited
+// through #project-context-dialog. Empty state doubles as an add affordance.
+function projectContextPanel(project) {
+  const card = el('div', 'project-context');
+  const head = el('div', 'pc-head');
+  head.append(icon('book', { size: 14 }), el('span', 'pc-label', 'Context'));
+  const edit = el('button', 'pc-edit');
+  edit.append(icon('pencil-simple', { size: 14 }));
+  edit.setAttribute('aria-label', 'Edit project context');
+  edit.title = 'Edit project context';
+  head.append(edit);
+
+  const body = el('div', 'pc-body');
+  const paint = () => {
+    const notes = project.notes ?? '';
+    if (notes.trim()) { body.innerHTML = mdToHtml(notes); body.classList.remove('empty'); }
+    else { body.textContent = 'No context yet — a readme agents read for an overview of this project. Click to add.'; body.classList.add('empty'); }
+  };
+  paint();
+
+  const open = () => {
+    const dlg = document.getElementById('project-context-dialog');
+    const ta = document.getElementById('project-context-text');
+    ta.value = project.notes ?? '';
+    document.getElementById('project-context-save').onclick = async () => {
+      try {
+        const updated = await api('PATCH', `/projects/${project.id}`, { notes: ta.value });
+        project.notes = updated.notes;
+        const i = state.projects.findIndex(p => p.id === project.id);
+        if (i >= 0) state.projects[i] = { ...state.projects[i], notes: updated.notes };
+        paint();
+      } catch (e) { toast(`Save failed: ${e.message}`); }
+      dlg.open = false;
+    };
+    document.getElementById('project-context-cancel').onclick = () => { dlg.open = false; };
+    dlg.open = true;
+    setTimeout(() => ta.focus(), 0);
+  };
+  edit.addEventListener('click', open);
+  body.addEventListener('click', () => { if (body.classList.contains('empty')) open(); });
+  card.append(head, body);
+  return card;
+}
+
 function renderProject(listEl, tasks) {
+  const project = state.projects.find(p => p.id === state.route.projectId);
+  if (project) listEl.append(projectContextPanel(project));
   const t = todayISO();
   const bySection = [[], [], [], []];
   for (const task of tasks) bySection[sectionOf(task, t)].push(task);

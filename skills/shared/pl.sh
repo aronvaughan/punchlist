@@ -42,7 +42,9 @@
 #   pl.sh update <id> [--title T] [--notes N] [--project P] [--due D] [--due-time HH:MM]
 #                    [--when W|someday|none] [--assignee A] [--status active|archived]
 #                    [--tags a,b] [--auto-close 0|1]
-#   pl.sh projects                     list projects
+#   pl.sh projects                     list projects ([context] = has a readme)
+#   pl.sh project <name|id>            print a project's context notepad (readme/
+#                                      overview) — read it before working its tasks
 #   pl.sh counts                       nav counts (inbox/today/review/delegated...)
 #
 # Auth: Bearer $PUNCHLIST_TOKEN. Base URL: $PUNCHLIST_URL (default 127.0.0.1:8600).
@@ -349,7 +351,20 @@ case "$cmd" in
 
   projects)
     api GET "/projects?limit=500"
-    printf '%s' "$RESP" | jq -r '.items[] | .id + "  " + .name + (if .archived == 1 then "  [archived]" else "" end)' ;;
+    printf '%s' "$RESP" | jq -r '.items[] | .id + "  " + .name
+      + (if .archived == 1 then "  [archived]" else "" end)
+      + (if (.notes // "") != "" then "  [context]" else "" end)' ;;
+
+  project)
+    # Read ONE project's context notepad (its readme/overview). Read it for
+    # background before working the project's tasks. name-or-id.
+    [ $# -eq 1 ] || { echo "usage: pl.sh project <name|id>" >&2; exit 2; }
+    pid=$(resolve_project "$1")
+    api GET "/projects?limit=500"
+    printf '%s' "$RESP" | jq -r --arg id "$pid" '
+      .items[] | select(.id == $id)
+      | "# " + .name + (if .archived == 1 then "  [archived]" else "" end) + "\n\n"
+        + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
   counts)
     api GET /counts
