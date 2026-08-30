@@ -440,8 +440,9 @@ test('icon→pill→dialog pattern extended to project/assignee/tags/attachments
 
   // inline row reuses the same shared pickers (project/attachments are drawer-only)
   const inline = await (await get('/inline.js')).text();
-  assert.match(inline, /openTagsPicker\(task, fields => save\(task, fields\), paint\)/);
-  assert.match(inline, /openAssigneePicker\(task, fields => save\(task, fields\), paint\)/);
+  // controls take a saveFn (module `save` for a live task, a local draft-save in the create card)
+  assert.match(inline, /openTagsPicker\(task, fields => saveFn\(task, fields\), paint\)/);
+  assert.match(inline, /openAssigneePicker\(task, fields => saveFn\(task, fields\), paint\)/);
   assert.match(inline, /function assigneeControl/);
 
   // picker-row styling uses theme tokens only

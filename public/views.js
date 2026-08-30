@@ -4,7 +4,7 @@ import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor } from '/app.js';
 import { openDetail, openCreate } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
-import { expandRow } from '/inline.js';
+import { expandRow, createInline } from '/inline.js';
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
 
@@ -46,7 +46,7 @@ export function openNewTask() {
   } else if (r.view === 'agents') {
     ctx = 'Agents';
   }
-  openCreate(prefill, ctx);
+  createInline(prefill, ctx);
 }
 document.getElementById('new-task-btn').addEventListener('click', openNewTask);
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
