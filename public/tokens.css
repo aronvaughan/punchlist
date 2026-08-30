@@ -1417,6 +1417,19 @@ body.drag-active .section-block.empty .task-list {
   margin: 4px 0;
 }
 .inline-head { display: flex; align-items: center; gap: 8px; }
+/* create card: a subtle "where it lands" tag beside the title, + a brand rail */
+.task-row.creating { border-color: var(--brand, var(--accent)); }
+.inline-ctx {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
 .inline-title {
   flex: 1;
   min-width: 0;
