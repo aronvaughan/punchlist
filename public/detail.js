@@ -1,27 +1,22 @@
-// detail.js — slide-over task editor (wa-drawer). Field edits PATCH sparsely;
-// the list re-renders in the background. Titles/labels via textContent only;
-// notes preview goes through md.js (escaped).
+// detail.js — shared task-field editors and pickers. Once the home of a
+// slide-over wa-drawer; that editor is gone (the inline expand card in inline.js
+// is the sole task editor now). What remains here are the reusable pieces the
+// inline card composes: the When/Project/Assignee/Template/Tags pickers, the
+// steps + recurrence + attachments editors, the timeline/report views, and the
+// status action bar (actionsFor). Titles/labels via textContent only; notes and
+// reports render through md.js (escaped).
 import Sortable from '/vendor/sortable.core.esm.js';
-import { api, state, reload, toast, todayISO, pickWhen, currentActor,
+import { api, state, reload, toast, todayISO, currentActor,
   uploadAttachment, attachmentObjectURL, attachmentText, linkDoc, getConfig } from '/app.js';
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
-import { dueShort, dueCountdown } from '/dates.js';
+import { dueShort } from '/dates.js';
 import { assigneeField } from '/suggest.js';
-import { openManageDialog, animateOnce, performDelete } from '/views.js';
+import { openManageDialog, performDelete } from '/views.js';
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const drawer = () => document.getElementById('detail');
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-
-let current = null; // the task being edited (kept fresh from PATCH responses)
-let createMode = false; // create: fields collect locally, ONE POST on Create
-let createContext = ''; // view name shown in the eyebrow
-let titleInput = null;
-
-export function isDetailOpen() { return !!drawer().open; }
-export function closeDetail() { drawer().open = false; }
 
 function el(tag, className, text) {
   const n = document.createElement(tag);
@@ -35,101 +30,6 @@ function labeled(label, child) {
   wrap.append(el('label', null, label), child);
   return wrap;
 }
-
-async function patch(fields) {
-  if (createMode) {
-    // draft: collect locally, mirroring the server's when-field coupling;
-    // nothing exists on the server until Create POSTs once
-    if (fields.when_type === 'someday' || fields.when_type === null) current.when_date = null;
-    if (fields.when_date && fields.when_type === undefined) fields.when_type = 'date';
-    Object.assign(current, fields);
-    return true;
-  }
-  try {
-    current = await api('PATCH', `/tasks/${current.id}`, fields);
-    reload(); // background: keep the list truthful
-    return true;
-  } catch (e) {
-    toast(`Save failed: ${e.message}`);
-    return false;
-  }
-}
-
-export function openDetail(task) {
-  createMode = false;
-  current = task;
-  renderDrawer();
-}
-
-// create mode: full editor, prefilled from the current view's context.
-// prefill.__openWhenPicker opens the date picker right away (Upcoming).
-export function openCreate(prefill = {}, contextName = 'Inbox') {
-  const { __openWhenPicker, ...fields } = prefill;
-  createMode = true;
-  createContext = contextName;
-  current = { title: '', notes: '', project_id: null, when_type: null, when_date: null,
-    due_date: null, due_time: null, recur: null, tags: [], steps: [],
-    assignee: currentActor(), auto_close: 0, status: 'active', report: null, ...fields };
-  renderDrawer();
-  setTimeout(() => titleInput?.focus(), 60);
-  if (__openWhenPicker) {
-    pickWhen().then(async d => {
-      if (d && createMode) { await patch({ when_type: 'date', when_date: d }); rebuild(); }
-    });
-  }
-}
-
-function renderDrawer() {
-  const task = current;
-  if (createMode) {
-    drawer().label = `New task — ${createContext}`;
-  } else {
-    // eyebrow: the task's project name (or Inbox); keeps the close X
-    const proj = state.projects.find(p => p.id === task.project_id);
-    drawer().label = proj ? proj.name : 'Inbox';
-  }
-  const body = document.getElementById('detail-body');
-  body.replaceChildren();
-
-  // title
-  const title = el('input');
-  title.type = 'text';
-  title.id = 'detail-title';
-  title.value = task.title;
-  title.placeholder = createMode ? 'Task title' : '';
-  title.addEventListener('change', () => { if (title.value.trim() || createMode) patch({ title: title.value.trim() }); });
-  title.addEventListener('keydown', e => { if (e.key === 'Enter' && createMode) submitCreate(); });
-  titleInput = title;
-  body.append(title);
-
-  // the compact icon→value fields flow in ONE horizontal wrapping row (they're
-  // just icons/pills now, so stacking them as full-width labelled rows wasted
-  // space). Attachments joins in view mode (can't attach before the task exists).
-  const metaRow = el('div', 'meta-row');
-  metaRow.append(whenEditor(), dueEditor(), projectEditor(), assigneeEditor(),
-    templateEditor(), recurEditor(current, (t, f) => patch(f), () => {}), tagsEditor());
-  if (!createMode) metaRow.append(attachmentsEditor(task));
-  body.append(metaRow);
-  // step edits in the drawer write through to the live task; onChange reloads so
-  // the list row's step indicator + review card reflect the change immediately
-  // (and a reopened drawer isn't stale) — without a full page reload.
-  body.append(notesEditor(),
-    createMode ? draftStepsEditor() : stepsEditorFor(task, { onChange: () => reload() }));
-  if (createMode) {
-    body.append(createActions());
-  } else {
-    const rep = reportView(task);
-    if (rep) body.append(rep);
-    body.append(timelineSection(task));
-    body.append(actionsFor(current, { save: (t, f) => patch(f), onDone: closeDetail }));
-    const meta = [`added by ${task.created_by}`, (task.created_at || '').slice(0, 10)];
-    if (task.claimed_at) meta.push(`claimed ${task.claimed_at.slice(0, 16).replace('T', ' ')}`);
-    body.append(el('div', 'meta-line', meta.join(' · ')));
-  }
-  drawer().open = true;
-}
-
-function rebuild() { renderDrawer(); }
 
 // ---- when: Today | date | Someday | Clear ----
 // When as ONE calendar control (icon→value pattern, like Due). Unset = a bare
@@ -157,100 +57,6 @@ export function openWhenPicker(initial, apply, render) {
   date.onchange = () => set({ when_type: 'date', when_date: date.value || null });
   document.getElementById('whenpick-done').onclick = () => { render(); dlg.open = false; };
   dlg.open = true;
-}
-
-function whenEditor() {
-  const wrap = el('div', 'due-editor');
-  const btn = el('button', 'meta-icon-btn');
-  btn.type = 'button';
-  btn.append(icon('calendar', { size: 15 }));
-  btn.setAttribute('aria-label', 'Schedule (when)');
-  btn.title = 'Schedule (when)';
-  const pill = el('button', 'meta-pill');
-  pill.type = 'button';
-  pill.title = 'Edit when';
-
-  const render = () => {
-    const w = whenLabel(current);
-    if (w) {
-      pill.replaceChildren(icon('calendar', { size: 13 }), el('span', 'pill-text', w));
-      pill.hidden = false;
-      btn.hidden = true;
-    } else {
-      pill.hidden = true;
-      btn.hidden = false;
-    }
-  };
-  const open = () => openWhenPicker(current, patch, render);
-  btn.addEventListener('click', open);
-  pill.addEventListener('click', open);
-  render();
-  wrap.append(btn, pill);
-  return labeled('When', wrap);
-}
-
-// ---- due date + time — icon-first affordance ----
-// Deadline as ONE flag control (the icon→value pattern). Unset: a bare dashed
-// flag icon button. Set: a compact pill of the value (flag + mm/dd · countdown ·
-// time). BOTH open the shared #due-dialog — Date + Time widgets, a Clear, and a
-// Done. Clearing lives in the dialog (there is no inline x on the pill), and
-// there are no always-visible date/time boxes in the drawer.
-function dueEditor() {
-  const wrap = el('div', 'due-editor');
-
-  const btn = el('button', 'meta-icon-btn');
-  btn.type = 'button';
-  btn.append(icon('flag', { size: 15 }));
-  btn.setAttribute('aria-label', 'Set deadline');
-  btn.title = 'Set deadline';
-
-  const pill = el('button', 'meta-pill due-pill');
-  pill.type = 'button';
-  pill.title = 'Edit deadline';
-
-  const render = () => {
-    if (current.due_date) {
-      // compact: flag + mm/dd · countdown (· time). Same shape as the row chip
-      // so a set deadline reads identically in the list and the drawer.
-      const { text: countdown, urgent } = dueCountdown(current.due_date, todayISO());
-      const bits = [dueShort(current.due_date), countdown];
-      if (current.due_time) bits.push(current.due_time);
-      pill.replaceChildren(icon('flag', { size: 13 }), el('span', 'pill-text', bits.join(' · ')));
-      pill.classList.toggle('urgent', urgent);
-      pill.hidden = false;
-      btn.hidden = true;
-    } else {
-      pill.hidden = true;
-      btn.hidden = false;
-    }
-  };
-
-  // Populate + open the shared dialog, (re)binding handlers to THIS task's
-  // current/patch closure each open (assignment, not addEventListener, so
-  // reopening never stacks listeners).
-  const openDialog = () => {
-    const dlg = document.getElementById('due-dialog');
-    const date = document.getElementById('due-dialog-date');
-    const time = document.getElementById('due-dialog-time');
-    date.value = current.due_date ?? '';
-    time.value = current.due_time ?? '';
-    date.onchange = async () => { if (await patch({ due_date: date.value || null })) render(); };
-    time.onchange = async () => { if (await patch({ due_time: time.value || null })) render(); };
-    document.getElementById('due-dialog-clear').onclick = async () => {
-      if (await patch({ due_date: null, due_time: null })) render();
-      dlg.open = false;
-    };
-    document.getElementById('due-dialog-done').onclick = () => { render(); dlg.open = false; };
-    dlg.open = true;
-    setTimeout(() => { try { date.showPicker ? date.showPicker() : date.focus(); } catch { date.focus(); } }, 0);
-  };
-
-  btn.addEventListener('click', openDialog);
-  pill.addEventListener('click', openDialog);
-
-  render();
-  wrap.append(btn, pill);
-  return labeled('Due', wrap);
 }
 
 // ---- project — icon→value pattern (drawer only) ----
@@ -288,36 +94,6 @@ export function openProjectPicker(initialId, apply, render) {
   dlg.open = true;
 }
 
-function projectEditor() {
-  const wrap = el('div', 'meta-field');
-  const btn = el('button', 'meta-icon-btn');
-  btn.type = 'button';
-  btn.append(icon('folder', { size: 15 }));
-  btn.setAttribute('aria-label', 'Set project');
-  btn.title = 'Set project';
-  const pill = el('button', 'meta-pill');
-  pill.type = 'button';
-  pill.title = 'Change project';
-
-  const render = () => {
-    const name = projectLabel(current);
-    if (name) {
-      pill.replaceChildren(icon('folder', { size: 13 }), el('span', 'pill-text', name));
-      pill.hidden = false;
-      btn.hidden = true;
-    } else {
-      pill.hidden = true;
-      btn.hidden = false;
-    }
-  };
-  const open = () => openProjectPicker(current.project_id, patch, render);
-  btn.addEventListener('click', open);
-  pill.addEventListener('click', open);
-  render();
-  wrap.append(btn, pill);
-  return labeled('Project', wrap);
-}
-
 // ---- assignee — value pill → dialog (drawer + inline) ----
 // Assignee ALWAYS has a value, so there is no unset icon: always a pill of the
 // per-actor glyph (claude/hermes, else a person) + a friendly name ("Me" for the
@@ -339,31 +115,6 @@ export function openAssigneePicker(task, save, render) {
   const onHide = e => { if (e.target !== dlg) return; dlg.removeEventListener('wa-after-hide', onHide); render(); };
   dlg.addEventListener('wa-after-hide', onHide);
   dlg.open = true;
-}
-
-function assigneeEditor() {
-  const wrap = el('div', 'meta-field');
-  const pill = el('button', 'meta-pill');
-  pill.type = 'button';
-  pill.title = 'Change assignee';
-  const render = () => {
-    const who = current.assignee ?? currentActor();
-    // expanded editor keeps the name beside the glyph (the collapsed row list
-    // view is the one that's icon-only — see views.js assigneePill)
-    pill.replaceChildren(icon(assigneeGlyph(who), { size: 13 }), el('span', 'pill-text', assigneeLabel(who)));
-    pill.setAttribute('aria-label', `Assigned to ${assigneeLabel(who)}`);
-  };
-  pill.addEventListener('click', () => {
-    const t = current;
-    openAssigneePicker(t, async fields => {
-      const ok = await patch(fields);
-      if (ok) Object.assign(t, current); // patch() replaced `current`; refresh the field's ref
-      return ok;
-    }, render);
-  });
-  render();
-  wrap.append(pill);
-  return labeled('Assignee', wrap);
 }
 
 // ---- template picker (Part B): a select from GET /templates + "(none)" ----
@@ -418,40 +169,6 @@ export function openTemplatePicker(task, save, render) {
   Promise.all([loadTemplates(), getConfig()]).then(([items, cfg]) => build(items, !!cfg.template_editing));
   document.getElementById('template-dialog-done').onclick = () => { dlg.open = false; };
   dlg.open = true;
-}
-
-// Template as the icon→value pattern: unset = a bare `book` icon; set = a pill
-// (book + template name). Both open #template-dialog. The AI-edit pencil (opens
-// tpleditor.js) rides alongside when the feature is available and a template set.
-function templateEditor() {
-  const wrap = el('div', 'meta-field');
-  const btn = el('button', 'meta-icon-btn');
-  btn.type = 'button';
-  btn.append(icon('book', { size: 15 }));
-  btn.setAttribute('aria-label', 'Use a template');
-  btn.title = 'Use a template';
-  const pill = el('button', 'meta-pill');
-  pill.type = 'button';
-  pill.title = 'Change template';
-
-  const render = () => {
-    if (current.template) {
-      pill.replaceChildren(icon('book', { size: 13 }), el('span', 'pill-text', current.template));
-      pill.hidden = false;
-      btn.hidden = true;
-    } else {
-      pill.hidden = true;
-      btn.hidden = false;
-    }
-  };
-  // The AI-edit pencil moved INTO the #template-dialog (per template row) — the
-  // task detail page no longer carries it.
-  const open = () => openTemplatePicker(current, fields => patch(fields), render);
-  btn.addEventListener('click', open);
-  pill.addEventListener('click', open);
-  render();
-  wrap.append(btn, pill);
-  return labeled('Template', wrap);
 }
 
 // ---- activity thread (Part A): the drawer's Timeline section + composer ----
@@ -1058,53 +775,6 @@ export function openTagsPicker(task, save, render) {
   dlg.open = true;
 }
 
-function tagsEditor() {
-  const wrap = el('div', 'tags-editor');
-  const btn = el('button', 'meta-icon-btn');
-  btn.type = 'button';
-  btn.append(icon('tag', { size: 15 }));
-  btn.setAttribute('aria-label', 'Add tags');
-  btn.title = 'Add tags';
-  const pill = el('button', 'meta-pill');
-  pill.type = 'button';
-  pill.title = 'Edit tags';
-  const render = () => {
-    const has = Array.isArray(current.tags) && current.tags.length > 0;
-    if (has) {
-      pill.replaceChildren(icon('tag', { size: 13 }), el('span', 'pill-text', tagsLabel(current)));
-      pill.hidden = false;
-      btn.hidden = true;
-    } else {
-      pill.hidden = true;
-      btn.hidden = false;
-    }
-  };
-  // patch() refreshes `current`; tagsField keeps its own copy in sync on success
-  const open = () => openTagsPicker(current, fields => patch(fields), render);
-  btn.addEventListener('click', open);
-  pill.addEventListener('click', open);
-  render();
-  wrap.append(btn, pill);
-  return labeled('Tags', wrap);
-}
-
-function notesEditor() {
-  const wrap = el('div');
-  const ta = el('textarea');
-  ta.placeholder = 'Notes (markdown)';
-  ta.value = current.notes ?? '';
-  const preview = el('div', 'notes-preview');
-  const render = () => {
-    // mdToHtml escapes ALL input; this is the only innerHTML sink and it is safe
-    preview.innerHTML = mdToHtml(current.notes ?? '');
-    preview.hidden = !(current.notes ?? '').trim();
-  };
-  ta.addEventListener('change', async () => { if (await patch({ notes: ta.value })) render(); });
-  render();
-  wrap.append(labeled('Notes', ta), preview);
-  return wrap;
-}
-
 // ---- steps checklist (shared with the inline row editor) ----
 // Every mutation writes THROUGH to task.steps (task === the live state.tasks
 // row), so the in-memory task stays truthful and a reopened drawer/list is never
@@ -1322,99 +992,6 @@ export function recurEditor(task, save, onChange = () => {}) {
   render();
   wrap.append(btn, pill);
   return labeled('Repeat', wrap);
-}
-
-// ---- create mode: local draft steps (POSTed as titles with the task) ----
-function draftStepsEditor() {
-  const wrap = el('div');
-  wrap.append(el('label', null, 'Steps'));
-  const ul = el('ul', 'steps-list');
-  const render = () => {
-    ul.replaceChildren();
-    current.steps.forEach((title, i) => {
-      const li = el('li', 'step-row');
-      const name = el('input');
-      name.type = 'text';
-      name.value = title;
-      name.addEventListener('change', () => {
-        if (name.value.trim()) current.steps[i] = name.value.trim();
-        else { current.steps.splice(i, 1); render(); }
-      });
-      const del = el('button', 'del');
-      del.append(icon('x', { size: 14 }));
-      del.setAttribute('aria-label', 'Delete step');
-      del.addEventListener('click', () => { current.steps.splice(i, 1); render(); });
-      li.append(name, del);
-      ul.append(li);
-    });
-  };
-  render();
-  const add = el('input', 'step-add');
-  add.type = 'text';
-  add.placeholder = 'Add a step…';
-  add.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || !add.value.trim()) return;
-    e.stopPropagation();
-    current.steps.push(add.value.trim());
-    add.value = '';
-    render();
-  });
-  wrap.append(ul, add);
-  return wrap;
-}
-
-// double-submit guard: disable the Create button + a re-entrancy flag while the
-// POST is in flight, so a fast double-click can't create the task twice.
-let creating = false;
-async function submitCreate() {
-  if (creating) return;
-  const title = (titleInput?.value ?? current.title).trim();
-  if (!title) { toast('A title is required'); titleInput?.focus(); return; }
-  creating = true;
-  const btn = document.querySelector('#detail-body .detail-actions wa-button[variant="brand"]');
-  btn?.setAttribute('loading', '');
-  btn?.setAttribute('disabled', '');
-  const body = {
-    title, notes: current.notes, project_id: current.project_id,
-    when_type: current.when_type, when_date: current.when_date,
-    due_date: current.due_date, due_time: current.due_time,
-    recur: current.recur, tags: current.tags, steps: current.steps,
-    assignee: current.assignee, auto_close: !!current.auto_close,
-    template: current.template ?? null,
-  };
-  try {
-    const created = await api('POST', '/tasks', body);
-    createMode = false;
-    closeDetail();
-    animateOnce.list = true; // the new task slides into the list
-    await reload();
-    if (!state.tasks.some(t => t.id === created.id)) {
-      // landed outside the current view — say where
-      const proj = state.projects.find(p => p.id === created.project_id);
-      const where = created.assignee !== currentActor()
-        ? `${created.assignee}'s queue`
-        : proj ? proj.name
-        : created.when_type === 'someday' ? 'Someday'
-        : created.when_type === 'date' ? 'Upcoming'
-        : 'Inbox';
-      toast(`Added to ${where}`, 'success');
-    }
-  } catch (e) { toast(`Create failed: ${e.message}`); }
-  finally { creating = false; btn?.removeAttribute('loading'); btn?.removeAttribute('disabled'); }
-}
-
-function createActions() {
-  const row = el('div', 'detail-actions');
-  const create = document.createElement('wa-button');
-  create.setAttribute('variant', 'brand');
-  create.textContent = 'Create';
-  create.addEventListener('click', submitCreate);
-  const cancel = document.createElement('wa-button');
-  cancel.setAttribute('appearance', 'plain');
-  cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', () => { createMode = false; closeDetail(); });
-  row.append(create, cancel);
-  return row;
 }
 
 export function actionsFor(task, { save, onDone = () => {} } = {}) {
