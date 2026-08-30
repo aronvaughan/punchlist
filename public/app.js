@@ -89,6 +89,7 @@ export const state = {
   counts: null,
   dueSoon: [],
   version: '',
+  instanceName: '',
   nextCursor: null,
 };
 
@@ -98,12 +99,50 @@ document.title = APP_NAME.toLowerCase();
 // The signed-in actor (from /counts). Falls back to 'owner' before first load.
 export function currentActor() { return state.counts?.actor || 'owner'; }
 
-// rail footer: name + version (/health) + actor (/counts)
+// rail footer: instance name (a link to the Instance dialog) · version · actor
 function renderFoot() {
   const foot = document.getElementById('rail-foot');
-  const bits = [`${APP_NAME.toLowerCase()}${state.version ? ` v${state.version}` : ''}`];
-  if (state.counts?.actor) bits.push(`signed in as ${state.counts.actor}`);
-  foot.textContent = bits.join(' · ');
+  foot.replaceChildren();
+  const link = document.createElement('button');
+  link.className = 'foot-instance';
+  link.textContent = state.instanceName || APP_NAME.toLowerCase();
+  link.title = 'Instance settings';
+  link.addEventListener('click', openInstanceDialog);
+  foot.append(link);
+  const tail = [];
+  if (state.version) tail.push(`v${state.version}`);
+  if (state.counts?.actor) tail.push(`signed in as ${state.counts.actor}`);
+  if (tail.length) foot.append(document.createTextNode(' · ' + tail.join(' · ')));
+}
+
+// Instance settings dialog: name + global context (agent directives) + the
+// data-isolation flag + backup config. PATCH is admin-only (server-enforced);
+// non-admins can view. Populated fresh from GET /instance on open.
+async function openInstanceDialog() {
+  const dlg = document.getElementById('instance-dialog');
+  let inst;
+  try { inst = await api('GET', '/instance'); } catch (e) { toast(`Load failed: ${e.message}`); return; }
+  document.getElementById('instance-name').value = inst.name || '';
+  document.getElementById('instance-context').value = inst.context || '';
+  document.getElementById('instance-isolation').checked = !!inst.data_isolation;
+  document.getElementById('instance-backup-mode').value = inst.backup_mode || 'snapshot';
+  document.getElementById('instance-backup-repo').value = inst.backup_repo || '';
+  document.getElementById('instance-save').onclick = async () => {
+    try {
+      const saved = await api('PATCH', '/instance', {
+        name: document.getElementById('instance-name').value,
+        context: document.getElementById('instance-context').value,
+        data_isolation: document.getElementById('instance-isolation').checked,
+        backup_mode: document.getElementById('instance-backup-mode').value,
+        backup_repo: document.getElementById('instance-backup-repo').value,
+      });
+      state.instanceName = saved.name;
+      renderFoot();
+    } catch (e) { toast(`Save failed: ${e.message}`); }
+    dlg.open = false;
+  };
+  document.getElementById('instance-cancel').onclick = () => { dlg.open = false; };
+  dlg.open = true;
 }
 // --- new-version detection: an SPA doesn't re-fetch its JS on in-app nav, so an
 // open tab can run stale code after a deploy. Poll /health's `build` stamp and,
@@ -123,6 +162,8 @@ function showReloadBanner() {
 fetch('/api/v1/health').then(r => r.json())
   .then(h => { state.version = h.version || ''; loadedBuild = h.build ?? null; renderFoot(); })
   .catch(() => {});
+// instance name for the footer (auth'd; silently skipped until a token is set)
+api('GET', '/instance').then(i => { state.instanceName = i.name || ''; renderFoot(); }).catch(() => {});
 setInterval(async () => {
   try {
     const h = await (await fetch('/api/v1/health', { cache: 'no-store' })).json();

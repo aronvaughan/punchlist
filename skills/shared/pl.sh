@@ -45,6 +45,8 @@
 #   pl.sh projects                     list projects ([context] = has a readme)
 #   pl.sh project <name|id>            print a project's context notepad (readme/
 #                                      overview) — read it before working its tasks
+#   pl.sh instance                     this deployment's global context + data-
+#                                      isolation policy (applies to every agent)
 #   pl.sh counts                       nav counts (inbox/today/review/delegated...)
 #
 # Auth: Bearer $PUNCHLIST_TOKEN. Base URL: $PUNCHLIST_URL (default 127.0.0.1:8600).
@@ -138,7 +140,7 @@ resolve_project() { # name-or-id -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -368,6 +370,15 @@ case "$cmd" in
         + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
+  instance)
+    # This deployment's global context + data-governance policy. Read it before
+    # working — it applies to you and every subagent (deployment-wide rules).
+    api GET /instance
+    printf '%s' "$RESP" | jq -r '
+      "# instance: " + (if (.name // "") != "" then .name else "(unnamed)" end)
+      + "\ndata_isolation: " + (if .data_isolation then "ON — private by default; keep client/personal content out of publishable paths" else "off" end)
+      + "\n\n" + (if (.context // "") != "" then .context else "(no instance context set)" end)' ;;
+
   counts)
     api GET /counts
     printf '%s' "$RESP" | jq -r '"actor: " + .actor
@@ -381,6 +392,6 @@ case "$cmd" in
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac

@@ -165,6 +165,22 @@ test('project context notepad: can point to a template via the shared AI-edit pi
   assert.match(mcp, /p\.template \? \{ template: p\.template \}/);
 });
 
+test('instance identity: footer name link + Instance dialog + PATCH /instance', async () => {
+  const { get } = makeApp();
+  const app = await (await get('/app.js')).text();
+  assert.match(app, /'foot-instance'/);                         // footer name is a link
+  assert.match(app, /async function openInstanceDialog/);
+  assert.match(app, /api\('PATCH', '\/instance'/);              // save
+  assert.match(app, /state\.instanceName = /);                  // footer reflects the name
+  const html = await (await get('/')).text();
+  assert.match(html, /id="instance-dialog"/);
+  assert.match(html, /id="instance-name"/);
+  assert.match(html, /id="instance-context"/);
+  assert.match(html, /id="instance-isolation"/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.foot-instance\s*\{/);
+});
+
 test('assignee pill: list view is icon-only per-agent (claude/hermes/person), name via title+aria-label', async () => {
   const { get } = makeApp();
   const icons = await (await get('/icons.js')).text();

@@ -90,6 +90,32 @@
     <div id="theme-choices" class="theme-choices"></div>
   </wa-dialog>
 
+  <wa-dialog id="instance-dialog" label="Instance">
+    <div class="dialog-field">
+      <label for="instance-name">Instance name (shown in the footer)</label>
+      <input id="instance-name" type="text" placeholder="workmac-1" spellcheck="false" autocapitalize="off">
+    </div>
+    <div class="dialog-field">
+      <label for="instance-context">Instance context — global rules/directives injected into agents (markdown)</label>
+      <textarea id="instance-context" rows="7" placeholder="How work is done on this machine; conventions; what agents should know."></textarea>
+    </div>
+    <label class="dialog-check"><input id="instance-isolation" type="checkbox"> Data isolation (private by default — keep client/personal content out of publishable paths)</label>
+    <div class="dialog-field">
+      <label for="instance-backup-mode">Backup</label>
+      <select id="instance-backup-mode">
+        <option value="snapshot">snapshot (nightly local)</option>
+        <option value="repo">repo (scrubbed dump to a private repo)</option>
+        <option value="both">both</option>
+      </select>
+    </div>
+    <div class="dialog-field">
+      <label for="instance-backup-repo">Backup repo (path or remote — for repo/both)</label>
+      <input id="instance-backup-repo" type="text" placeholder="/path/to/private-backup or git@host:you/backup.git" spellcheck="false" autocapitalize="off">
+    </div>
+    <wa-button slot="footer" id="instance-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="instance-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="project-workdir-dialog" label="Working directory">
     <div class="dialog-field">
       <label for="project-workdir-input">Absolute local path the agent cd's into to work this project's tasks</label>
