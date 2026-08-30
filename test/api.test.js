@@ -215,6 +215,22 @@ test('buildApp without an explicit admin falls back to the first token actor; un
   buildApp({ db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE } });
 });
 
+// ---- project context notepad (project.notes: the per-project readme) ----
+test('project context: notes set at create, PATCH-able, returned by GET (agent-readable)', async () => {
+  const { call } = makeApp();
+  // create with context
+  const p = await call('POST', '/api/v1/projects', { body: { name: 'Apollo', notes: '# Apollo\nthe overview' } });
+  assert.equal(p.status, 201);
+  assert.equal(p.json.notes, '# Apollo\nthe overview');
+  // PATCH the context
+  const u = await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { notes: 'updated readme' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.notes, 'updated readme');
+  // GET /projects surfaces it (what pl.sh + MCP read)
+  const list = await call('GET', '/api/v1/projects');
+  assert.equal(list.json.items.find(x => x.id === p.json.id).notes, 'updated readme');
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();

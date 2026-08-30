@@ -90,6 +90,15 @@
     <div id="theme-choices" class="theme-choices"></div>
   </wa-dialog>
 
+  <wa-dialog id="project-context-dialog" label="Project context">
+    <div class="dialog-field">
+      <label for="project-context-text">A readme/overview agents read for project background (markdown)</label>
+      <textarea id="project-context-text" rows="10" placeholder="What this project is, key decisions, links, conventions…"></textarea>
+    </div>
+    <wa-button slot="footer" id="project-context-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="project-context-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="agentflows-dialog" label="Agent flows">
     <div class="flows-doc">
       <p class="flows-lede">Delegated work moves through a pipeline. These three

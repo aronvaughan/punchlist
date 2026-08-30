@@ -3,8 +3,13 @@
 // (Playwright); this guards the static contract the UI depends on.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { open } from '../src/db.js';
 import { buildApp } from '../src/api.js';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TOK = 'a'.repeat(32);
 
@@ -113,6 +118,27 @@ test('task rows: title line is title+due only; everything else on an icon-pilled
   assert.match(views, /tags-indicator/);
   assert.match(views, /ind\.addEventListener\('click', e => \{ e\.stopPropagation\(\); expandRow\(task, row\); \}\)/);
   assert.doesNotMatch(views, /toggleRowTags/); // inline row tag-editing is gone
+});
+
+test('project context notepad: UI panel + dialog + agent read paths (pl.sh, MCP)', async () => {
+  const { get } = makeApp();
+  // UI: the project view renders a Context panel (project.notes) editable via a dialog
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /function projectContextPanel/);
+  assert.match(views, /listEl\.append\(projectContextPanel\(project\)\)/);   // prepended in renderProject
+  assert.match(views, /PATCH', `\/projects\/\$\{project\.id\}`, \{ notes: ta\.value \}/); // saves to project.notes
+  const html = await (await get('/')).text();
+  assert.match(html, /id="project-context-dialog"/);
+  assert.match(html, /id="project-context-text"/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.project-context\s*\{/);
+  // Agent read: pl.sh marks projects with context and can print one project's readme
+  const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
+  assert.match(pl, /\[context\]/);                       // list marker
+  assert.match(pl, /^\s*project\)/m);                    // `pl.sh project <name|id>` subcommand
+  // Agent read: the MCP projects tool includes context (was stripped before)
+  const mcp = readFileSync(join(REPO, 'src/mcp.js'), 'utf8');
+  assert.match(mcp, /p\.notes \? \{ context: p\.notes \}/);
 });
 
 test('assignee pill: list view is icon-only per-agent (claude/hermes/person), name via title+aria-label', async () => {
