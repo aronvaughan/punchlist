@@ -48,6 +48,47 @@ works it → finishes with a written report → it lands in **Review** for you
 to approve into the logbook. See "Delegate to an AI agent" and "Stay in
 control" below for that loop in detail.
 
+### Walking through an agent's view
+
+The three screenshots above are what *you* see. Here's the other side — what
+an agent (`pl.sh`, the shared CLI every skill wraps) sees and does, captured
+against the same throwaway instance:
+
+1. **Poll the queue.** Only vetted, open work assigned to this agent shows up.
+
+   ```
+   $ pl.sh queue
+   01M1ADXM92G8KJ6Q5T80S4EKRZ  Summarize last weeks server logs for anomalies  @claude
+   01M1AEAMJTQ5WQYQE73Y2CTG2B  Audit stale DNS records  @claude
+   ```
+
+2. **Claim** a task off the queue — active/backlog → in progress, timestamped.
+
+   ```
+   $ pl.sh claim 01M1AEAMJTQ5WQYQE73Y2CTG2B
+   01M1AEAMJTQ5WQYQE73Y2CTG2B  Audit stale DNS records  [in_progress] @claude
+   ```
+
+   On the Agents board this same task sits in the assignee's **Backlog** lane
+   until claimed:
+
+   ![Agents board backlog](docs/screenshots/agent-view-board.png)
+
+3. **Finish** with a required written report — no silent completions.
+
+   ```
+   $ pl.sh finish 01M1AEAMJTQ5WQYQE73Y2CTG2B "Checked all A/CNAME records against active services; found 3 stale entries (old-staging.example.com, mail-v1.example.com, cdn-legacy.example.com) pointing at decommissioned hosts and removed them. No other anomalies."
+   01M1AEAMJTQ5WQYQE73Y2CTG2B  Audit stale DNS records  [review] @claude
+   ```
+
+   The finished task — with its report — now waits for you in **Review**:
+
+   ![Finished task waiting in Review with its report](docs/screenshots/agent-view-report.png)
+
+If an agent can't proceed without you, it doesn't guess — see the next two
+sections for the other half of that exchange: the agent blocking with a
+question, and you answering it.
+
 ## Use cases
 
 ### Plan your day
@@ -106,6 +147,14 @@ still queued.
 
 ![Agents board](docs/screenshots/agents-view.png)
 
+An agent that genuinely can't proceed calls `pl.sh block <id> "<question>"`
+instead of guessing — the task moves to **Human** (`#/needs-input`) with its
+question inline, and stays out of the agent's queue until you answer.
+Answering (`pl.sh answer <id> "<answer>"`, or the inline box shown here)
+flips it straight back to active so the agent picks it up on its next sweep:
+
+![Human lane: a blocked task's question, with the answer box being filled in](docs/screenshots/human-answer.png)
+
 ### Stay in control
 
 Delegating doesn't mean losing the thread. A finished agent task doesn't
@@ -117,6 +166,12 @@ delegated task's *deadline* still surfaces in your Today and Due Soon — so
 delegated work can't clutter your day, and it can't go dark either.
 
 ![Review lane](docs/screenshots/review.png)
+
+The final step is yours: each reviewed task shows its report with **Approve**
+(→ logbook) or **Reopen** (→ back to the agent, optionally with a comment) —
+nothing reaches the logbook without this click.
+
+![Final review: a finished task's report with Approve / Reopen](docs/screenshots/review-approve.png)
 
 ### Email becomes tasks
 
@@ -175,15 +230,18 @@ tasks park in Review with their reasons.
 
 ### Attach images
 
-Drop a screenshot onto a task, or use **Attach image** in the drawer —
-JPEG and PNG only, validated by magic bytes (a renamed file is rejected),
-each capped at 10MB. Thumbnails lazy-load in the drawer and rows show a
-small 📎 count. Bytes live as their own files in a separate media dir
-(`PUNCHLIST_MEDIA_DIR`, default `<data>/media`), not in the database. Each
-image carries a retention rule — **Keep** (default), **Delete when done**,
-or **Expire on a date** — and a daily reaper (`scripts/reap-media.sh`)
-deletes files whose rule has fired. See
+Drop a screenshot onto a task, or click the **Attachments** count in the
+inline editor to open the attachments dialog — **Attach file** takes JPEG,
+PNG, or a `.md`/`.txt` document, validated by magic bytes (a renamed file is
+rejected), each capped at 10MB (documents at 2MB). Thumbnails lazy-load and
+rows show a small 📎 count. Bytes live as their own files in a separate media
+dir (`PUNCHLIST_MEDIA_DIR`, default `<data>/media`), not in the database.
+Each image carries a retention rule — **Keep** (default), **Delete when
+done**, or **Expire on a date** — and a daily reaper
+(`scripts/reap-media.sh`) deletes files whose rule has fired. See
 [`docs/2026-08-26-attachments.md`](docs/2026-08-26-attachments.md).
+
+![Attachments dialog: a kept image attachment with its retention control](docs/screenshots/attachments-editor.png)
 
 ### Edit templates with AI
 
@@ -197,6 +255,12 @@ touches nothing on disk. **Save** validates the draft with `plt` and, only
 if it passes, writes the override to the templates repo's `authored/`
 directory and **commits** it locally — never pushes. See
 [`docs/2026-08-28-template-editor-design.md`](docs/2026-08-28-template-editor-design.md).
+
+Open it from a task's **Template** field → the pencil beside the chosen
+template. The dialog shows the live-rendered draft beside the conversation
+thread, with **Save draft** / **Revert to saved** underneath:
+
+![Template editor: live preview of a template's markdown beside the AI conversation thread](docs/screenshots/template-editor.png)
 
 ### Make it yours
 
@@ -349,6 +413,21 @@ Every theme, captured from the Today view. Pick one from the theme picker
     <td align="center" width="33%"><img src="docs/screenshots/themes/theme-plum.png" width="260"><br><sub>Plum</sub></td>
     <td align="center" width="33%"><img src="docs/screenshots/themes/theme-jade.png" width="260"><br><sub>Jade</sub></td>
     <td align="center" width="33%"><img src="docs/screenshots/themes/theme-charcoal.png" width="260"><br><sub>Charcoal</sub></td>
+  </tr>
+</table>
+
+### Theme detail
+
+The gallery above shows every theme's Today-list swatch; the three shots
+below go a level deeper — the same task expanded into its full inline editor
+(template, tags, attachments, assignee all visible) so you can judge a
+theme's readability on real controls, not just its background color.
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/theme-detail-light.png" width="260"><br><sub>Light</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/theme-detail-dark.png" width="260"><br><sub>Dark</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/theme-detail-synthwave.png" width="260"><br><sub>Synthwave</sub></td>
   </tr>
 </table>
 
