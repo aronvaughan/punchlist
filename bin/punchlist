@@ -17,6 +17,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { serviceSpec } from '../src/service.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -247,6 +248,58 @@ async function doctor() {
   else console.log('doctor: OK');
 }
 
+// ---- backup: honor the instance's backup_mode/backup_repo (data governance) ----
+// snapshot = the WAL-safe db-snapshot (+ restic cron). repo = a SCRUBBED copy —
+// the snapshot db + the private artifact dirs (data/{skills,templates,kb,govern})
+// — committed & pushed to a private, safe-to-push repo. NEVER copies data/.env,
+// media, or the backup staging dir, so secrets never reach the pushable repo.
+function readBackupSettings(dbFile) {
+  const d = new DatabaseSync(dbFile, { readOnly: true });
+  const get = k => d.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value ?? '';
+  const s = { mode: get('backup_mode') || 'snapshot', repo: get('backup_repo') };
+  d.close();
+  return s;
+}
+function sh(cmd, args, cwd) {
+  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
+  if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} exited ${r.status}`);
+}
+function backup(argv) {
+  const dry = argv.includes('--dry-run');
+  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dbFile = join(dataDir, 'punchlist.db');
+  if (!existsSync(dbFile)) { console.error(`punchlist: no database at ${dbFile}`); process.exit(1); }
+  const { mode, repo } = readBackupSettings(dbFile);
+  console.log(`backup: mode=${mode}${repo ? ` repo=${repo}` : ''}${dry ? ' (dry-run)' : ''}`);
+  const wantSnap = mode === 'snapshot' || mode === 'both';
+  const wantRepo = mode === 'repo' || mode === 'both';
+  const snapSh = join(ROOT, 'scripts', 'db-snapshot.sh');
+  const env = { ...process.env, PUNCHLIST_DATA: dataDir };
+
+  if (wantSnap) {
+    console.log('backup: snapshot → data/backup (restic cron backs this up)');
+    if (!dry) spawnSync('bash', [snapSh], { stdio: 'inherit', env });
+  }
+  if (wantRepo) {
+    if (!repo) { console.error('backup: mode includes "repo" but backup_repo is unset (set it in the Instance dialog)'); process.exit(1); }
+    if (!existsSync(repo)) { console.error(`backup: backup_repo does not exist: ${repo}`); process.exit(1); }
+    console.log(`backup: repo → ${repo} (scrubbed: snapshot db + data/{skills,templates,kb,govern}; NO .env/media)`);
+    if (dry) return;
+    spawnSync('bash', [snapSh], { stdio: 'inherit', env }); // fresh WAL-safe snapshot
+    copyFileSync(join(dataDir, 'backup', 'punchlist-snapshot.db'), join(repo, 'punchlist-snapshot.db'));
+    for (const d of ['skills', 'templates', 'kb', 'govern']) {
+      const src = join(dataDir, d);
+      if (existsSync(src)) cpSync(src, join(repo, d), { recursive: true });
+    }
+    const status = spawnSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).stdout || '';
+    if (!status.trim()) { console.log('backup: repo already up to date — nothing to commit'); return; }
+    sh('git', ['add', '-A'], repo);
+    sh('git', ['commit', '-m', `punchlist backup ${new Date().toISOString()}`], repo);
+    sh('git', ['push'], repo);
+    console.log('backup: committed + pushed to the private backup repo');
+  }
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 switch (cmd) {
@@ -272,6 +325,10 @@ switch (cmd) {
 
   case 'doctor':
     await doctor();
+    break;
+
+  case 'backup':
+    backup(rest);
     break;
 
   case 'snapshot':
@@ -302,7 +359,7 @@ Now give each agent its token (this tool never edits your env files):
 
   default:
     console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
-      'install-service [--print] [--no-start] | gen-token <actor> | doctor | ' +
+      'install-service [--print] [--no-start] | gen-token <actor> | doctor | backup [--dry-run] | ' +
       'install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);
 }
