@@ -252,6 +252,19 @@ test('project template pointer: settable at create and via PATCH; free string, n
   assert.equal(bad.status, 400);
 });
 
+test('project working_dir: set/PATCH/return + validation (agent cd target)', async () => {
+  const { call } = makeApp();
+  const p = await call('POST', '/api/v1/projects', { body: { name: 'Repo', working_dir: '/home/u/code/repo' } });
+  assert.equal(p.status, 201);
+  assert.equal(p.json.working_dir, '/home/u/code/repo');
+  const u = await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { working_dir: '/home/u/code/other' } });
+  assert.equal(u.json.working_dir, '/home/u/code/other');
+  // clear it
+  assert.equal((await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { working_dir: null } })).json.working_dir, null);
+  // validation: non-string rejected
+  assert.equal((await call('POST', '/api/v1/projects', { body: { name: 'Bad', working_dir: 42 } })).status, 400);
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();

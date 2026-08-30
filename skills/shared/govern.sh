@@ -113,6 +113,7 @@ audit() {
   echo
   echo "audit: scanned $total tracked (publishable) files; $flagged flagged."
   [ "$flagged" -eq 0 ] && echo "audit: clean — no private markers in publishable paths."
+  return 0   # a report never fails the shell (findings are printed, not signalled)
 }
 
 cmd="${1:-}"; shift || true
