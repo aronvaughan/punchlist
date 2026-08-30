@@ -6,7 +6,7 @@ import { api, state, reload, toast, todayISO, currentActor } from '/app.js';
 import { openDetail, stepsEditorFor, openWhenPicker, whenLabel,
   openTagsPicker, tagsLabel, openAssigneePicker, assigneeGlyph, assigneeLabel,
   openProjectPicker, projectLabel, openTemplatePicker, attachmentsEditor,
-  reportView, timelineSection, recurEditor } from '/detail.js';
+  reportView, timelineSection, recurEditor, actionsFor } from '/detail.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { icon } from '/icons.js';
 
@@ -93,6 +93,9 @@ export function expandRow(task, row) {
   const rep = reportView(task);
   if (rep) inner.append(rep);
   inner.append(timelineSection(task));
+  // Complete / Archive / Delete (Approve/Reopen in review) — collapse the row on
+  // any terminal action (the task leaves the active list; collapseInline reloads).
+  inner.append(actionsFor(task, { save, onDone: () => collapseInline() }));
   row.append(head, body);
 
   // after the expand transition, release overflow so popovers (tag

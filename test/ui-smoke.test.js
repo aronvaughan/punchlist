@@ -292,7 +292,7 @@ test('task delete: drawer-only (not on the list rows), distinct from archive', a
   assert.doesNotMatch(views, /row-overflow/);
   assert.doesNotMatch(views, /function openRowMenu/);
   const detail = await (await get('/detail.js')).text();
-  assert.match(detail, /performDelete\(current\)/); // only reachable from the drawer actions
+  assert.match(detail, /performDelete\(task\)/); // wired into the shared actionsFor (drawer + inline)
   assert.match(detail, /detail-delete/);
 });
 
