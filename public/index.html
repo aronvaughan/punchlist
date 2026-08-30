@@ -90,6 +90,15 @@
     <div id="theme-choices" class="theme-choices"></div>
   </wa-dialog>
 
+  <wa-dialog id="project-workdir-dialog" label="Working directory">
+    <div class="dialog-field">
+      <label for="project-workdir-input">Absolute local path the agent cd's into to work this project's tasks</label>
+      <input id="project-workdir-input" type="text" placeholder="/Users/you/code/the-repo" spellcheck="false" autocapitalize="off">
+    </div>
+    <wa-button slot="footer" id="project-workdir-cancel" appearance="plain">Cancel</wa-button>
+    <wa-button slot="footer" id="project-workdir-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="project-context-dialog" label="Project context">
     <div class="dialog-field">
       <label for="project-context-text">A readme/overview agents read for project background (markdown)</label>

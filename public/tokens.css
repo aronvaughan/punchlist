@@ -590,6 +590,13 @@ html[data-theme="charcoal"] {
   color: var(--accent);
   font-weight: 600;
 }
+/* project working-directory line (below the Context panel) */
+.project-workdir { display: flex; align-items: center; gap: 8px; margin: -8px 0 14px; padding: 0 2px; font-size: 12px; }
+.pw-label { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.pw-val { min-width: 0; border: none; background: none; color: var(--ink); font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; padding: 2px 6px; border-radius: 6px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-val:hover { background: var(--hover); }
+.pw-val.empty { color: var(--ink-faint); font-style: italic; font-family: inherit; }
+
 /* project Context notepad panel (top of a project view) */
 .project-context {
   margin: 2px 0 14px;
