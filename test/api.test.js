@@ -265,6 +265,37 @@ test('project working_dir: set/PATCH/return + validation (agent cd target)', asy
   assert.equal((await call('POST', '/api/v1/projects', { body: { name: 'Bad', working_dir: 42 } })).status, 400);
 });
 
+test('instance settings: GET defaults, PATCH (admin) name/context/isolation/backup, validation', async () => {
+  const { call } = makeApp();
+  const g0 = await call('GET', '/api/v1/instance');
+  assert.equal(g0.json.name, '');
+  assert.equal(g0.json.data_isolation, true);          // private by default
+  assert.equal(g0.json.backup_mode, 'snapshot');
+  const u = await call('PATCH', '/api/v1/instance', { body: { name: 'workmac-1', context: '# rules', data_isolation: false, backup_mode: 'both', backup_repo: '/backup/repo' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.name, 'workmac-1');
+  assert.equal(u.json.context, '# rules');
+  assert.equal(u.json.data_isolation, false);
+  assert.equal(u.json.backup_mode, 'both');
+  // /config echoes the name for first paint
+  assert.equal((await call('GET', '/api/v1/config')).json.instance_name, 'workmac-1');
+  // validation: bad backup_mode + unknown field
+  assert.equal((await call('PATCH', '/api/v1/instance', { body: { backup_mode: 'ftp' } })).status, 400);
+  assert.equal((await call('PATCH', '/api/v1/instance', { body: { nope: 1 } })).status, 400);
+});
+
+test('instance PATCH is admin-only (403 for a non-admin actor)', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32), C = 'c'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A, claude: C }, admin: 'alex', today: () => '2026-03-10' });
+  const asClaude = (m, p, body) => app.fetch(new Request(`http://x${p}`, {
+    method: m, headers: { Authorization: `Bearer ${C}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined }));
+  assert.equal((await asClaude('PATCH', '/api/v1/instance', { name: 'x' })).status, 403);
+  assert.equal((await asClaude('GET', '/api/v1/instance')).status, 200); // read is open
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();

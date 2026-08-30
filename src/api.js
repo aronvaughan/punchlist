@@ -1390,13 +1390,60 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // linking is available (a configured, non-empty DOC_ROOTS) and which actors
   // are untrusted, so it can gate the "Link a doc…" affordance and require an
   // explicit confirm before rendering a doc uploaded by an untrusted actor.
+  // ---- instance settings (key/value store, migration 014) ----
+  const getSetting = (k, dflt = '') => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value ?? dflt;
+  const setSetting = (k, v) => db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  ).run(k, String(v));
+
   app.get('/api/v1/config', c => c.json({
     doc_linking: DOC_ROOTS.length > 0,
     template_editing: TPL.available && c.get('actor') === HUMAN,
     untrusted_actors: [...UNTRUSTED],
     max_doc_bytes: MAX_DOC,
+    instance_name: getSetting('instance_name'), // for the footer's first paint
     actor: c.get('actor'),
   }));
+
+  // The instance identity + governance surface. GET is readable by any actor
+  // (the sweep injects context into agents); PATCH is admin-only (the context
+  // becomes agent directives, so only the human may set it).
+  app.get('/api/v1/instance', c => c.json({
+    name: getSetting('instance_name'),
+    context: getSetting('instance_context'),
+    data_isolation: getSetting('data_isolation', '1') === '1',
+    backup_mode: getSetting('backup_mode', 'snapshot'),
+    backup_repo: getSetting('backup_repo'),
+  }));
+
+  const INSTANCE_FIELDS = new Set(['name', 'context', 'data_isolation', 'backup_mode', 'backup_repo']);
+  app.patch('/api/v1/instance', async c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
+    const body = await readJson(c);
+    for (const k of Object.keys(body)) if (!INSTANCE_FIELDS.has(k)) throw new ApiError(400, `unknown field: ${k}`);
+    if (body.name !== undefined) {
+      if (typeof body.name !== 'string' || body.name.length > 200) throw new ApiError(400, 'name must be a string (<=200 chars)');
+      setSetting('instance_name', body.name.trim());
+    }
+    if (body.context !== undefined) {
+      if (typeof body.context !== 'string' || body.context.length > CAPS.notes) throw new ApiError(400, 'context too long');
+      setSetting('instance_context', body.context);
+    }
+    if (body.data_isolation !== undefined) setSetting('data_isolation', body.data_isolation ? '1' : '0');
+    if (body.backup_mode !== undefined) {
+      if (!['repo', 'snapshot', 'both'].includes(body.backup_mode)) throw new ApiError(400, 'backup_mode must be repo|snapshot|both');
+      setSetting('backup_mode', body.backup_mode);
+    }
+    if (body.backup_repo !== undefined) {
+      if (typeof body.backup_repo !== 'string' || body.backup_repo.length > 1024) throw new ApiError(400, 'backup_repo must be a string (<=1024 chars)');
+      setSetting('backup_repo', body.backup_repo.trim());
+    }
+    return c.json({
+      name: getSetting('instance_name'), context: getSetting('instance_context'),
+      data_isolation: getSetting('data_isolation', '1') === '1',
+      backup_mode: getSetting('backup_mode', 'snapshot'), backup_repo: getSetting('backup_repo'),
+    });
+  });
 
   // ---- counts (nav badges): one call, view WHEREs from views.js ----
   app.get('/api/v1/counts', c => {
