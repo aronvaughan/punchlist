@@ -472,6 +472,26 @@ test('reorder by neighbors within a project section; renormalizes; stale neighbo
   assert.equal((await call('POST', `/api/v1/tasks/NOPE/reorder`, { body: { after_id: b.id } })).status, 404);
 });
 
+test('reorder in a project view section works with a delegated (in_progress) neighbor visible in that view (bug: toast "restoring server order")', async () => {
+  const { call } = makeApp();
+  const p = (await call('POST', '/api/v1/projects', { body: { name: 'P' } })).json;
+  const a = (await call('POST', '/api/v1/tasks',
+    { body: { title: 'a', project_id: p.id, assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${a.id}/claim`, { token: TOK_CLAUDE }); // a is now in_progress
+  const b = (await call('POST', '/api/v1/tasks', { body: { title: 'b', project_id: p.id } })).json;
+  const c = (await call('POST', '/api/v1/tasks', { body: { title: 'c', project_id: p.id } })).json;
+  // the project view (GET /tasks?project=) shows in_progress tasks alongside
+  // active ones in the same section (delegation design) and renders them as
+  // equally draggable rows — so a reorder using a delegated task as a
+  // neighbor, exactly as the UI would send from that DOM order, must succeed.
+  const before = await call('GET', `/api/v1/tasks?project=${p.id}`);
+  assert.deepEqual(before.json.items.map(t => t.title), ['a', 'b', 'c']);
+  const r = await call('POST', `/api/v1/tasks/${c.id}/reorder`, { body: { after_id: a.id, before_id: b.id } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const list = await call('GET', `/api/v1/tasks?project=${p.id}`);
+  assert.deepEqual(list.json.items.map(t => t.title), ['a', 'c', 'b']);
+});
+
 test('reorder with a single neighbor lands directly adjacent, not on the next row (evenly spaced ranks)', async () => {
   const { call } = makeApp();
   const p = (await call('POST', '/api/v1/projects', { body: { name: 'P' } })).json;
