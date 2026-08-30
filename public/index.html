@@ -20,15 +20,25 @@
     </header>
     <nav id="rail" aria-label="Views and projects">
       <div id="brand"><span class="brand-mark" aria-hidden="true"></span><span id="brand-name">Punchlist</span></div>
-      <ul id="rail-views">
+      <div class="rail-heading">Tasks</div>
+      <ul class="rail-views">
         <li><a href="#/inbox" data-view="inbox">Inbox</a></li>
         <li><a href="#/today" data-view="today">Today</a></li>
         <li><a href="#/upcoming" data-view="upcoming">Upcoming</a></li>
         <li><a href="#/anytime" data-view="anytime">Anytime</a></li>
         <li><a href="#/logbook" data-view="logbook">Logbook</a></li>
-        <li><a href="#/review" data-view="review">Review</a></li>
-        <li><a href="#/needs-input" data-view="needs-input">Human</a></li>
+      </ul>
+      <!-- Agent flows: the delegation lifecycle in workflow order — work in
+           flight (Agents) → stalled on a question (Human) → finished, awaiting
+           approval (Review). The (i) opens a dialog explaining the three. -->
+      <div class="rail-heading rail-heading-info">
+        <span>Agent flows</span>
+        <button id="agentflows-info" type="button" class="rail-info-btn" aria-label="What are agent flows?" title="What are agent flows?"><svg class="icon" viewBox="0 0 256 256" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"/></svg></button>
+      </div>
+      <ul class="rail-views">
         <li><a href="#/agents" data-view="agents">Agents</a></li>
+        <li><a href="#/needs-input" data-view="needs-input">Human</a></li>
+        <li><a href="#/review" data-view="review">Review</a></li>
       </ul>
       <div id="rail-projects-head" class="rail-heading">Projects</div>
       <ul id="rail-projects"></ul>
@@ -78,6 +88,35 @@
 
   <wa-dialog id="theme-dialog" label="Theme">
     <div id="theme-choices" class="theme-choices"></div>
+  </wa-dialog>
+
+  <wa-dialog id="agentflows-dialog" label="Agent flows">
+    <div class="flows-doc">
+      <p class="flows-lede">Delegated work moves through a pipeline. These three
+        lanes are the points where it needs <em>you</em>.</p>
+      <ol class="flows-list">
+        <li>
+          <span class="flows-lane">Agents</span>
+          <span class="flows-desc">Work you handed to an agent that is <strong>in flight</strong> —
+            queued, in progress, or blocked. The shared agent backlog.</span>
+        </li>
+        <li>
+          <span class="flows-lane">Human</span>
+          <span class="flows-desc">An agent <strong>paused to ask you a question</strong> and can't
+            continue until you answer. Drag to hand-order what to answer first.</span>
+        </li>
+        <li>
+          <span class="flows-lane">Review</span>
+          <span class="flows-desc">An agent <strong>finished</strong> and handed the work back for
+            your approval. Approve to accept, or reopen to send it back.</span>
+        </li>
+      </ol>
+      <p class="flows-flow"><span>delegate</span> → <span>Agents</span> →
+        <span>Human</span> <em>(answer)</em> or <span>Review</span> <em>(approve)</em></p>
+      <p class="flows-foot">Your own to-dos live under <strong>Tasks</strong> — work you never
+        delegated at all.</p>
+    </div>
+    <wa-button slot="footer" id="agentflows-close" variant="brand">Got it</wa-button>
   </wa-dialog>
 
   <wa-dialog id="window-dialog" label="Due soon window">

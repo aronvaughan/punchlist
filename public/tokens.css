@@ -598,6 +598,50 @@ html[data-theme="charcoal"] {
   letter-spacing: .08em;
   color: var(--ink-faint);
 }
+/* the "Agent flows" heading carries an (i) that opens the explainer dialog */
+.rail-heading-info { display: flex; align-items: center; gap: 6px; }
+.rail-info-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: color .12s ease, background .12s ease;
+}
+.rail-info-btn:hover { color: var(--ink); background: var(--hover); }
+.rail-info-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* agent-flows explainer dialog */
+.flows-doc { display: flex; flex-direction: column; gap: 14px; }
+.flows-lede { margin: 0; color: var(--ink-soft); }
+.flows-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.flows-list li { display: flex; flex-direction: column; gap: 2px; }
+.flows-lane {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+}
+.flows-desc { color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
+.flows-flow {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+.flows-flow span { font-weight: 600; color: var(--ink); }
+.flows-flow em { font-style: normal; color: var(--ink-faint); }
+.flows-foot { margin: 0; font-size: 13px; color: var(--ink-soft); }
 /* project tree: explicit nesting — indent guide + disclosure carets */
 .rail-subtree {
   list-style: none;

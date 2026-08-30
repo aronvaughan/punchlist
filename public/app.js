@@ -70,6 +70,13 @@ document.getElementById('theme-open').addEventListener('click', () => {
   renderThemeChoices();
   document.getElementById('theme-dialog').open = true;
 });
+// the (i) on the "Agent flows" nav heading explains the delegation lifecycle
+document.getElementById('agentflows-info').addEventListener('click', () => {
+  document.getElementById('agentflows-dialog').open = true;
+});
+document.getElementById('agentflows-close').addEventListener('click', () => {
+  document.getElementById('agentflows-dialog').open = false;
+});
 
 // ---- state ----
 export const state = {
