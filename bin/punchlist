@@ -4,14 +4,20 @@
 //   punchlist mcp                                  run the MCP stdio server (src/mcp.js)
 //   punchlist install -t claude|hermes|all [--print-config]
 //                                                  register the MCP server with an agent
+//   punchlist install-service [--print] [--no-start]
+//                                                  install the always-on service:
+//                                                  systemd (Linux) or launchd (macOS)
+//   punchlist gen-token <actor>                    print a ready-to-paste token pair
 //   punchlist install-skills [--claude DIR] [--hermes DIR]
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, copyFileSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import { serviceSpec } from '../src/service.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -114,6 +120,75 @@ function installMcp(argv) {
   console.log(ENV_NOTE);
 }
 
+// ---- service install (systemd on Linux, launchd on macOS) ----
+// One command, both OSes: `punchlist install-service`. Platform-specific unit
+// rendering lives in src/service.js; this does the file write + service load.
+async function healthCheck(port, tries = 20) {
+  for (let i = 0; i < tries; i++) {
+    try { if ((await fetch(`http://127.0.0.1:${port}/api/v1/health`)).ok) return true; } catch { /* not up yet */ }
+    await new Promise(r => setTimeout(r, 600));
+  }
+  return false;
+}
+
+async function installService(argv) {
+  let printOnly = false, noStart = false, platform = process.platform;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--print') printOnly = true;
+    else if (argv[i] === '--no-start') noStart = true;
+    else if (argv[i] === '--platform' && argv[i + 1]) platform = argv[++i]; // for --print / testing
+    else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform)`); process.exit(2); }
+  }
+  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: process.execPath, home: homedir() });
+
+  if (printOnly) { console.log(`# ${spec.kind} unit -> ${spec.path}\n`); process.stdout.write(spec.contents); return; }
+  if (platform !== process.platform) {
+    console.error(`punchlist: refusing to install a ${platform} service on ${process.platform} (drop --platform, or use --print)`);
+    process.exit(2);
+  }
+  const envFile = join(dataDir, '.env');
+  if (!existsSync(envFile)) {
+    console.error(`punchlist: missing ${envFile} (it holds PUNCHLIST_TOKENS). Generate a token first:\n` +
+      `  punchlist gen-token <actor>   # e.g. aron\n` +
+      `then create ${envFile} (chmod 600) with the PUNCHLIST_TOKENS line it prints.`);
+    process.exit(1);
+  }
+
+  mkdirSync(dirname(spec.path), { recursive: true });
+  writeFileSync(spec.path, spec.contents);
+  if (spec.mode) chmodSync(spec.path, spec.mode);
+  console.log(`wrote ${spec.kind} unit -> ${spec.path}`);
+  if (noStart) { console.log(`(--no-start) not loading it. Start later with: ${spec.start[0][0]} ${spec.start[0][1].join(' ')}`); return; }
+
+  // reload/unload is best-effort (fails harmlessly on a first install)
+  for (const [c, a] of spec.reload) spawnSync(c, a, { stdio: 'ignore' });
+  for (const [c, a] of spec.start) spawnSync(c, a, { stdio: 'inherit' });
+
+  if (await healthCheck(spec.port)) {
+    console.log(`punchlist: healthy on http://127.0.0.1:${spec.port} — service is running`);
+  } else {
+    console.error(`punchlist: unit written but health check failed. Inspect: ${spec.status[0]} ${spec.status[1].join(' ')}`);
+    process.exitCode = 1;
+  }
+}
+
+// ---- token generation: print a ready-to-paste PUNCHLIST_TOKENS pair ----
+// Never writes your env files (same policy as install-skills); prints only.
+function genToken(argv) {
+  const actor = argv[0];
+  if (!actor || actor.startsWith('-')) {
+    console.error('usage: punchlist gen-token <actor>   # e.g. aron, claude, hermes');
+    process.exit(2);
+  }
+  const token = randomBytes(24).toString('hex'); // 48 hex chars (server floor is 32)
+  console.log(`# Server side — add "${actor}" to PUNCHLIST_TOKENS in your data/.env (chmod 600).`);
+  console.log(`# The FIRST actor is the admin unless PUNCHLIST_ADMIN is set.`);
+  console.log(`PUNCHLIST_TOKENS=${actor}:${token}`);
+  console.log(`# Client side — give that actor its token (e.g. ~/.claude/secrets.local.env, chmod 600):`);
+  console.log(`PUNCHLIST_TOKEN=${token}`);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 switch (cmd) {
@@ -127,6 +202,14 @@ switch (cmd) {
 
   case 'install':
     installMcp(rest);
+    break;
+
+  case 'install-service':
+    await installService(rest);
+    break;
+
+  case 'gen-token':
+    genToken(rest);
     break;
 
   case 'snapshot':
@@ -156,6 +239,8 @@ Now give each agent its token (this tool never edits your env files):
   }
 
   default:
-    console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | install-skills [--claude DIR] [--hermes DIR] | snapshot');
+    console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
+      'install-service [--print] [--no-start] | gen-token <actor> | ' +
+      'install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);
 }
