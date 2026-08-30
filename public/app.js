@@ -500,32 +500,39 @@ function setEventsSince(v) {
   try { localStorage.setItem(EVENTS_SINCE_KEY, String(v)); } catch { /* private mode */ }
 }
 
-const EVENT_MESSAGES = {
-  'task.review_requested': p => `"${p.title}" is ready for review`,
-  'task.blocked': p => `"${p.title}" is blocked: ${p.question || 'needs an answer'}`,
-  'task.answered': p => `"${p.title}" was answered — back in the queue`,
-  'task.approved': p => `"${p.title}" was approved`,
-};
+// Notifications are DELIBERATELY quiet: no toasts. A screen-filling wall of
+// event toasts stole focus and buried in-flight work. Instead, changes surface
+// as (a) the rail's own count badges + attention dot (via reload()), and (b) a
+// browser-tab count badge — "(3) punchlist" — accumulated only while you're not
+// looking, and cleared the moment the window regains focus. Short status toasts
+// from your OWN actions ("added to queue", "back in review") are unaffected.
+let unreadEvents = 0;
+function setTabBadge() {
+  const base = APP_NAME.toLowerCase();
+  document.title = unreadEvents > 0 ? `(${unreadEvents}) ${base}` : base;
+}
+window.addEventListener('focus', () => { if (unreadEvents) { unreadEvents = 0; setTabBadge(); } });
 
-// First-ever run (no stored cursor): silently adopt the current tail instead
-// of toasting the whole history at once. Every poll after that toasts + a
-// quiet reload() so the rail's existing count badges (review, needs_input,
-// the "attention" dot) pick up the change without a page refresh.
+// First-ever run (no stored cursor): silently adopt the current tail instead of
+// counting the whole history at once. Every poll after that bumps the tab badge
+// (when unfocused) + a quiet reload() so the rail badges pick up the change.
 let eventsBooted = localStorage.getItem(EVENTS_SINCE_KEY) !== null;
 
 async function pollEvents() {
   let res;
   try { res = await api('GET', `/events?since=${eventsSince()}`); }
-  catch { return; } // offline/unauthorized — try again next tick, no toast spam
+  catch { return; } // offline/unauthorized — try again next tick, no spam
   if (!eventsBooted) {
     setEventsSince(res.next_since);
     eventsBooted = true;
     return;
   }
   if (res.items.length) {
-    for (const e of res.items) {
-      const describe = EVENT_MESSAGES[e.event];
-      toast(describe ? describe(e.payload) : `${e.event}: ${e.payload.title}`, 'brand');
+    // count only when you can't see the change already; a focused tab shows it
+    // via the rail badges that reload() refreshes below.
+    if (document.hidden || !document.hasFocus()) {
+      unreadEvents += res.items.length;
+      setTabBadge();
     }
     setEventsSince(res.next_since);
     reload();
