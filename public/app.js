@@ -99,9 +99,30 @@ function renderFoot() {
   if (state.counts?.actor) bits.push(`signed in as ${state.counts.actor}`);
   foot.textContent = bits.join(' · ');
 }
+// --- new-version detection: an SPA doesn't re-fetch its JS on in-app nav, so an
+// open tab can run stale code after a deploy. Poll /health's `build` stamp and,
+// when it changes, offer a one-tap reload. ---
+let loadedBuild = null;
+function showReloadBanner() {
+  if (document.getElementById('reload-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'reload-banner';
+  bar.append(document.createTextNode('A new version is available. '));
+  const btn = document.createElement('button');
+  btn.textContent = 'Reload';
+  btn.addEventListener('click', () => location.reload());
+  bar.append(btn);
+  document.body.append(bar);
+}
 fetch('/api/v1/health').then(r => r.json())
-  .then(h => { state.version = h.version || ''; renderFoot(); })
+  .then(h => { state.version = h.version || ''; loadedBuild = h.build ?? null; renderFoot(); })
   .catch(() => {});
+setInterval(async () => {
+  try {
+    const h = await (await fetch('/api/v1/health', { cache: 'no-store' })).json();
+    if (loadedBuild != null && h.build != null && h.build !== loadedBuild) showReloadBanner();
+  } catch { /* offline: try again next tick */ }
+}, 120000);
 
 // due-soon window (days ahead), persisted; server validates 1..365
 export function dueWindow() {
