@@ -132,6 +132,12 @@ test('project context notepad: UI panel + dialog + agent read paths (pl.sh, MCP)
   assert.match(html, /id="project-context-text"/);
   const css = await (await get('/tokens.css')).text();
   assert.match(css, /\.project-context\s*\{/);
+  // working_dir: a project control + dialog + PATCH; surfaced to agents
+  assert.match(views, /function projectWorkingDir/);
+  assert.match(views, /listEl\.append\(projectWorkingDir\(project\)\)/);
+  assert.match(views, /working_dir: inp\.value\.trim\(\) \|\| null/);
+  assert.match(html, /id="project-workdir-dialog"/);
+  assert.match(css, /\.project-workdir\s*\{/);
   // Agent read: pl.sh marks projects with context and can print one project's readme
   const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
   assert.match(pl, /\[context\]/);                       // list marker
@@ -139,6 +145,7 @@ test('project context notepad: UI panel + dialog + agent read paths (pl.sh, MCP)
   // Agent read: the MCP projects tool includes context (was stripped before)
   const mcp = readFileSync(join(REPO, 'src/mcp.js'), 'utf8');
   assert.match(mcp, /p\.notes \? \{ context: p\.notes \}/);
+  assert.match(mcp, /p\.working_dir \? \{ working_dir: p\.working_dir \}/);
 });
 
 test('project context notepad: can point to a template via the shared AI-edit picker', async () => {

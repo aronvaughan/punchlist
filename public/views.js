@@ -1371,9 +1371,43 @@ function projectContextPanel(project) {
   return card;
 }
 
+// Working directory: the absolute local path the agent cd's into to work this
+// project's tasks. Folder icon + path (mono) → edit dialog; empty = an add cue.
+function projectWorkingDir(project) {
+  const wrap = el('div', 'project-workdir');
+  const label = el('span', 'pw-label');
+  label.append(icon('folder', { size: 13 }), document.createTextNode('Working dir'));
+  const val = el('button', 'pw-val');
+  const paint = () => {
+    val.textContent = project.working_dir || 'Set a local working directory…';
+    val.classList.toggle('empty', !project.working_dir);
+  };
+  paint();
+  val.addEventListener('click', () => {
+    const dlg = document.getElementById('project-workdir-dialog');
+    const inp = document.getElementById('project-workdir-input');
+    inp.value = project.working_dir || '';
+    document.getElementById('project-workdir-save').onclick = async () => {
+      try {
+        const updated = await api('PATCH', `/projects/${project.id}`, { working_dir: inp.value.trim() || null });
+        project.working_dir = updated.working_dir;
+        const i = state.projects.findIndex(p => p.id === project.id);
+        if (i >= 0) state.projects[i] = { ...state.projects[i], working_dir: updated.working_dir };
+        paint();
+      } catch (e) { toast(`Save failed: ${e.message}`); }
+      dlg.open = false;
+    };
+    document.getElementById('project-workdir-cancel').onclick = () => { dlg.open = false; };
+    dlg.open = true;
+    setTimeout(() => inp.focus(), 0);
+  });
+  wrap.append(label, val);
+  return wrap;
+}
+
 function renderProject(listEl, tasks) {
   const project = state.projects.find(p => p.id === state.route.projectId);
-  if (project) listEl.append(projectContextPanel(project));
+  if (project) { listEl.append(projectContextPanel(project)); listEl.append(projectWorkingDir(project)); }
   const t = todayISO();
   const bySection = [[], [], [], []];
   for (const task of tasks) bySection[sectionOf(task, t)].push(task);
