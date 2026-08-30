@@ -364,7 +364,8 @@ case "$cmd" in
     printf '%s' "$RESP" | jq -r --arg id "$pid" '
       .items[] | select(.id == $id)
       | "# " + .name + (if .archived == 1 then "  [archived]" else "" end)
-        + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end) + "\n\n"
+        + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
+        + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
   counts)

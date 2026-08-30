@@ -362,6 +362,7 @@ const TOOLS = [
       const { items } = await api('GET', '/projects?limit=500');
       return text({ items: items.map(p => ({ id: p.id, name: p.name,
         ...(p.archived ? { archived: true } : {}),
+        ...(p.working_dir ? { working_dir: p.working_dir } : {}),
         ...(p.notes ? { context: p.notes } : {}),
         ...(p.template ? { template: p.template } : {}) })) });
     },

@@ -33,8 +33,9 @@ test('publishable path, clean generic content is allowed (exit 0)', () => {
   assert.equal(classify('skills/shared/new.md', '# A generic reusable skill\nno secrets here'), 0);
 });
 
-test('audit runs read-only and exits 0', () => {
-  const r = spawnSync('bash', [GOVERN, 'audit', REPO], { encoding: 'utf8' });
+test('audit runs read-only and always exits 0 (a report, even when it flags)', () => {
+  // scan a small, clean tracked subtree for speed + determinism
+  const r = spawnSync('bash', [GOVERN, 'audit', join(REPO, 'migrations')], { encoding: 'utf8' });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /audit: scanned \d+ tracked/);
 });

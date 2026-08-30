@@ -1473,7 +1473,16 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   // ---- projects ----
-  const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived', 'template']);
+  const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived', 'template', 'working_dir']);
+  // working_dir: an absolute local path (or null). Validated only as a bounded
+  // string — existence isn't checked (the dir may be created later); it is
+  // operator-set, never derived from task content.
+  const validateWorkingDir = body => {
+    if (body.working_dir === undefined || body.working_dir === null) return;
+    if (typeof body.working_dir !== 'string' || body.working_dir.length > 1024) {
+      throw new ApiError(400, 'working_dir must be a string (<=1024 chars) or null');
+    }
+  };
 
   // template: a free string (a template NAME) or null — mirrors the task
   // field (migration 007); deliberately NOT validated against a known set,
@@ -1517,6 +1526,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       throw new ApiError(400, 'name required (<=500 chars)');
     }
     validateProjectTemplate(body);
+    validateWorkingDir(body);
     if (body.parent_id != null && !getProject(body.parent_id)) throw new ApiError(400, 'parent project not found');
     if (db.prepare('SELECT 1 FROM projects WHERE name = ?').get(body.name.trim())) {
       throw new ApiError(409, 'project name already exists');
@@ -1525,10 +1535,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const now = new Date().toISOString();
     const { m } = db.prepare('SELECT MAX(rank) m FROM projects').get();
     db.prepare(
-      `INSERT INTO projects (id, name, notes, parent_id, domain, rank, archived, created_at, updated_at, template)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+      `INSERT INTO projects (id, name, notes, parent_id, domain, rank, archived, created_at, updated_at, template, working_dir)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
     ).run(id, body.name.trim(), body.notes ?? '', body.parent_id ?? null, body.domain ?? null,
-          (m ?? 0) + 1024, now, now, body.template ?? null);
+          (m ?? 0) + 1024, now, now, body.template ?? null, body.working_dir ?? null);
     return c.json(getProject(id), 201);
   });
 
@@ -1541,6 +1551,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       throw new ApiError(400, 'name must be non-empty');
     }
     validateProjectTemplate(body);
+    validateWorkingDir(body);
     if (body.name !== undefined &&
         db.prepare('SELECT 1 FROM projects WHERE name = ? AND id <> ?').get(body.name.trim(), project.id)) {
       throw new ApiError(409, 'project name already exists');
@@ -1558,9 +1569,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     const merged = { ...project, ...body, archived: body.archived === undefined ? project.archived : (body.archived ? 1 : 0) };
     db.prepare(
-      `UPDATE projects SET name=?, notes=?, parent_id=?, domain=?, archived=?, updated_at=?, template=? WHERE id=?`
+      `UPDATE projects SET name=?, notes=?, parent_id=?, domain=?, archived=?, updated_at=?, template=?, working_dir=? WHERE id=?`
     ).run(merged.name.trim(), merged.notes, merged.parent_id, merged.domain, merged.archived,
-          new Date().toISOString(), merged.template ?? null, project.id);
+          new Date().toISOString(), merged.template ?? null, merged.working_dir ?? null, project.id);
     return c.json(getProject(project.id));
   });
 
