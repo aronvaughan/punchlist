@@ -245,6 +245,29 @@ test('notifications are quiet: event poll updates a browser-tab count badge, not
   // the events poller must no longer toast each event (the wall-of-text problem)
   const i = app.indexOf('async function pollEvents');
   assert.doesNotMatch(app.slice(i, i + 900), /toast\(/);
+  // native/iOS push is explicitly out of scope, not silently skipped
+  assert.match(app, /OUT OF SCOPE/);
+});
+
+test('toast() never steals focus: it appends a callout and never calls .focus()/.blur()', async () => {
+  const { get } = makeApp();
+  const app = await (await get('/app.js')).text();
+  const i = app.indexOf('export function toast(');
+  const body = app.slice(i, app.indexOf('\n}', i));
+  assert.doesNotMatch(body, /\.focus\(\)/);
+  assert.doesNotMatch(body, /\.blur\(\)/);
+});
+
+test('status-update toasts from direct user action still fire (owner said these are good)', async () => {
+  const { get } = makeApp();
+  // quick-add success — a direct response to the user's own submit
+  const inline = await (await get('/inline.js')).text();
+  assert.match(inline, /toast\(`Added to \$\{where\}`, 'success'\)/);
+  // approve/vet/answer — direct responses to the user's own review actions
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /toast\(res\.spawned_id \? 'Approved.*'success'\)/);
+  assert.match(views, /toast\('Vetted.*'success'\)/);
+  assert.match(views, /toast\('Answer sent.*'success'\)/);
 });
 
 test('assignee pill: list view is icon-only per-agent (claude/hermes/person), name via title+aria-label', async () => {
