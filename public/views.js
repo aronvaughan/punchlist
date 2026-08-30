@@ -4,6 +4,7 @@ import Sortable from '/vendor/sortable.core.esm.js';
 import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor } from '/app.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { expandRow, createInline } from '/inline.js';
+import { openTemplatePicker } from '/detail.js';
 import { mdToHtml } from '/md.js';
 import { icon } from '/icons.js';
 
@@ -1305,10 +1306,33 @@ function renderAgents(listEl, tasks) {
 // project.notes) that agents read for background before working the project's
 // tasks. Rendered markdown (mdToHtml escapes all input — the safe sink); edited
 // through #project-context-dialog. Empty state doubles as an add affordance.
+// The notepad can also "point to" a punchlist-templates template (project.template,
+// migration 012, mirrors task.template) — the same picker/AI-edit pencil the task
+// drawer uses (openTemplatePicker + tpleditor.js) is reused here unmodified.
 function projectContextPanel(project) {
   const card = el('div', 'project-context');
   const head = el('div', 'pc-head');
   head.append(icon('book', { size: 14 }), el('span', 'pc-label', 'Context'));
+
+  const tplBtn = el('button', 'pc-template');
+  const paintTpl = () => {
+    tplBtn.replaceChildren(icon('file-text', { size: 13 }),
+      el('span', 'pc-template-text', project.template || 'No template'));
+    tplBtn.title = project.template ? `Template: ${project.template} (change or AI-edit)` : 'Point this project at a template';
+  };
+  paintTpl();
+  const saveTemplate = async patch => {
+    try {
+      const updated = await api('PATCH', `/projects/${project.id}`, patch);
+      project.template = updated.template;
+      const i = state.projects.findIndex(p => p.id === project.id);
+      if (i >= 0) state.projects[i] = { ...state.projects[i], template: updated.template };
+      return true;
+    } catch (e) { toast(`Save failed: ${e.message}`); return false; }
+  };
+  tplBtn.addEventListener('click', () => openTemplatePicker(project, saveTemplate, paintTpl));
+  head.append(tplBtn);
+
   const edit = el('button', 'pc-edit');
   edit.append(icon('pencil-simple', { size: 14 }));
   edit.setAttribute('aria-label', 'Edit project context');

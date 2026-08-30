@@ -141,6 +141,23 @@ test('project context notepad: UI panel + dialog + agent read paths (pl.sh, MCP)
   assert.match(mcp, /p\.notes \? \{ context: p\.notes \}/);
 });
 
+test('project context notepad: can point to a template via the shared AI-edit picker', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  // reuses the task drawer's template picker (openTemplatePicker + tpleditor.js),
+  // not a bespoke project-only mechanism
+  assert.match(views, /import \{ openTemplatePicker \} from ['"]\/detail\.js['"]/);
+  assert.match(views, /openTemplatePicker\(project, saveTemplate, paintTpl\)/);
+  assert.match(views, /PATCH', `\/projects\/\$\{project\.id\}`, patch\)/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.pc-template\s*\{/);
+  // Agent read: pl.sh + MCP surface the template pointer alongside context
+  const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
+  assert.match(pl, /\[template: /);
+  const mcp = readFileSync(join(REPO, 'src/mcp.js'), 'utf8');
+  assert.match(mcp, /p\.template \? \{ template: p\.template \}/);
+});
+
 test('assignee pill: list view is icon-only per-agent (claude/hermes/person), name via title+aria-label', async () => {
   const { get } = makeApp();
   const icons = await (await get('/icons.js')).text();

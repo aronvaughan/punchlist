@@ -11,7 +11,7 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
   assert.deepEqual(versions.map(v => v.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events', '012-project-template']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -118,7 +118,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
 
   migrate(); // real migrations dir — applies 002 (rebuild), 003 (vetting), 004 (rebuild), 005 (attachments)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events', '012-project-template']);
   // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
@@ -337,6 +337,36 @@ test('011-task-events adds a fresh, empty task_events table with a seq cursor an
   // deleting the task cascades into its events, same as comments/attachments
   db.prepare('DELETE FROM tasks WHERE id = ?').run('t1');
   assert.equal(db.prepare('SELECT COUNT(*) c FROM task_events').get().c, 0);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('012-project-template upgrades a lived-in 011 db: projects survive; template column lands additively, no rebuild', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
+  const dbPath = join(dir, 'punchlist.db');
+  // seed a database that knows every migration up to 011 (no 012 yet)
+  const migDirPre = join(dir, 'migs-pre');
+  mkdirSync(migDirPre);
+  for (const f of ['001-init.sql', '002-delegation.sql', '003-vetting.sql', '004-needs-input.sql',
+                   '005-attachments.sql', '006-comments.sql', '007-template.sql', '008-view-ranks.sql',
+                   '009-task-version.sql', '010-doc-attachments.sql', '011-task-events.sql']) {
+    writeFileSync(join(migDirPre, f), readFileSync(join(import.meta.dirname, '..', 'migrations', f)));
+  }
+  const { db, migrate } = open(dbPath);
+  migrate(migDirPre);
+  db.prepare(`INSERT INTO projects (id,name,notes,created_at,updated_at) VALUES ('p1','Carried over','# readme','t','t')`).run();
+  // pre-012 there is no template column on projects
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM pragma_table_info('projects') WHERE name='template'`).get().c, 0);
+
+  migrate(); // real dir — applies 012 (plain ADD COLUMN, no rebuild)
+  assert.equal(db.prepare('SELECT version FROM schema_migrations WHERE version=?').get('012-project-template').version,
+    '012-project-template');
+  const p1 = db.prepare('SELECT * FROM projects WHERE id = ?').get('p1');
+  assert.equal(p1.name, 'Carried over');
+  assert.equal(p1.notes, '# readme');
+  assert.equal(p1.template, null);
+  db.prepare(`UPDATE projects SET template = 'research-brief' WHERE id = 'p1'`).run();
+  assert.equal(db.prepare('SELECT template FROM projects WHERE id=?').get('p1').template, 'research-brief');
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   rmSync(dir, { recursive: true, force: true });
 });
