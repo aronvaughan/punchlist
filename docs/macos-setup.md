@@ -11,6 +11,32 @@ handled by the tooling.
 
 ---
 
+## Quick start (one-shot)
+
+After installing Homebrew + the Claude CLI and cloning the repo:
+
+```bash
+cd ~/code/punchlist
+bash scripts/install/setup.sh --init-tokens   # detects the OS, installs prereqs,
+                                              # links the CLI, creates data/.env,
+                                              # installs the launchd service, runs doctor
+```
+
+`setup.sh` detects Linux vs macOS and runs the machine-specific installs; the
+service step (`punchlist install-service`) picks systemd or launchd automatically.
+Re-runnable any time. To check a machine's state without changing anything:
+
+```bash
+bash scripts/doctor.sh        # or: punchlist doctor
+```
+
+`doctor` reports prerequisites (node≥26, jq, curl, claude, gtimeout on macOS,
+tailscale), config (`data/.env` + perms), the service (installed + active), live
+`/health`, and whether the agent sweep is scheduled — exiting non-zero if a
+required check fails. The rest of this doc is the same steps, explained.
+
+---
+
 ## 1. Prerequisites
 
 ```bash
