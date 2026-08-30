@@ -235,6 +235,18 @@ test('instance identity: footer name link + Instance dialog + PATCH /instance', 
   assert.match(css, /\.foot-instance\s*\{/);
 });
 
+test('notifications are quiet: event poll updates a browser-tab count badge, not toasts', async () => {
+  const { get } = makeApp();
+  const app = await (await get('/app.js')).text();
+  assert.match(app, /let unreadEvents = 0/);
+  assert.match(app, /function setTabBadge/);
+  assert.match(app, /document\.title = unreadEvents > 0/);
+  assert.match(app, /addEventListener\('focus'/);          // count cleared on focus
+  // the events poller must no longer toast each event (the wall-of-text problem)
+  const i = app.indexOf('async function pollEvents');
+  assert.doesNotMatch(app.slice(i, i + 900), /toast\(/);
+});
+
 test('assignee pill: list view is icon-only per-agent (claude/hermes/person), name via title+aria-label', async () => {
   const { get } = makeApp();
   const icons = await (await get('/icons.js')).text();
