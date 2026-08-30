@@ -48,6 +48,7 @@ function parseFlags(argv, allowed) {
 function installSkill(srcDir, destDir, envFileExpr) {
   mkdirSync(destDir, { recursive: true });
   cpSync(srcDir, destDir, { recursive: true });
+  mkdirSync(join(destDir, 'scripts'), { recursive: true }); // some skills ship no scripts/ dir
   const core = join(destDir, 'scripts', 'pl-core.sh');
   copyFileSync(join(ROOT, 'skills', 'shared', 'pl.sh'), core);
   chmodSync(core, 0o755);
@@ -61,6 +62,13 @@ function installSkill(srcDir, destDir, envFileExpr) {
   const screen = join(destDir, 'scripts', 'screen.sh');
   copyFileSync(join(ROOT, 'skills', 'shared', 'screen.sh'), screen);
   chmodSync(screen, 0o755);
+  // the data-governance guard + PreToolUse wrapper travel with every skill too
+  // (no token needed) so `govern.sh classify` / the hook are always reachable
+  for (const g of ['govern.sh', 'govern-hook.sh']) {
+    const dst = join(destDir, 'scripts', g);
+    copyFileSync(join(ROOT, 'skills', 'shared', g), dst);
+    chmodSync(dst, 0o755);
+  }
   console.log(`installed ${destDir}`);
 }
 
@@ -340,6 +348,19 @@ switch (cmd) {
     const claudeDir = resolve(flags.claude ?? join(homedir(), '.claude'));
     installSkill(join(ROOT, 'skills', 'claude', 'punchlist'), join(claudeDir, 'skills', 'punchlist'),
       '$HOME/.claude/secrets.local.env');
+    // data-governance skill + the guard scripts the PreToolUse hook references
+    installSkill(join(ROOT, 'skills', 'claude', 'punchlist-govern'), join(claudeDir, 'skills', 'punchlist-govern'),
+      '$HOME/.claude/secrets.local.env');
+    const hookDir = join(claudeDir, 'hooks', 'punchlist-govern');
+    mkdirSync(hookDir, { recursive: true });
+    for (const g of ['govern.sh', 'govern-hook.sh']) {
+      const dst = join(hookDir, g);
+      copyFileSync(join(ROOT, 'skills', 'shared', g), dst);
+      chmodSync(dst, 0o755);
+    }
+    console.log(`installed govern hook scripts → ${hookDir}`);
+    console.log('  wire the guard (warn-only) in settings.json PreToolUse on Write|Edit|MultiEdit:');
+    console.log('    if [ -f "$HOME/.claude/hooks/punchlist-govern/govern-hook.sh" ]; then bash "$HOME/.claude/hooks/punchlist-govern/govern-hook.sh" --warn; fi');
     const hermesHome = flags.hermes ?? process.env.HERMES_HOME;
     if (hermesHome) {
       installSkill(join(ROOT, 'skills', 'hermes', 'punchlist'),

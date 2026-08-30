@@ -68,6 +68,30 @@ fi
 echo "--> install-service"
 node bin/punchlist install-service
 
+# --- agent provisioning: MCP tools + skills + governance guard ---
+echo "--> agent provisioning (MCP + skills + governance)"
+need claude && node bin/punchlist install -t claude || echo "  · claude CLI absent — skipping MCP registration (run 'punchlist install -t claude' later)"
+node bin/punchlist install-skills          # punchlist + punchlist-govern skills, govern hook scripts
+# plt (templates) skill, if the templates repo is a sibling checkout
+PLT="$HOME/code/punchlist-templates"
+[ -d "$PLT/skills" ] && { mkdir -p "$HOME/.claude/skills/punchlist-templates"; cp -r "$PLT/skills/." "$HOME/.claude/skills/punchlist-templates/" 2>/dev/null && echo "  installed plt skill"; } || echo "  · punchlist-templates not found — skipping plt skill"
+
+# private data homes (the private plane) + the skills-local surface + terms list
+mkdir -p "$REPO/data/skills" "$REPO/data/templates" "$REPO/data/kb" "$REPO/data/govern"
+ln -sfn "$REPO/data/skills" "$HOME/.claude/skills-local"
+[ -f "$REPO/data/govern/private-terms.txt" ] || { printf '# private client/company/personal identifiers, one per line — read by govern.sh, never published.\n' > "$REPO/data/govern/private-terms.txt"; chmod 600 "$REPO/data/govern/private-terms.txt"; }
+
+# wire the warn-only governance guard into settings.json (idempotent) if jq is present
+SETTINGS="$HOME/.claude/settings.json"
+if command -v jq >/dev/null 2>&1 && [ -f "$SETTINGS" ]; then
+  if ! jq -e '.hooks.PreToolUse[]?.hooks[]?.command | select(test("govern-hook"))' "$SETTINGS" >/dev/null 2>&1; then
+    tmp="$(mktemp)"; jq '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{
+      "matcher":"Write|Edit|MultiEdit",
+      "hooks":[{"type":"command","command":"if [ -f \"$HOME/.claude/hooks/punchlist-govern/govern-hook.sh\" ]; then bash \"$HOME/.claude/hooks/punchlist-govern/govern-hook.sh\" --warn; fi","timeout":10,"statusMessage":"punchlist-govern: checking artifact placement"}]
+    }])' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS" && echo "  wired govern guard (warn-only) into settings.json"
+  else echo "  · govern guard already wired in settings.json"; fi
+else echo "  · skipped settings.json hook wiring (need jq + an existing settings.json)"; fi
+
 # --- doctor ---
 echo "--> doctor"
 node bin/punchlist doctor || true
