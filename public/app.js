@@ -506,6 +506,9 @@ function setEventsSince(v) {
 // browser-tab count badge — "(3) punchlist" — accumulated only while you're not
 // looking, and cleared the moment the window regains focus. Short status toasts
 // from your OWN actions ("added to queue", "back in review") are unaffected.
+// Native/iOS push notifications were considered and are OUT OF SCOPE for this
+// change: they need a service worker + push subscription + a push endpoint,
+// well beyond a tab-title badge.
 let unreadEvents = 0;
 function setTabBadge() {
   const base = APP_NAME.toLowerCase();
