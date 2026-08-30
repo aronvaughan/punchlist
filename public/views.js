@@ -1306,71 +1306,29 @@ function renderAgents(listEl, tasks) {
 
 // Project "Context" notepad: a per-project readme/overview (stored in
 // project.notes) that agents read for background before working the project's
-// tasks. Rendered markdown (mdToHtml escapes all input — the safe sink); edited
-// through #project-context-dialog. Empty state doubles as an add affordance.
-// The notepad can also "point to" a punchlist-templates template (project.template,
-// migration 012, mirrors task.template) — the same picker/AI-edit pencil the task
-// drawer uses (openTemplatePicker + tpleditor.js) is reused here unmodified.
+// tasks, plus an optional pointer at a punchlist-templates template
+// (project.template, migration 012, mirrors task.template).
+// Same icon->pill->dialog convention as every other compact "add a value"
+// affordance (attachmentsEditor in detail.js; project/template/when/due/tags
+// controls in inline.js): unset = a bare book icon; set = a pill with a
+// distinct icon (file-text, signalling "has content") and a minimal readout
+// (word count / template name). Both open the one shared edit dialog, which
+// now also hosts the template picker button (moved in from the old always-
+// visible panel header) — the dialog/editor itself is unchanged, only the
+// trigger shrank.
 function projectContextPanel(project) {
-  const card = el('div', 'project-context');
-  const head = el('div', 'pc-head');
-  head.append(icon('book', { size: 14 }), el('span', 'pc-label', 'Context'));
-
-  const tplBtn = el('button', 'pc-template');
-  const paintTpl = () => {
-    tplBtn.replaceChildren(icon('file-text', { size: 13 }),
-      el('span', 'pc-template-text', project.template || 'No template'));
-    tplBtn.title = project.template ? `Template: ${project.template} (change or AI-edit)` : 'Point this project at a template';
-  };
-  paintTpl();
-  const saveTemplate = async patch => {
-    try {
-      const updated = await api('PATCH', `/projects/${project.id}`, patch);
-      project.template = updated.template;
-      const i = state.projects.findIndex(p => p.id === project.id);
-      if (i >= 0) state.projects[i] = { ...state.projects[i], template: updated.template };
-      return true;
-    } catch (e) { toast(`Save failed: ${e.message}`); return false; }
-  };
-  tplBtn.addEventListener('click', () => openTemplatePicker(project, saveTemplate, paintTpl));
-  head.append(tplBtn);
-
-  const edit = el('button', 'pc-edit');
-  edit.append(icon('pencil-simple', { size: 14 }));
-  edit.setAttribute('aria-label', 'Edit project context');
-  edit.title = 'Edit project context';
-  head.append(edit);
-
-  const body = el('div', 'pc-body');
-  const paint = () => {
-    const notes = project.notes ?? '';
-    if (notes.trim()) { body.innerHTML = mdToHtml(notes); body.classList.remove('empty'); }
-    else { body.textContent = 'No context yet — a readme agents read for an overview of this project. Click to add.'; body.classList.add('empty'); }
-  };
-  paint();
-
-  const open = () => {
-    const dlg = document.getElementById('project-context-dialog');
-    const ta = document.getElementById('project-context-text');
-    ta.value = project.notes ?? '';
-    document.getElementById('project-context-save').onclick = async () => {
-      try {
-        const updated = await api('PATCH', `/projects/${project.id}`, { notes: ta.value });
-        project.notes = updated.notes;
-        const i = state.projects.findIndex(p => p.id === project.id);
-        if (i >= 0) state.projects[i] = { ...state.projects[i], notes: updated.notes };
-        paint();
-      } catch (e) { toast(`Save failed: ${e.message}`); }
-      dlg.open = false;
-    };
-    document.getElementById('project-context-cancel').onclick = () => { dlg.open = false; };
-    dlg.open = true;
-    setTimeout(() => ta.focus(), 0);
-  };
-  edit.addEventListener('click', open);
-  body.addEventListener('click', () => { if (body.classList.contains('empty')) open(); });
-  card.append(head, body);
-  return card;
+  return contextNotepad({
+    subject: project,
+    collection: state.projects,
+    patch: '/projects/',
+    dialogId: 'project-context-dialog',
+    textId: 'project-context-text',
+    tplBtnId: 'project-context-tpl-btn',
+    saveId: 'project-context-save',
+    cancelId: 'project-context-cancel',
+    unsetLabel: 'Add project context',
+    editLabel: 'Edit project context',
+  });
 }
 
 // Working directory: the absolute local path the agent cd's into to work this
@@ -1414,65 +1372,104 @@ function projectWorkingDir(project) {
 // Can also point at a punchlist-templates template (tag.template) via the
 // same openTemplatePicker + tpleditor.js AI-edit affordance projects use.
 function tagContextPanel(tag) {
-  const card = el('div', 'project-context');
-  const head = el('div', 'pc-head');
-  head.append(icon('book', { size: 14 }), el('span', 'pc-label', 'Context'));
+  return contextNotepad({
+    subject: tag,
+    collection: state.tags,
+    patch: '/tags/',
+    dialogId: 'tag-context-dialog',
+    textId: 'tag-context-text',
+    tplBtnId: 'tag-context-tpl-btn',
+    saveId: 'tag-context-save',
+    cancelId: 'tag-context-cancel',
+    unsetLabel: 'Add tag context',
+    editLabel: 'Edit tag context',
+  });
+}
 
-  const tplBtn = el('button', 'pc-template');
-  const paintTpl = () => {
-    tplBtn.replaceChildren(icon('file-text', { size: 13 }),
-      el('span', 'pc-template-text', tag.template || 'No template'));
-    tplBtn.title = tag.template ? `Template: ${tag.template} (change or AI-edit)` : 'Point this tag at a template';
+// Shared icon->pill->dialog notepad primitive behind projectContextPanel and
+// tagContextPanel. Follows the same compact "add a value" convention as
+// attachmentsEditor (detail.js) and the project/template/when/due/tags
+// controls (inline.js): unset = a bare book icon; set = a pill with a
+// distinct "has content" icon (file-text) and a minimal readout (word count
+// and/or template name). Both open the shared edit dialog (textarea + the
+// template-picker button hosted inside it); the dialog/editor content itself
+// is untouched — only the outer trigger changed from an always-visible panel.
+function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId, saveId, cancelId, unsetLabel, editLabel }) {
+  const wrap = el('div', 'meta-field project-context');
+  const btn = el('button', 'meta-icon-btn');
+  btn.type = 'button';
+  btn.append(icon('book', { size: 15 }));
+  btn.setAttribute('aria-label', unsetLabel);
+  btn.title = unsetLabel;
+
+  const pill = el('button', 'meta-pill');
+  pill.type = 'button';
+  pill.title = editLabel;
+
+  const summary = () => {
+    const notes = (subject.notes ?? '').trim();
+    const bits = [];
+    if (notes) {
+      const words = notes.split(/\s+/).filter(Boolean).length;
+      bits.push(`${words} word${words === 1 ? '' : 's'}`);
+    }
+    if (subject.template) bits.push(subject.template);
+    return bits.join(' · ');
   };
-  paintTpl();
-  const saveTemplate = async patch => {
+
+  const paint = () => {
+    const hasContent = (subject.notes ?? '').trim() || subject.template;
+    if (hasContent) {
+      pill.replaceChildren(icon('file-text', { size: 13 }), el('span', 'pill-text', summary()));
+      pill.hidden = false;
+      btn.hidden = true;
+    } else {
+      pill.hidden = true;
+      btn.hidden = false;
+    }
+  };
+
+  const saveTemplate = async fields => {
     try {
-      const updated = await api('PATCH', `/tags/${tag.id}`, patch);
-      tag.template = updated.template;
-      const i = state.tags.findIndex(g => g.id === tag.id);
-      if (i >= 0) state.tags[i] = { ...state.tags[i], template: updated.template };
+      const updated = await api('PATCH', `${patch}${subject.id}`, fields);
+      subject.template = updated.template;
+      const i = collection.findIndex(x => x.id === subject.id);
+      if (i >= 0) collection[i] = { ...collection[i], template: updated.template };
       return true;
     } catch (e) { toast(`Save failed: ${e.message}`); return false; }
   };
-  tplBtn.addEventListener('click', () => openTemplatePicker(tag, saveTemplate, paintTpl));
-  head.append(tplBtn);
-
-  const edit = el('button', 'pc-edit');
-  edit.append(icon('pencil-simple', { size: 14 }));
-  edit.setAttribute('aria-label', 'Edit tag context');
-  edit.title = 'Edit tag context';
-  head.append(edit);
-
-  const body = el('div', 'pc-body');
-  const paint = () => {
-    const notes = tag.notes ?? '';
-    if (notes.trim()) { body.innerHTML = mdToHtml(notes); body.classList.remove('empty'); }
-    else { body.textContent = 'No context yet — a readme agents read for an overview of this tag. Click to add.'; body.classList.add('empty'); }
-  };
-  paint();
 
   const open = () => {
-    const dlg = document.getElementById('tag-context-dialog');
-    const ta = document.getElementById('tag-context-text');
-    ta.value = tag.notes ?? '';
-    document.getElementById('tag-context-save').onclick = async () => {
+    const dlg = document.getElementById(dialogId);
+    const ta = document.getElementById(textId);
+    const tplBtn = document.getElementById(tplBtnId);
+    ta.value = subject.notes ?? '';
+    const paintTpl = () => {
+      tplBtn.replaceChildren(icon('file-text', { size: 13 }),
+        el('span', 'pc-template-text', subject.template || 'No template'));
+      tplBtn.title = subject.template ? `Template: ${subject.template} (change or AI-edit)` : 'Point this at a template';
+    };
+    paintTpl();
+    tplBtn.onclick = () => openTemplatePicker(subject, saveTemplate, () => { paintTpl(); paint(); });
+    document.getElementById(saveId).onclick = async () => {
       try {
-        const updated = await api('PATCH', `/tags/${tag.id}`, { notes: ta.value });
-        tag.notes = updated.notes;
-        const i = state.tags.findIndex(g => g.id === tag.id);
-        if (i >= 0) state.tags[i] = { ...state.tags[i], notes: updated.notes };
+        const updated = await api('PATCH', `${patch}${subject.id}`, { notes: ta.value });
+        subject.notes = updated.notes;
+        const i = collection.findIndex(x => x.id === subject.id);
+        if (i >= 0) collection[i] = { ...collection[i], notes: updated.notes };
         paint();
       } catch (e) { toast(`Save failed: ${e.message}`); }
       dlg.open = false;
     };
-    document.getElementById('tag-context-cancel').onclick = () => { dlg.open = false; };
+    document.getElementById(cancelId).onclick = () => { dlg.open = false; };
     dlg.open = true;
     setTimeout(() => ta.focus(), 0);
   };
-  edit.addEventListener('click', open);
-  body.addEventListener('click', () => { if (body.classList.contains('empty')) open(); });
-  card.append(head, body);
-  return card;
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  paint();
+  wrap.append(btn, pill);
+  return wrap;
 }
 
 function renderProject(listEl, tasks) {

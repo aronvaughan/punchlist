@@ -120,18 +120,27 @@ test('task rows: title line is title+due only; everything else on an icon-pilled
   assert.doesNotMatch(views, /toggleRowTags/); // inline row tag-editing is gone
 });
 
-test('project context notepad: UI panel + dialog + agent read paths (pl.sh, MCP)', async () => {
+test('project context notepad: compact icon/pill control + dialog + agent read paths (pl.sh, MCP)', async () => {
   const { get } = makeApp();
-  // UI: the project view renders a Context panel (project.notes) editable via a dialog
+  // UI: the project view renders a compact icon->pill control (project.notes),
+  // following the same convention as attachmentsEditor/inline.js controls —
+  // unset = bare icon, set = pill with a minimal readout — editable via a dialog
   const views = await (await get('/views.js')).text();
   assert.match(views, /function projectContextPanel/);
+  assert.match(views, /function contextNotepad/);        // shared icon->pill->dialog primitive
   assert.match(views, /listEl\.append\(projectContextPanel\(project\)\)/);   // prepended in renderProject
-  assert.match(views, /PATCH', `\/projects\/\$\{project\.id\}`, \{ notes: ta\.value \}/); // saves to project.notes
+  assert.match(views, /const btn = el\('button', 'meta-icon-btn'\)/);
+  assert.match(views, /const pill = el\('button', 'meta-pill'\)/);
+  assert.match(views, /pill\.replaceChildren\(icon\('file-text', \{ size: 13 \}\)/); // set state: distinct icon + readout
+  assert.match(views, /PATCH', `\$\{patch\}\$\{subject\.id\}`, \{ notes: ta\.value \}/); // saves to project.notes
   const html = await (await get('/')).text();
   assert.match(html, /id="project-context-dialog"/);
   assert.match(html, /id="project-context-text"/);
+  assert.match(html, /id="project-context-tpl-btn"/);    // template button now hosted inside the dialog
   const css = await (await get('/tokens.css')).text();
   assert.match(css, /\.project-context\s*\{/);
+  assert.match(css, /\.meta-icon-btn\s*\{/);
+  assert.match(css, /\.meta-pill\s*\{/);
   // working_dir: a project control + dialog + PATCH; surfaced to agents
   assert.match(views, /function projectWorkingDir/);
   assert.match(views, /listEl\.append\(projectWorkingDir\(project\)\)/);
@@ -152,10 +161,11 @@ test('project context notepad: can point to a template via the shared AI-edit pi
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
   // reuses the task drawer's template picker (openTemplatePicker + tpleditor.js),
-  // not a bespoke project-only mechanism
+  // not a bespoke project-only mechanism; the picker button now lives inside
+  // the edit dialog rather than the (now-compact) trigger
   assert.match(views, /import \{ openTemplatePicker \} from ['"]\/detail\.js['"]/);
-  assert.match(views, /openTemplatePicker\(project, saveTemplate, paintTpl\)/);
-  assert.match(views, /PATCH', `\/projects\/\$\{project\.id\}`, patch\)/);
+  assert.match(views, /openTemplatePicker\(subject, saveTemplate, \(\) => \{ paintTpl\(\); paint\(\); \}\)/);
+  assert.match(views, /PATCH', `\$\{patch\}\$\{subject\.id\}`, fields\)/);
   const css = await (await get('/tokens.css')).text();
   assert.match(css, /\.pc-template\s*\{/);
   // Agent read: pl.sh + MCP surface the template pointer alongside context
@@ -165,16 +175,16 @@ test('project context notepad: can point to a template via the shared AI-edit pi
   assert.match(mcp, /p\.template \? \{ template: p\.template \}/);
 });
 
-test('tag context notepad: UI panel + dialog + agent read paths (pl.sh) — mirrors project context', async () => {
+test('tag context notepad: compact icon/pill control + dialog + agent read paths (pl.sh) — mirrors project context', async () => {
   const { get } = makeApp();
-  // UI: the tag view renders a Context panel (tag.notes) editable via a dialog
+  // UI: the tag view renders the same compact icon->pill control (tag.notes)
   const views = await (await get('/views.js')).text();
   assert.match(views, /function tagContextPanel/);
   assert.match(views, /if \(tag\) listEl\.append\(tagContextPanel\(tag\)\)/);
-  assert.match(views, /PATCH', `\/tags\/\$\{tag\.id\}`, \{ notes: ta\.value \}/); // saves to tag.notes
   const html = await (await get('/')).text();
   assert.match(html, /id="tag-context-dialog"/);
   assert.match(html, /id="tag-context-text"/);
+  assert.match(html, /id="tag-context-tpl-btn"/);    // template button now hosted inside the dialog
   // Agent read: pl.sh marks tags with context and can print one tag's readme,
   // AFTER instance + project context per the injection order (root -> project -> tag)
   const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
@@ -186,13 +196,27 @@ test('tag context notepad: UI panel + dialog + agent read paths (pl.sh) — mirr
 test('tag context notepad: can point to a template via the shared AI-edit picker', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
-  // reuses the shared template picker (openTemplatePicker + tpleditor.js), not
-  // a bespoke tag-only mechanism
-  assert.match(views, /openTemplatePicker\(tag, saveTemplate, paintTpl\)/);
-  assert.match(views, /PATCH', `\/tags\/\$\{tag\.id\}`, patch\)/);
+  // reuses the shared template picker (openTemplatePicker + tpleditor.js) and
+  // the same contextNotepad primitive projects use — not a bespoke tag-only mechanism
+  assert.match(views, /function contextNotepad/);
   // Agent read: pl.sh surfaces the template pointer alongside context
   const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
   assert.match(pl, /\[template: /);
+});
+
+test('context notepad icon: unset = bare icon, set = pill with word-count/template readout', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  const body = views.slice(views.indexOf('function contextNotepad'), views.indexOf('function contextNotepad') + 3000);
+  // unset state: bare book icon (same family as other unset meta-icon-btn triggers)
+  assert.match(body, /btn\.append\(icon\('book', \{ size: 15 \}\)\)/);
+  // set state: distinct icon (file-text) signals "changed" + a minimal readout
+  assert.match(body, /pill\.replaceChildren\(icon\('file-text', \{ size: 13 \}\), el\('span', 'pill-text', summary\(\)\)\)/);
+  assert.match(body, /bits\.push\(`\$\{words\} word/);             // count
+  assert.match(body, /bits\.push\(subject\.template\)/);           // name
+  // both the icon and the pill open the same edit dialog
+  assert.match(body, /btn\.addEventListener\('click', open\)/);
+  assert.match(body, /pill\.addEventListener\('click', open\)/);
 });
 
 test('instance identity: footer name link + Instance dialog + PATCH /instance', async () => {
