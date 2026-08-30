@@ -607,16 +607,11 @@ html[data-theme="charcoal"] {
 .pw-val:hover { background: var(--hover); }
 .pw-val.empty { color: var(--ink-faint); font-style: italic; font-family: inherit; }
 
-/* project Context notepad panel (top of a project view) */
-.project-context {
-  margin: 2px 0 14px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--pane);
-}
-.pc-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--ink-soft); }
-.pc-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+/* project/tag Context notepad (top of a project/tag view): now a compact
+   icon->pill control (see .meta-icon-btn/.meta-pill) rather than an
+   always-visible card, so it only needs bottom margin to separate it from
+   the task list below. */
+.project-context { margin: 2px 0 14px; }
 .pc-template {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 5px;
@@ -625,17 +620,10 @@ html[data-theme="charcoal"] {
   border-radius: 999px; cursor: pointer;
 }
 .pc-template:hover { color: var(--ink); background: var(--hover); }
-.pc-edit {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; padding: 0;
-  border: none; background: none; color: var(--ink-faint);
-  border-radius: 6px; cursor: pointer;
-}
-.pc-edit:hover { color: var(--ink); background: var(--hover); }
-.pc-body { font-size: 14px; line-height: 1.5; color: var(--ink); }
-.pc-body.empty { color: var(--ink-faint); font-style: italic; cursor: pointer; }
-.pc-body > :first-child { margin-top: 0; }
-.pc-body > :last-child { margin-bottom: 0; }
+/* template picker button hosted inside the project/tag context edit dialog
+   (the notepad's own trigger is now the icon/pill pair below) */
+.pc-dialog-tpl { margin-bottom: 4px; }
+.pc-dialog-tpl .pc-template { margin-left: 0; }
 
 .rail-heading {
   margin: 18px 12px 6px;
