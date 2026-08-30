@@ -45,6 +45,10 @@
 #   pl.sh projects                     list projects ([context] = has a readme)
 #   pl.sh project <name|id>            print a project's context notepad (readme/
 #                                      overview) — read it before working its tasks
+#   pl.sh tags                         list tags ([context] = has a readme)
+#   pl.sh tag <name|id>                print a tag's context notepad — read it
+#                                      AFTER instance + project context (root ->
+#                                      project -> tag is the injection order)
 #   pl.sh instance                     this deployment's global context + data-
 #                                      isolation policy (applies to every agent)
 #   pl.sh counts                       nav counts (inbox/today/review/delegated...)
@@ -135,6 +139,18 @@ resolve_project() { # name-or-id -> id on stdout
     '.items[] | select(.id == $p or (.name | ascii_downcase) == ($p | ascii_downcase)) | .id' | head -n1)
   if [ -z "$id" ]; then
     echo "pl: unknown project '$p' — existing: $(printf '%s' "$RESP" | jq -r '[.items[].name] | join(", ")')" >&2
+    exit 1
+  fi
+  printf '%s' "$id"
+}
+
+resolve_tag() { # name-or-id (leading # tolerated) -> id on stdout
+  local p="${1#\#}" id
+  api GET /tags
+  id=$(printf '%s' "$RESP" | jq -r --arg p "$p" \
+    '.items[] | select(.id == $p or (.name | ascii_downcase) == ($p | ascii_downcase)) | .id' | head -n1)
+  if [ -z "$id" ]; then
+    echo "pl: unknown tag '$p' — existing: $(printf '%s' "$RESP" | jq -r '[.items[].name] | join(", ")')" >&2
     exit 1
   fi
   printf '%s' "$id"
@@ -368,6 +384,25 @@ case "$cmd" in
       | "# " + .name + (if .archived == 1 then "  [archived]" else "" end)
         + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
         + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end) + "\n\n"
+        + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
+
+  tags)
+    api GET /tags
+    printf '%s' "$RESP" | jq -r '.items[] | .id + "  #" + .name
+      + "  (" + (.count | tostring) + " open)"
+      + (if (.notes // "") != "" then "  [context]" else "" end)' ;;
+
+  tag)
+    # Read ONE tag's context notepad (its readme/overview) — mirrors `project`.
+    # Injected AFTER root (instance) + project context, per the tag-context
+    # design: root -> project -> tag. name-or-id (leading # tolerated).
+    [ $# -eq 1 ] || { echo "usage: pl.sh tag <name|id>" >&2; exit 2; }
+    gid=$(resolve_tag "$1") || exit 1
+    api GET /tags
+    printf '%s' "$RESP" | jq -r --arg id "$gid" '
+      .items[] | select(.id == $id)
+      | "# #" + .name
+        + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
   instance)

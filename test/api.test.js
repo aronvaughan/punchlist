@@ -994,6 +994,49 @@ test('DELETE /tags/:id: admin-only, drops task_tags, tasks survive', async () =>
   assert.equal((await call('DELETE', `/api/v1/tags/nope`)).status, 404);
 });
 
+// ---- tag context notepad (tag.notes: mirrors project.notes, migration 015) ----
+test('tag context: notes settable at create, PATCH-able, returned by GET (agent-readable)', async () => {
+  const { call } = makeApp();
+  const a = await call('POST', '/api/v1/tags', { body: { name: 'ops', notes: '# ops\neverything ops-tagged' } });
+  assert.equal(a.status, 201);
+  assert.equal(a.json.notes, '# ops\neverything ops-tagged');
+  const u = await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { notes: 'updated readme' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.notes, 'updated readme');
+  const list = await call('GET', '/api/v1/tags');
+  assert.equal(list.json.items.find(x => x.id === a.json.id).notes, 'updated readme');
+  // default: tags created via a task's tags[] have empty notes
+  await call('POST', '/api/v1/tasks', { body: { title: 't', tags: ['bare'] } });
+  const bare = (await call('GET', '/api/v1/tags')).json.items.find(x => x.name === 'bare');
+  assert.equal(bare.notes, '');
+  // validation + auth + unknown id
+  assert.equal((await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { notes: 'x'.repeat(70000) } })).status, 400);
+  assert.equal((await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { bogus: 1 } })).status, 400);
+  assert.equal((await call('PATCH', `/api/v1/tags/nope`, { body: { notes: 'x' } })).status, 404);
+  assert.equal((await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { notes: 'x' }, token: null })).status, 401);
+});
+
+// The tag notepad can "point to" a punchlist-templates template (mirrors
+// project.template) — the same AI-assisted editor that edits a project's
+// template can then open it for a tag's.
+test('tag template pointer: settable at create and via PATCH; free string, not validated against a set', async () => {
+  const { call } = makeApp();
+  const a = await call('POST', '/api/v1/tags', { body: { name: 'billing', template: 'invoice-review' } });
+  assert.equal(a.status, 201);
+  assert.equal(a.json.template, 'invoice-review');
+
+  const u = await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { template: 'refund-checklist' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.template, 'refund-checklist');
+
+  const cleared = await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { template: null } });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.json.template, null);
+
+  const bad = await call('PATCH', `/api/v1/tags/${a.json.id}`, { body: { template: 123 } });
+  assert.equal(bad.status, 400);
+});
+
 // ---- delegation lifecycle ----
 test('delegation happy path: POST assignee -> claim -> finish -> review -> approve -> done', async () => {
   const { call } = makeApp();
