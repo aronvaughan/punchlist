@@ -387,9 +387,10 @@ test('drawer: deadline/repeat/tags collapse to a bare icon until set (Things-sty
   assert.match(detail, /getElementById\('due-dialog'\)/);            // opens the dialog
   assert.match(detail, /getElementById\('due-dialog-clear'\)/);      // clear is in the dialog
   assert.doesNotMatch(detail, /fields\.append\(labeled\('Deadline'/); // old inline boxes removed
-  // repeat: same bare-icon -> pill pattern, wrapping the existing freq/params/anchor grid
+  // repeat: bare-icon -> pill -> #recur-dialog (freq/params/anchor stay open across picks)
   assert.match(detail, /icon\('arrow-counter-clockwise', \{ size: 15 \}\)/);
-  assert.match(detail, /Stop repeating/);
+  assert.match(detail, /getElementById\('recur-dialog'\)/);
+  assert.match(detail, /getElementById\('recur-dialog-clear'\)/);
   // tags: bare tag-icon until the first tag exists, then the shared chips field shows
   assert.match(detail, /Add tags/);
   assert.match(detail, /const has = Array\.isArray\(current\.tags\) && current\.tags\.length > 0;/);

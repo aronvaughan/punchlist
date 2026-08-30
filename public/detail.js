@@ -1231,26 +1231,9 @@ export function recurEditor(task, save, onChange = () => {}) {
   btn.append(icon('arrow-counter-clockwise', { size: 15 }));
   btn.setAttribute('aria-label', 'Repeat');
   btn.title = 'Repeat';
-
   const pill = el('button', 'meta-pill recur-pill');
   pill.type = 'button';
-
-  const clearBtn = el('button', 'meta-pill-clear');
-  clearBtn.type = 'button';
-  clearBtn.append(icon('x', { size: 12 }));
-  clearBtn.setAttribute('aria-label', 'Stop repeating');
-
-  const body = el('div', 'recur-body');
-  body.hidden = true;
-  body.append(el('label', null, 'Repeat'));
-
-  const freqSeg = el('div', 'seg');
-  const paramsBox = el('div');
-  const anchorSeg = el('div', 'seg');
-  body.append(freqSeg, paramsBox, anchorSeg);
-
-  let expanded = false;
-  const toggleBody = () => { expanded = !expanded; body.hidden = !expanded; };
+  pill.title = 'Edit repeat';
 
   const summary = () => {
     const r = applied;
@@ -1261,84 +1244,84 @@ export function recurEditor(task, save, onChange = () => {}) {
     if (r.freq === 'monthly') return `Monthly: day ${r.dom}`;
     return '';
   };
-  const syncAffordance = () => {
-    const has = !!applied;
-    btn.hidden = has;
-    pill.hidden = !has;
-    if (has) pill.replaceChildren(icon('arrow-counter-clockwise', { size: 13 }), el('span', 'pill-text', summary()), clearBtn);
-    body.hidden = !expanded;
+  const render = () => {
+    if (applied) {
+      pill.replaceChildren(icon('arrow-counter-clockwise', { size: 13 }), el('span', 'pill-text', summary()));
+      pill.hidden = false; btn.hidden = true;
+    } else { pill.hidden = true; btn.hidden = false; }
   };
 
-  const apply = async () => {
-    if (draft.freq === null) {
-      if (applied && await save(task, { recur: null })) { applied = null; renderSegs(); syncAffordance(); onChange(); }
-      return;
+  // persist the current draft (or clear). Local `applied` stays in sync so it's
+  // immune to the drawer's current-reassignment.
+  const persist = async () => {
+    let fields;
+    if (draft.freq === null) fields = { recur: null };
+    else {
+      const out = { freq: draft.freq, anchor: draft.anchor };
+      if (draft.freq === 'every') out.n = Number(draft.n) || 1;
+      if (draft.freq === 'weekly') out.days = draft.days;
+      if (draft.freq === 'monthly') out.dom = Number(draft.dom) || 1;
+      fields = { recur: out };
     }
-    const out = { freq: draft.freq, anchor: draft.anchor };
-    if (draft.freq === 'every') out.n = Number(draft.n) || 1;
-    if (draft.freq === 'weekly') out.days = draft.days;
-    if (draft.freq === 'monthly') out.dom = Number(draft.dom) || 1;
-    if (await save(task, { recur: out })) { applied = out; renderSegs(); syncAffordance(); onChange(); }
+    if (await save(task, fields)) { applied = fields.recur; render(); onChange(); }
   };
 
-  const renderParams = () => {
-    paramsBox.replaceChildren();
-    if (draft.freq === 'every') {
-      const n = el('input');
-      n.type = 'number';
-      n.min = '1';
-      n.value = String(draft.n);
-      n.addEventListener('change', () => { draft.n = n.value; apply(); });
-      paramsBox.append(labeled('Every N days', n));
-    } else if (draft.freq === 'weekly') {
-      const row = el('div', 'seg weekday-row');
-      for (const d of WEEKDAYS) {
-        const b = el('button', draft.days.includes(d) ? 'on' : null, d);
-        b.addEventListener('click', () => {
-          draft.days = draft.days.includes(d) ? draft.days.filter(x => x !== d) : [...draft.days, d];
-          if (draft.days.length) apply(); else b.classList.remove('on');
-        });
-        row.append(b);
+  // The picker lives in #recur-dialog and STAYS OPEN across selections — the
+  // segments rebuild on each change so a multi-part rule can be completed (the
+  // old inline body collapsed on the first pick).
+  const open = () => {
+    const dlg = document.getElementById('recur-dialog');
+    const mount = document.getElementById('recur-dialog-mount');
+    const build = () => {
+      mount.replaceChildren();
+      const freqSeg = el('div', 'seg');
+      for (const [val, label] of [[null, 'None'], ['daily', 'Daily'], ['every', 'Every N'], ['weekly', 'Weekly'], ['monthly', 'Monthly']]) {
+        const b = el('button', draft.freq === val ? 'on' : null, label);
+        b.addEventListener('click', () => { draft.freq = val; persist(); build(); });
+        freqSeg.append(b);
       }
-      paramsBox.append(labeled('On days', row));
-    } else if (draft.freq === 'monthly') {
-      const dom = el('input');
-      dom.type = 'number';
-      dom.min = '1';
-      dom.max = '31';
-      dom.value = String(draft.dom);
-      dom.addEventListener('change', () => { draft.dom = dom.value; apply(); });
-      paramsBox.append(labeled('Day of month', dom));
-    }
-    anchorSeg.replaceChildren();
-    if (draft.freq !== null) {
-      for (const [val, label] of [['due', 'On schedule (from due)'], ['completion', 'After completion']]) {
-        const b = el('button', draft.anchor === val ? 'on' : null, label);
-        b.addEventListener('click', () => { draft.anchor = val; apply(); });
-        anchorSeg.append(b);
+      mount.append(labeled('Frequency', freqSeg));
+      if (draft.freq === 'every') {
+        const n = el('input'); n.type = 'number'; n.min = '1'; n.value = String(draft.n);
+        n.addEventListener('change', () => { draft.n = n.value; persist(); });
+        mount.append(labeled('Every N days', n));
+      } else if (draft.freq === 'weekly') {
+        const row = el('div', 'seg weekday-row');
+        for (const d of WEEKDAYS) {
+          const b = el('button', draft.days.includes(d) ? 'on' : null, d);
+          b.addEventListener('click', () => {
+            draft.days = draft.days.includes(d) ? draft.days.filter(x => x !== d) : [...draft.days, d];
+            if (draft.days.length) { persist(); build(); }
+          });
+          row.append(b);
+        }
+        mount.append(labeled('On days', row));
+      } else if (draft.freq === 'monthly') {
+        const dom = el('input'); dom.type = 'number'; dom.min = '1'; dom.max = '31'; dom.value = String(draft.dom);
+        dom.addEventListener('change', () => { draft.dom = dom.value; persist(); });
+        mount.append(labeled('Day of month', dom));
       }
-    }
+      if (draft.freq !== null) {
+        const anchorSeg = el('div', 'seg');
+        for (const [val, label] of [['due', 'On schedule (from due)'], ['completion', 'After completion']]) {
+          const b = el('button', draft.anchor === val ? 'on' : null, label);
+          b.addEventListener('click', () => { draft.anchor = val; persist(); build(); });
+          anchorSeg.append(b);
+        }
+        mount.append(labeled('Anchor', anchorSeg));
+      }
+    };
+    build();
+    document.getElementById('recur-dialog-clear').onclick = async () => { draft.freq = null; await persist(); dlg.open = false; };
+    document.getElementById('recur-dialog-done').onclick = () => { render(); dlg.open = false; };
+    dlg.open = true;
   };
 
-  const renderSegs = () => {
-    freqSeg.replaceChildren();
-    const freqs = [[null, 'None'], ['daily', 'Daily'], ['every', 'Every N'], ['weekly', 'Weekly'], ['monthly', 'Monthly']];
-    for (const [val, label] of freqs) {
-      const b = el('button', draft.freq === val ? 'on' : null, label);
-      b.addEventListener('click', () => { draft.freq = val; apply(); });
-      freqSeg.append(b);
-    }
-    renderParams();
-  };
-  renderSegs();
-
-  btn.addEventListener('click', toggleBody);
-  pill.addEventListener('click', e => { if (e.target === clearBtn || clearBtn.contains(e.target)) return; toggleBody(); });
-  clearBtn.addEventListener('click', async e => { e.stopPropagation(); draft.freq = null; await apply(); });
-
-  syncAffordance();
-  wrap.append(btn, pill, body);
-  return wrap;
+  btn.addEventListener('click', open);
+  pill.addEventListener('click', open);
+  render();
+  wrap.append(btn, pill);
+  return labeled('Repeat', wrap);
 }
 
 // ---- create mode: local draft steps (POSTed as titles with the task) ----
