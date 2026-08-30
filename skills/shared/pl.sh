@@ -363,7 +363,8 @@ case "$cmd" in
     api GET "/projects?limit=500"
     printf '%s' "$RESP" | jq -r --arg id "$pid" '
       .items[] | select(.id == $id)
-      | "# " + .name + (if .archived == 1 then "  [archived]" else "" end) + "\n\n"
+      | "# " + .name + (if .archived == 1 then "  [archived]" else "" end)
+        + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
   counts)

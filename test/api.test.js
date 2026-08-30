@@ -231,6 +231,27 @@ test('project context: notes set at create, PATCH-able, returned by GET (agent-r
   assert.equal(list.json.items.find(x => x.id === p.json.id).notes, 'updated readme');
 });
 
+// The notepad can "point to" a punchlist-templates template (mirrors
+// task.template, migration 012) — the same AI-assisted editor that edits a
+// task's template can then open it for a project's.
+test('project template pointer: settable at create and via PATCH; free string, not validated against a set', async () => {
+  const { call } = makeApp();
+  const p = await call('POST', '/api/v1/projects', { body: { name: 'Voyager', template: 'research-brief' } });
+  assert.equal(p.status, 201);
+  assert.equal(p.json.template, 'research-brief');
+
+  const u = await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { template: 'weekly-report' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.template, 'weekly-report');
+
+  const cleared = await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { template: null } });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.json.template, null);
+
+  const bad = await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { template: 123 } });
+  assert.equal(bad.status, 400);
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();

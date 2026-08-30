@@ -1473,7 +1473,20 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   // ---- projects ----
-  const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived']);
+  const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived', 'template']);
+
+  // template: a free string (a template NAME) or null — mirrors the task
+  // field (migration 007); deliberately NOT validated against a known set,
+  // since the templates repo is authoritative and public users may not have
+  // it checked out at all (migration 012). The project's context notepad can
+  // "point to" this template; the same admin-only AI-assisted editor
+  // (tpleditor.js) that edits a task's template can open it for a project's.
+  function validateProjectTemplate(body) {
+    if (body.template !== undefined && body.template !== null &&
+        (typeof body.template !== 'string' || body.template.length > CAPS.template)) {
+      throw new ApiError(400, `template must be a string of at most ${CAPS.template} chars, or null`);
+    }
+  }
 
   app.get('/api/v1/projects', c => {
     // same list-endpoint contract as /tasks: ?limit= (default 100, max 500)
@@ -1503,6 +1516,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > CAPS.title) {
       throw new ApiError(400, 'name required (<=500 chars)');
     }
+    validateProjectTemplate(body);
     if (body.parent_id != null && !getProject(body.parent_id)) throw new ApiError(400, 'parent project not found');
     if (db.prepare('SELECT 1 FROM projects WHERE name = ?').get(body.name.trim())) {
       throw new ApiError(409, 'project name already exists');
@@ -1511,10 +1525,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const now = new Date().toISOString();
     const { m } = db.prepare('SELECT MAX(rank) m FROM projects').get();
     db.prepare(
-      `INSERT INTO projects (id, name, notes, parent_id, domain, rank, archived, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
+      `INSERT INTO projects (id, name, notes, parent_id, domain, rank, archived, created_at, updated_at, template)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
     ).run(id, body.name.trim(), body.notes ?? '', body.parent_id ?? null, body.domain ?? null,
-          (m ?? 0) + 1024, now, now);
+          (m ?? 0) + 1024, now, now, body.template ?? null);
     return c.json(getProject(id), 201);
   });
 
@@ -1526,6 +1540,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     if (body.name !== undefined && (typeof body.name !== 'string' || !body.name.trim())) {
       throw new ApiError(400, 'name must be non-empty');
     }
+    validateProjectTemplate(body);
     if (body.name !== undefined &&
         db.prepare('SELECT 1 FROM projects WHERE name = ? AND id <> ?').get(body.name.trim(), project.id)) {
       throw new ApiError(409, 'project name already exists');
@@ -1543,9 +1558,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     const merged = { ...project, ...body, archived: body.archived === undefined ? project.archived : (body.archived ? 1 : 0) };
     db.prepare(
-      `UPDATE projects SET name=?, notes=?, parent_id=?, domain=?, archived=?, updated_at=? WHERE id=?`
+      `UPDATE projects SET name=?, notes=?, parent_id=?, domain=?, archived=?, updated_at=?, template=? WHERE id=?`
     ).run(merged.name.trim(), merged.notes, merged.parent_id, merged.domain, merged.archived,
-          new Date().toISOString(), project.id);
+          new Date().toISOString(), merged.template ?? null, project.id);
     return c.json(getProject(project.id));
   });
 

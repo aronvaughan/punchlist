@@ -331,3 +331,28 @@ test('unreachable server: tool error names the base URL, not a stack', async () 
   assert.equal(r.text, 'cannot reach the punchlist server at http://127.0.0.1:1');
   await c.close();
 });
+
+// project context notepad (project.notes) + its optional template pointer
+// (project.template): both are agent-readable via punchlist_projects, so an
+// agent can read a project's readme-style overview — and see which
+// punchlist-templates template it points to — before working its tasks.
+test('punchlist_projects surfaces a project\'s context notepad and template pointer', async () => {
+  const proj = await admin.ok('punchlist_projects', { name: 'Rocketry' });
+  const res = await fetch(`${url}/api/v1/projects/${proj.id}`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${TOK_ARON}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ notes: '# Rocketry\nOverview for agents.', template: 'research-brief' }),
+  });
+  assert.equal(res.status, 200);
+
+  const projects = await admin.ok('punchlist_projects', {});
+  const p = projects.items.find(x => x.id === proj.id);
+  assert.equal(p.context, '# Rocketry\nOverview for agents.');
+  assert.equal(p.template, 'research-brief');
+
+  // a fresh project with neither set carries no context/template keys at all
+  const bare = await admin.ok('punchlist_projects', { name: 'Bare' });
+  const bareItem = (await admin.ok('punchlist_projects', {})).items.find(x => x.id === bare.id);
+  assert.equal('context' in bareItem, false);
+  assert.equal('template' in bareItem, false);
+});
