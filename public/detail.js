@@ -1024,6 +1024,12 @@ export function actionsFor(task, { save, onDone = () => {} } = {}) {
   } else if (task.status === 'in_progress') {
     complete.textContent = `In progress (${task.assignee})`;
     complete.setAttribute('disabled', '');
+  } else if (task.status === 'blocked') {
+    // the real state transition (blocked -> active) lives in the answer box
+    // above (inline.js's answerCard) — this bar stays informational so
+    // "Complete" can't be mistaken for the way to unblock the task.
+    complete.textContent = 'Waiting for your answer';
+    complete.setAttribute('disabled', '');
   } else {
     complete.textContent = 'Complete';
     complete.addEventListener('click', () => primaryDoor('/complete'));

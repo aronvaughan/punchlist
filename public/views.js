@@ -841,6 +841,19 @@ function taskRow(task, { showProject = false, logbook = false, sortable = false,
     chip.addEventListener('click', e => { e.stopPropagation(); location.hash = '#/needs-input'; });
     subline.append(chip);
   }
+  if (task.status === 'blocked' || task.status === 'review') {
+    // pencil: this compact row doesn't carry the answer box / approve-reopen
+    // buttons that drive the state transition — those live in the full inline
+    // editor (expandRow). The pencil is an explicit, discoverable way in,
+    // alongside the row itself being clickable.
+    const pencil = el('button', 'chip pencil-chip');
+    pencil.append(icon('pencil-simple', { size: 13 }));
+    const label = task.status === 'blocked' ? 'Answer the question' : 'Review and approve';
+    pencil.title = `${label} — open task editor`;
+    pencil.setAttribute('aria-label', `${label} — open task editor`);
+    pencil.addEventListener('click', e => { e.stopPropagation(); open(); });
+    subline.append(pencil);
+  }
   if (task.vetted === 0) {
     // amber quarantine chip (agent-security layer 1): agents will not execute
     // this task. Tapping it is the admin's Vet action — the server 403s

@@ -12,6 +12,7 @@ import { icon } from '/icons.js';
 // animateOnce is read only at runtime (inside submit) — the views.js ⇄ inline.js
 // import cycle is safe because the binding isn't touched during module init.
 import { animateOnce } from '/views.js';
+import { mdToHtml } from '/md.js';
 
 let expanded = null; // { row, task, orig, titleSpan }
 let createCard = null; // the transient create-mode card (a bare .task-row in #list)
@@ -47,6 +48,42 @@ async function save(task, fields) {
     toast(`Save failed: ${e.message}`);
     return false;
   }
+}
+
+// blocked: the agent's question (rendered markdown) + an inline answer box —
+// mirrors views.js's questionCard (same markup/classes, so the CSS matches
+// across the Needs Input lane, Agents view, and this full editor), but calls
+// onDone (collapseInline) on success instead of a bare reload.
+function answerCard(task, onDone) {
+  const card = el('div', 'question-card');
+  const body = el('div', 'report-body notes-preview');
+  body.innerHTML = mdToHtml(task.question || '(no question)'); // escaped by md.js
+  card.append(body);
+  const box = el('textarea', 'answer-input');
+  box.placeholder = 'Answer…';
+  box.rows = 2;
+  box.setAttribute('aria-label', `Answer ${task.assignee}'s question`);
+  const actions = el('div', 'review-actions');
+  const send = document.createElement('wa-button');
+  send.setAttribute('variant', 'brand');
+  send.setAttribute('size', 'small');
+  send.textContent = 'Send answer';
+  send.addEventListener('click', async () => {
+    const v = box.value.trim();
+    if (!v) { toast('Type an answer first'); return; }
+    send.setAttribute('loading', '');
+    try {
+      await api('POST', `/tasks/${task.id}/answer`, { answer: v });
+      toast('Answer sent — the task is back in the agent\'s queue', 'success');
+      onDone();
+    } catch (e) {
+      toast(`Answer failed: ${e.message}`);
+      send.removeAttribute('loading');
+    }
+  });
+  actions.append(send);
+  card.append(box, actions);
+  return card;
 }
 
 export function expandRow(task, row) {
@@ -87,6 +124,13 @@ export function expandRow(task, row) {
 
   inner.append(stepsEditorFor(task));
   inner.append(controlsRow(task));
+  // blocked: the agent's question + inline answer box — the same control
+  // (views.js's questionCard) shown in the Needs Input lane and Agents view,
+  // now reachable from any compact row (Project/Agents) that expands into this
+  // full editor. Completes via collapseInline (not questionCard's own reload)
+  // so this module's `expanded` bookkeeping stays consistent once the task
+  // leaves blocked and the row disappears from this section on refresh.
+  if (task.status === 'blocked') inner.append(answerCard(task, () => collapseInline()));
   const rep = reportView(task);
   if (rep) inner.append(rep);
   inner.append(timelineSection(task));
