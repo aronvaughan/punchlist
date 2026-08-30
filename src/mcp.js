@@ -83,6 +83,7 @@ function slim(t) {
   if (t.auto_close) out.auto_close = true;
   if (t.created_by) out.created_by = t.created_by;
   if (t.vetted === 0) out.unvetted = true; // quarantined: agents must not work it
+  if (t.allow_push) out.allow_push = true; // owner authorized pushing this task's work
   return out;
 }
 

@@ -927,6 +927,21 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return c.json({ task: attach(getTask(id)) });
   });
 
+  // per-task push authorization (migration 016). The ONLY way allow_push is set
+  // (PATCH rejects the field). Admin-only, like vet — task text can never grant
+  // it. Body {allow:false} revokes; default grants. Idempotent.
+  app.post('/api/v1/tasks/:id/allow-push', async c => {
+    const id = c.req.param('id');
+    const task = getTask(id);
+    if (!task) throw new ApiError(404, 'task not found');
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can authorize push`);
+    const body = await readJson(c).catch(() => ({}));
+    const val = body.allow === false ? 0 : 1;
+    db.prepare('UPDATE tasks SET allow_push = ?, updated_at = ?, version = version + 1 WHERE id = ?')
+      .run(val, new Date().toISOString(), id);
+    return c.json({ task: attach(getTask(id)) });
+  });
+
   // ---- activity thread (comments) ----
   // Model: a task is a GitHub-style issue with a typed, append-only, attributed
   // timeline. Async and poll-refreshed like everything else — no live chat.

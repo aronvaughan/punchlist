@@ -296,6 +296,27 @@ test('instance PATCH is admin-only (403 for a non-admin actor)', async () => {
   assert.equal((await asClaude('GET', '/api/v1/instance')).status, 200); // read is open
 });
 
+test('allow_push: admin-only trusted door; PATCH cannot set it; task text cannot grant it', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32), C = 'c'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A, claude: C }, admin: 'alex', today: () => '2026-03-10' });
+  const req = (tok, m, p, body) => app.fetch(new Request(`http://x${p}`, {
+    method: m, headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined }));
+  const t = await (await req(A, 'POST', '/api/v1/tasks', { title: 'ship it', assignee: 'claude' })).json();
+  // default: not push-authorized; PATCH rejects the field
+  assert.ok(!t.allow_push);
+  assert.equal((await req(A, 'PATCH', `/api/v1/tasks/${t.id}`, { allow_push: 1 })).status, 400, 'PATCH must reject allow_push');
+  // non-admin cannot authorize
+  assert.equal((await req(C, 'POST', `/api/v1/tasks/${t.id}/allow-push`)).status, 403);
+  // admin authorizes → flag set; revoke works
+  const ok = await (await req(A, 'POST', `/api/v1/tasks/${t.id}/allow-push`)).json();
+  assert.equal(ok.task.allow_push, 1);
+  const rev = await (await req(A, 'POST', `/api/v1/tasks/${t.id}/allow-push`, { allow: false })).json();
+  assert.equal(rev.task.allow_push, 0);
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();

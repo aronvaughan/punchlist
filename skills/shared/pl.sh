@@ -39,6 +39,8 @@
 #   pl.sh complete <id>                human-style done (the owner's own tasks)
 #   pl.sh approve <id>                 review -> done (admin actor only)
 #   pl.sh vet <id>                     mark an unvetted task safe for agents (admin only)
+#   pl.sh allow-push <id> [--revoke]   authorize pushing this task's work (admin only;
+#                                      lifts the commit-local-only rule for it)
 #   pl.sh update <id> [--title T] [--notes N] [--project P] [--due D] [--due-time HH:MM]
 #                    [--when W|someday|none] [--assignee A] [--status active|archived]
 #                    [--tags a,b] [--auto-close 0|1]
@@ -125,7 +127,8 @@ ROWFMT='
       (if .when_type == "someday" then "someday"
        elif .when_type == "date" then "when:" + .when_date else empty end),
       ((.tags // [])[] | "#" + .),
-      (if (.auto_close // 0) == 1 then "auto-close" else empty end)
+      (if (.auto_close // 0) == 1 then "auto-close" else empty end),
+      (if (.allow_push // 0) == 1 then "[push-ok]" else empty end)
     ] | join(" ");
   .id + "  " + .title + "  " + chips
 '
@@ -156,7 +159,7 @@ resolve_tag() { # name-or-id (leading # tolerated) -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -340,6 +343,13 @@ case "$cmd" in
     [ $# -eq 1 ] || { echo "usage: pl.sh vet <id>" >&2; exit 2; }
     api POST "/tasks/$(uri "$1")/vet" '{}'; one ;;
 
+  allow-push)
+    # Owner authorizes pushing THIS task's work to the remote (admin only).
+    # Lifts the standing "commit-local-only" rule for this task. --revoke undoes.
+    [ $# -ge 1 ] || { echo "usage: pl.sh allow-push <id> [--revoke]" >&2; exit 2; }
+    body='{}'; [ "${2:-}" = "--revoke" ] && body='{"allow":false}'
+    api POST "/tasks/$(uri "$1")/allow-push" "$body"; one ;;
+
   update)
     [ $# -ge 3 ] || { echo "usage: pl.sh update <id> --field val ..." >&2; exit 2; }
     id="$1"; shift
@@ -427,6 +437,6 @@ case "$cmd" in
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac
