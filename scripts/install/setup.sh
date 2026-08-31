@@ -4,7 +4,7 @@
 # service, and runs the doctor. Idempotent — safe to re-run.
 #
 #   bash scripts/install/setup.sh                 # bootstrap (data/.env must exist)
-#   bash scripts/install/setup.sh --init-tokens   # also create data/.env (aron+claude) if missing
+#   bash scripts/install/setup.sh --init-tokens   # also create data/.env (owner+claude) if missing
 #
 # Everything OS-specific lives here (prereq install) or in the node CLI
 # (systemd-vs-launchd service). pl.sh / plt are already portable.
@@ -50,11 +50,11 @@ npm link 2>/dev/null || npm install -g . || echo "  ! could not link 'punchlist'
 ENVF="$REPO/data/.env"
 if [ ! -f "$ENVF" ]; then
   if [ "$INIT_TOKENS" = 1 ]; then
-    echo "--> generating data/.env (aron + claude)"
+    echo "--> generating data/.env (owner + claude)"
     mkdir -p "$REPO/data"
-    ATOK="$(node bin/punchlist gen-token aron   | sed -n 's/^PUNCHLIST_TOKENS=aron://p')"
+    ATOK="$(node bin/punchlist gen-token owner   | sed -n 's/^PUNCHLIST_TOKENS=owner://p')"
     CTOK="$(node bin/punchlist gen-token claude | sed -n 's/^PUNCHLIST_TOKENS=claude://p')"
-    ( umask 177; printf 'PUNCHLIST_TOKENS=aron:%s,claude:%s\nPUNCHLIST_ADMIN=aron\n' "$ATOK" "$CTOK" > "$ENVF" )
+    ( umask 177; printf 'PUNCHLIST_TOKENS=owner:%s,claude:%s\nPUNCHLIST_ADMIN=owner\n' "$ATOK" "$CTOK" > "$ENVF" )
     chmod 600 "$ENVF"
     echo "    created $ENVF (chmod 600)"
     echo "    → give the agent its client token: put 'PUNCHLIST_TOKEN=$CTOK' in ~/.claude/secrets.local.env (chmod 600)"
@@ -73,7 +73,7 @@ echo "--> agent provisioning (MCP + skills + governance)"
 need claude && node bin/punchlist install -t claude || echo "  · claude CLI absent — skipping MCP registration (run 'punchlist install -t claude' later)"
 node bin/punchlist install-skills          # punchlist + punchlist-govern skills, govern hook scripts
 # plt (templates) skill, if the templates repo is a sibling checkout
-PLT="$HOME/code/punchlist-templates"
+PLT="${PUNCHLIST_TEMPLATES_DIR:-$(dirname "$REPO")/punchlist-templates}"
 [ -d "$PLT/skills" ] && { mkdir -p "$HOME/.claude/skills/punchlist-templates"; cp -r "$PLT/skills/." "$HOME/.claude/skills/punchlist-templates/" 2>/dev/null && echo "  installed plt skill"; } || echo "  · punchlist-templates not found — skipping plt skill"
 
 # private data homes (the private plane) + the skills-local surface + terms list

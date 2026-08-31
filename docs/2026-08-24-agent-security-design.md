@@ -1,6 +1,6 @@
 # Agent security — 4-layer defense for delegated tasks (design)
 
-*Agreed with Aron 2026-08-24. Context: tasks can now enter the punchlist
+*Agreed with the maintainer 2026-08-24. Context: tasks can now enter the punchlist
 from untrusted channels (email ingestion). A task title/notes is attacker-
 controllable text that agents will read and act on — classic prompt
 injection surface. Defense in depth, four layers. Layers 1–2 live in this

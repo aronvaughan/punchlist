@@ -1,7 +1,7 @@
 # av-tasks — Implementation Plan (v1)
 
 *Step 5. Four milestones; each ends runnable + tested + committed, with a
-summary to Aron before the next begins. Architecture:
+summary to the maintainer before the next begins. Architecture:
 2026-08-23-architecture.md.*
 
 ## M0 — Core: schema + API (no UI)
@@ -59,5 +59,5 @@ summary to Aron before the next begins. Architecture:
 ## Working agreement
 
 Subagent-driven per milestone (implementer + review), TDD for engine/API,
-summary + Aron's go between milestones. Scope changes go to the PRD
+summary + the maintainer's go between milestones. Scope changes go to the PRD
 first.

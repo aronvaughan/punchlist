@@ -230,7 +230,7 @@ export function resolveTemplateEditing(cfg) {
     return { dir, available, run };
   }
   const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
-    join(homedir(), 'code', 'punchlist-templates');
+    join(dirname(ROOT_DIR), 'punchlist-templates');
   const available = Boolean(dir && existsSync(join(dir, '.git')) && hasClaudeBinary());
   return { dir, available, run: makeRunner() };
 }

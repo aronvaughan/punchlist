@@ -81,6 +81,17 @@ export const SILVERBULLET_VERSION = '2.10.0';
 const SB_ARCH_MAP = { x64: 'x86_64', arm64: 'aarch64', arm: 'armv7' };
 const SB_OS_MAP = { linux: 'linux', darwin: 'darwin' };
 
+// Pinned sha256 digests for the SILVERBULLET_VERSION release assets (from
+// GitHub's per-asset digest). Only cover the pinned version — a caller-supplied
+// custom version has no pinned digest and download integrity can't be verified.
+const SB_SHA256 = {
+  'silverbullet-server-linux-x86_64.zip': 'ca33f7de3bae2f2e7d95cdd2cca1a023e51267388c9dbc8ff5acc33b1cbd5a7d',
+  'silverbullet-server-linux-aarch64.zip': '3e4dab63447caf7feb04ffc033e3f0cf170aace110768b2a294c995e272a3347',
+  'silverbullet-server-linux-armv7.zip': '9bdd317be4d86c856bbef146405f48fdeb19372f36fa23fb1b5a10421f2c7171',
+  'silverbullet-server-darwin-x86_64.zip': 'fd5aac2b006b8b58e38be5ee447441bec8a95f325c436814eb2d6eba8f468b41',
+  'silverbullet-server-darwin-aarch64.zip': '3625a3c3b6fcdc1ca1bdbe57559c41c97b3bc642613d8d8d32d40013df648bc1',
+};
+
 export function silverbulletDownloadSpec(platform, arch, version = SILVERBULLET_VERSION) {
   const os = SB_OS_MAP[platform];
   if (!os) throw new Error(`silverbulletDownloadSpec: unsupported platform "${platform}" (supported: linux, darwin)`);
@@ -88,7 +99,8 @@ export function silverbulletDownloadSpec(platform, arch, version = SILVERBULLET_
   if (!a) throw new Error(`silverbulletDownloadSpec: unsupported arch "${arch}" (supported: x64, arm64, arm)`);
   const asset = `silverbullet-server-${os}-${a}.zip`;
   const url = `https://github.com/silverbulletmd/silverbullet/releases/download/${version}/${asset}`;
-  return { version, os, arch: a, asset, url, binName: 'silverbullet' };
+  const sha256 = version === SILVERBULLET_VERSION ? (SB_SHA256[asset] || null) : null;
+  return { version, os, arch: a, asset, url, binName: 'silverbullet', sha256 };
 }
 
 // Managed, version-pinned install location for the provisioned binary —

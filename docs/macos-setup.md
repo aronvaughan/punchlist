@@ -62,7 +62,7 @@ npm link            # puts `punchlist` on PATH (or: npm i -g .)
 ## 3. Generate a token and create data/.env
 
 ```bash
-punchlist gen-token aron        # prints a PUNCHLIST_TOKENS line + a client PUNCHLIST_TOKEN
+punchlist gen-token owner        # prints a PUNCHLIST_TOKENS line + a client PUNCHLIST_TOKEN
 # (add a second actor for the agent)
 punchlist gen-token claude
 ```
@@ -71,8 +71,8 @@ Create `~/code/punchlist/data/.env` (chmod 600). Combine the actors
 onto ONE `PUNCHLIST_TOKENS` line (comma-separated `name:token`):
 
 ```
-PUNCHLIST_TOKENS=aron:<aron-token>,claude:<claude-token>
-PUNCHLIST_ADMIN=aron
+PUNCHLIST_TOKENS=owner:<owner-token>,claude:<claude-token>
+PUNCHLIST_ADMIN=owner
 ```
 
 ```bash
@@ -110,7 +110,7 @@ tail -f ~/Library/Logs/punchlist.log                           # logs
 
 ## 5. Point the client at it
 
-- **Web UI:** open `http://127.0.0.1:8600` and paste the **aron** token (stored in
+- **Web UI:** open `http://127.0.0.1:8600` and paste the **owner** token (stored in
   that browser's localStorage). To reach this Mac's list from elsewhere on your
   tailnet, add `tailscale serve --bg --tcp 8600 tcp://127.0.0.1:8600`.
 - **CLI (`pl`):** the av-punchlist skill's `pl.sh` reads the token from
