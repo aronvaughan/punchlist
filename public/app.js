@@ -127,6 +127,7 @@ async function openInstanceDialog() {
   document.getElementById('instance-isolation').checked = !!inst.data_isolation;
   document.getElementById('instance-backup-mode').value = inst.backup_mode || 'snapshot';
   document.getElementById('instance-backup-repo').value = inst.backup_repo || '';
+  document.getElementById('instance-kb-url').value = inst.kb_url || '';
   document.getElementById('instance-save').onclick = async () => {
     try {
       const saved = await api('PATCH', '/instance', {
@@ -135,14 +136,28 @@ async function openInstanceDialog() {
         data_isolation: document.getElementById('instance-isolation').checked,
         backup_mode: document.getElementById('instance-backup-mode').value,
         backup_repo: document.getElementById('instance-backup-repo').value,
+        kb_url: document.getElementById('instance-kb-url').value.trim(),
       });
       state.instanceName = saved.name;
+      inst = saved;
       renderFoot();
     } catch (e) { toast(`Save failed: ${e.message}`); }
     dlg.open = false;
   };
   document.getElementById('instance-cancel').onclick = () => { dlg.open = false; };
   document.getElementById('instance-kb').onclick = () => { dlg.open = false; import('/kb.js').then(m => m.openKbBrowser()); };
+  // Full editor: opens the tailscale-serve URL for SilverBullet in a new tab.
+  // Only ever navigates to an http(s) URL the admin typed/saved — validated
+  // client-side too, so a stray non-http value (or an empty one) never opens
+  // about:blank or a javascript: URL.
+  document.getElementById('instance-kb-edit').onclick = () => {
+    const url = (document.getElementById('instance-kb-url').value || inst.kb_url || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+      toast('Set the editor URL first: run `punchlist expose-kb` and paste the https://<magicdns-name>/ URL here.');
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  };
   dlg.open = true;
 }
 // --- new-version detection: an SPA doesn't re-fetch its JS on in-app nav, so an

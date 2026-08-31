@@ -286,6 +286,43 @@ test('instance settings: GET defaults, PATCH (admin) name/context/isolation/back
   assert.equal((await call('PATCH', '/api/v1/instance', { body: { nope: 1 } })).status, 400);
 });
 
+test('instance kb_url: GET defaults empty, PATCH sets/clears, rejects non-http(s) scheme and over-long strings', async () => {
+  const { call } = makeApp();
+  const g0 = await call('GET', '/api/v1/instance');
+  assert.equal(g0.json.kb_url, '');
+  // set
+  const u = await call('PATCH', '/api/v1/instance', { body: { kb_url: '  https://box.tailnet.ts.net/  ' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.kb_url, 'https://box.tailnet.ts.net/'); // trimmed
+  assert.equal((await call('GET', '/api/v1/instance')).json.kb_url, 'https://box.tailnet.ts.net/');
+  // http:// also accepted
+  const uh = await call('PATCH', '/api/v1/instance', { body: { kb_url: 'http://box.local/' } });
+  assert.equal(uh.status, 200);
+  assert.equal(uh.json.kb_url, 'http://box.local/');
+  // clear
+  const uc = await call('PATCH', '/api/v1/instance', { body: { kb_url: '' } });
+  assert.equal(uc.status, 200);
+  assert.equal(uc.json.kb_url, '');
+  // reject non-http(s) scheme
+  const bad = await call('PATCH', '/api/v1/instance', { body: { kb_url: 'javascript:alert(1)' } });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /http\(s\)/);
+  // reject over-long string
+  const tooLong = await call('PATCH', '/api/v1/instance', { body: { kb_url: 'https://x/' + 'a'.repeat(1025) } });
+  assert.equal(tooLong.status, 400);
+});
+
+test('instance kb_url PATCH is admin-only (403 for a non-admin actor)', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32), C = 'c'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A, claude: C }, admin: 'alex', today: () => '2026-03-10' });
+  const asClaude = (m, p, body) => app.fetch(new Request(`http://x${p}`, {
+    method: m, headers: { Authorization: `Bearer ${C}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined }));
+  assert.equal((await asClaude('PATCH', '/api/v1/instance', { kb_url: 'https://x/' })).status, 403);
+});
+
 test('instance PATCH is admin-only (403 for a non-admin actor)', async () => {
   const { db, migrate } = open(':memory:');
   migrate();
