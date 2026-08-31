@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # advance-sweep.sh — cron entry point: advance every running workflow run.
-#   */10 * * * * bash $HOME/code/punchlist-templates/scripts/advance-sweep.sh
+#   */10 * * * * bash /path/to/punchlist/punchlist-templates/scripts/advance-sweep.sh
 # bin/plt resolves the punchlist token itself (PUNCHLIST_TOKEN, then the
 # pl.sh env-file conventions); sourcing hermes-env.sh exports HERMES_HOME so
 # the $HERMES_HOME/.env fallback works on machines that run Hermes.
