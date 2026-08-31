@@ -117,6 +117,50 @@ tail -f ~/Library/Logs/punchlist.log                           # logs
   `~/.claude/secrets.local.env` — add `PUNCHLIST_TOKEN=<the actor's token>`
   (chmod 600). `pl.sh` is already portable (POSIX sed/jq/curl).
 
+## 5a. Enable the KB (SilverBullet)
+
+SilverBullet is an **optional** second service — a folder-backed markdown
+editor ("web Obsidian") for `data/kb`. It stays bound to loopback only;
+`tailscale serve` is the only tailnet edge (see
+`docs/2026-08-31-kb-silverbullet.md` for the design rationale).
+
+```bash
+# 1. install the SB service (writes a secret-free unit/wrapper + an env file)
+punchlist install-silverbullet
+#    -> wrote ~/.config/punchlist/silverbullet.env (mode 600) — EDIT THIS
+#       before starting: set SB_USER=user:pass
+
+# 2. edit the env file: set a real SB_USER=user:pass (this is SB's own login,
+#    defense-in-depth on top of the tailnet gate)
+$EDITOR ~/.config/punchlist/silverbullet.env   # (macOS: same path under $HOME)
+
+# 3. start the unit (install-silverbullet already loads it unless --no-start;
+#    if you used --no-start, load it now — see the command it printed)
+launchctl list com.punchlist.silverbullet      # macOS: confirm it's loaded
+# (Linux: systemctl --user status punchlist-silverbullet.service)
+
+# 4. expose it over the tailnet
+punchlist expose-kb              # runs `tailscale serve --bg --https=443 ...`
+punchlist expose-kb --print      # review the commands first, without running them
+punchlist expose-kb --status     # tailscale serve status
+punchlist expose-kb --off        # tear down the tailnet edge
+
+# 5. visit it
+open https://<magicdns-name>/    # this machine's Tailscale MagicDNS name
+```
+
+Notes:
+
+- **Linux** needs `tailscale set --operator=$USER` (or sudo) before `tailscale
+  serve` will run as a non-root user; macOS's Tailscale app runs this for you.
+- MagicDNS + HTTPS certs must be enabled on the tailnet (Tailscale admin
+  console) for the resulting `https://` URL to work.
+- The SilverBullet process itself never binds beyond `127.0.0.1` — `tailscale
+  serve` supplies the tailnet identity gate and TLS termination. SB's own
+  `SB_USER` login stays on as a second factor.
+- `punchlist doctor` reports whether the SB unit is installed and reminds you
+  about `expose-kb`, but never runs `tailscale` itself.
+
 ## 6. The local Claude agent (the sweep)
 
 The orchestrator lives in `~/.claude/scripts/claude-queue-sweep.sh` and is now
