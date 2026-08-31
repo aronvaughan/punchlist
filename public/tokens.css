@@ -630,8 +630,10 @@ html[data-theme="charcoal"] {
 .dir-empty { padding: 10px; color: var(--ink-faint); font-style: italic; font-size: 13px; }
 
 /* instance knowledge-base browser (tree + rendered content) */
-.instance-kb-link { display: block; margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.instance-kb-link { display: block; margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; text-align: left; cursor: pointer; flex: 1; }
 .instance-kb-link:hover { background: var(--hover); }
+.instance-kb-row { display: flex; gap: 8px; margin: 6px 0 2px; }
+.instance-kb-row .instance-kb-link { margin: 0; }
 .kb-layout { display: grid; grid-template-columns: 260px 1fr; gap: 14px; height: 72vh; }
 .kb-tree { overflow: auto; border-right: 1px solid var(--line); padding-right: 8px; }
 .kb-content { overflow: auto; min-width: 0; }

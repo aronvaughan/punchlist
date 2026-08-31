@@ -112,7 +112,14 @@
       <label for="instance-backup-repo">Backup repo (path or remote — for repo/both)</label>
       <input id="instance-backup-repo" type="text" placeholder="/path/to/private-backup or git@host:you/backup.git" spellcheck="false" autocapitalize="off">
     </div>
-    <button type="button" id="instance-kb" class="instance-kb-link">📓 Open the instance knowledge base</button>
+    <div class="dialog-field">
+      <label for="instance-kb-url">SilverBullet editor URL — the `tailscale serve` URL from <code>punchlist expose-kb</code></label>
+      <input id="instance-kb-url" type="text" placeholder="https://&lt;magicdns-name&gt;/" spellcheck="false" autocapitalize="off">
+    </div>
+    <div class="instance-kb-row">
+      <button type="button" id="instance-kb" class="instance-kb-link">📓 Browse (read-only)</button>
+      <button type="button" id="instance-kb-edit" class="instance-kb-link">✏️ Open editor →</button>
+    </div>
     <wa-button slot="footer" id="instance-cancel" appearance="plain">Cancel</wa-button>
     <wa-button slot="footer" id="instance-save" variant="brand">Save</wa-button>
   </wa-dialog>

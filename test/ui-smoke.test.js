@@ -274,6 +274,22 @@ test("kb browser UI: dialog + kb.js + Instance-dialog link", async () => {
   assert.match(app, /instance-kb.\)\.onclick/);
 });
 
+test('kb editor link: instance-kb-url field + instance-kb-edit button, http(s)-only guard, new-tab open', async () => {
+  const { get } = makeApp();
+  const html = await (await get('/')).text();
+  assert.match(html, /id="instance-kb-url"/);
+  assert.match(html, /id="instance-kb-edit"/);
+  const app = await (await get('/app.js')).text();
+  // populated from GET /instance and included in the PATCH body
+  assert.match(app, /instance-kb-url'\)\.value = inst\.kb_url/);
+  assert.match(app, /kb_url: document\.getElementById\('instance-kb-url'\)\.value\.trim\(\)/);
+  // wired separately from the read-only browser button
+  assert.match(app, /instance-kb-edit'\)\.onclick/);
+  // client-side scheme guard before opening, and a real new-tab open with noopener
+  assert.match(app, /\/\^https\?:\\\/\\\/\/i\.test\(url\)/);
+  assert.match(app, /window\.open\(url, '_blank', 'noopener'\)/);
+});
+
 test('notifications are quiet: event poll updates a browser-tab count badge, not toasts', async () => {
   const { get } = makeApp();
   const app = await (await get('/app.js')).text();

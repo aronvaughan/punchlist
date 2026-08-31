@@ -1526,9 +1526,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     data_isolation: getSetting('data_isolation', '1') === '1',
     backup_mode: getSetting('backup_mode', 'snapshot'),
     backup_repo: getSetting('backup_repo'),
+    kb_url: getSetting('kb_url'),
   }));
 
-  const INSTANCE_FIELDS = new Set(['name', 'context', 'data_isolation', 'backup_mode', 'backup_repo']);
+  const INSTANCE_FIELDS = new Set(['name', 'context', 'data_isolation', 'backup_mode', 'backup_repo', 'kb_url']);
   app.patch('/api/v1/instance', async c => {
     if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
     const body = await readJson(c);
@@ -1550,10 +1551,17 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (typeof body.backup_repo !== 'string' || body.backup_repo.length > 1024) throw new ApiError(400, 'backup_repo must be a string (<=1024 chars)');
       setSetting('backup_repo', body.backup_repo.trim());
     }
+    if (body.kb_url !== undefined) {
+      if (typeof body.kb_url !== 'string' || body.kb_url.length > 1024) throw new ApiError(400, 'kb_url must be a string (<=1024 chars)');
+      const trimmed = body.kb_url.trim();
+      if (trimmed && !/^https?:\/\//i.test(trimmed)) throw new ApiError(400, 'kb_url must be an http(s) URL');
+      setSetting('kb_url', trimmed);
+    }
     return c.json({
       name: getSetting('instance_name'), context: getSetting('instance_context'),
       data_isolation: getSetting('data_isolation', '1') === '1',
       backup_mode: getSetting('backup_mode', 'snapshot'), backup_repo: getSetting('backup_repo'),
+      kb_url: getSetting('kb_url'),
     });
   });
 
