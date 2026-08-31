@@ -73,7 +73,7 @@ echo "--> agent provisioning (MCP + skills + governance)"
 need claude && node bin/punchlist install -t claude || echo "  · claude CLI absent — skipping MCP registration (run 'punchlist install -t claude' later)"
 node bin/punchlist install-skills          # punchlist + punchlist-govern skills, govern hook scripts
 # plt (templates) skill, if the templates repo is a sibling checkout
-PLT="${PUNCHLIST_TEMPLATES_DIR:-$(dirname "$REPO")/punchlist-templates}"
+PLT="${PUNCHLIST_TEMPLATES_DIR:-$REPO/punchlist-templates}"
 [ -d "$PLT/skills" ] && { mkdir -p "$HOME/.claude/skills/punchlist-templates"; cp -r "$PLT/skills/." "$HOME/.claude/skills/punchlist-templates/" 2>/dev/null && echo "  installed plt skill"; } || echo "  · punchlist-templates not found — skipping plt skill"
 
 # private data homes (the private plane) + the skills-local surface + terms list

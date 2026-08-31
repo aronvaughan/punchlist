@@ -197,7 +197,7 @@ export function resolveTemplateEditing(cfg) {
     return { dir, available, run };
   }
   const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
-    join(dirname(ROOT_DIR), 'punchlist-templates');
+    join(ROOT_DIR, 'punchlist-templates');
   return { dir, available: templateEditingAvailable(dir), run: makeRunner() };
 }
 
@@ -1871,7 +1871,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // users may not have the templates repo at all.
   app.get('/api/v1/templates', c => {
     const dir = process.env.PUNCHLIST_TEMPLATES_DIR || TPL.dir ||
-      join(dirname(ROOT_DIR), 'punchlist-templates');
+      join(ROOT_DIR, 'punchlist-templates');
     // global plane: the prebuilt index.json (packs + authored), tagged scope
     let global = [];
     try {
