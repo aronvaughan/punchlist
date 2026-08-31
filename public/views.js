@@ -1034,6 +1034,10 @@ export function renderMain() {
   const subEl = document.getElementById('view-sub');
   listEl.replaceChildren();
   chipsEl.replaceChildren();
+  // the project context control is injected into #list-head (not the list body),
+  // so it isn't cleared by listEl.replaceChildren() — remove any prior copy here
+  // or every re-render (expand/collapse → reload) would stack another one.
+  document.querySelectorAll('#list-head .project-context').forEach(n => n.remove());
   subEl.textContent = state.route.view === 'today'
     ? new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
     : state.route.view === 'agents' && (state.counts?.unvetted ?? 0) > 0
