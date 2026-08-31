@@ -82,6 +82,8 @@ function appWithDir(dir, runImpl) {
   const app = buildApp({
     db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
     today: () => TODAY, templateEditing: { dir, available: true, run },
+    // isolate the instance plane per app so an instance save never touches the repo's data/templates
+    instanceTemplatesDir: mkdtempSync(join(tmpdir(), 'plt-inst-')),
   });
   const call = async (method, path, { body, token = TOK_ARON } = {}) => {
     const headers = {}; if (token) headers.Authorization = `Bearer ${token}`;
@@ -1572,7 +1574,7 @@ test('POST /templates/:name/save: valid draft validates, writes authored/, commi
   const isPlt = (s) => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate';
   const a = appWithDir(dir, (s) => isPlt(s) ? { code: 0, stdout: 'OK', stderr: '' } : { code: 0, stdout: '', stderr: '' });
   const draft = '---\nname: demo\n---\nedited body';
-  const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft } });
+  const r = await a.call('POST', '/api/v1/templates/demo/save', { body: { draft, scope: 'global' } });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, true);
   // wrote the OVERRIDE into authored/, not the pack
@@ -1595,6 +1597,42 @@ test('POST /templates/:name/save: invalid draft -> 422, nothing written/committe
   assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), '---\nname: demo\n---\norig', 'unchanged');
   assert.ok(!a.calls.some(s => s.cmd === 'git' && s.args.includes('commit')), 'no commit on invalid');
   cleanup();
+});
+
+test('POST /templates/:name/save: scope routes to instance (data/, no commit) or global (authored+commit); global blocks secrets', async () => {
+  const { dir, cleanup } = realTemplatesRepo({ 'packs/core/demo.md': '---\nname: demo\n---\norig' });
+  const inst = mkdtempSync(join(tmpdir(), 'tpl-inst-'));
+  const calls = [];
+  const isPlt = (s) => s.cmd === 'node' && s.args[0].endsWith(join('bin', 'plt')) && s.args[1] === 'validate';
+  const run = async (s) => { calls.push(s); return isPlt(s) ? { code: 0, stdout: 'OK', stderr: '' } : { code: 0, stdout: '', stderr: '' }; };
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const app = buildApp({ db, tokens: { alex: TOK_ARON }, admin: 'alex', today: () => TODAY,
+    templateEditing: { dir, available: true, run }, instanceTemplatesDir: inst });
+  const call = (path, body) => app.fetch(new Request(`http://x${path}`, { method: 'POST',
+    headers: { Authorization: `Bearer ${TOK_ARON}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+
+  // instance (default): writes data/templates, NO commit
+  const draft = '---\nname: demo\n---\ninstance body';
+  const ri = await (await call('/api/v1/templates/demo/save', { draft })).json();
+  assert.equal(ri.scope, 'instance');
+  assert.equal(ri.committed, false);
+  assert.equal(readFileSync(join(inst, 'demo.md'), 'utf8'), draft);
+  assert.ok(!calls.some(s => s.cmd === 'git' && s.args.includes('commit')));
+
+  // global: writes authored + commits
+  calls.length = 0;
+  const rg = await (await call('/api/v1/templates/demo/save', { draft: '---\nname: demo\n---\nglobal body', scope: 'global' })).json();
+  assert.equal(rg.scope, 'global');
+  assert.equal(readFileSync(join(dir, 'templates', 'authored', 'demo.md'), 'utf8'), '---\nname: demo\n---\nglobal body');
+  assert.ok(calls.some(s => s.cmd === 'git' && s.args.includes('commit')));
+
+  // global + secret → 422 (backstop; instance would be allowed)
+  const rs = await call('/api/v1/templates/demo/save', { draft: '---\nname: demo\n---\nPUNCHLIST_TOKEN=abcdef0123456789abcdef0123456789', scope: 'global' });
+  assert.equal(rs.status, 422);
+
+  cleanup();
+  rmSync(inst, { recursive: true, force: true });
 });
 
 // ---- needs-input (block → answer) ----

@@ -1901,6 +1901,14 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const body = await readJson(c);
     if (typeof body.draft !== 'string' || body.draft.length === 0) throw new ApiError(400, 'draft (non-empty string) required');
     if (body.draft.length > 65536) throw new ApiError(400, 'template too large');
+    const scope = body.scope ?? 'instance'; // private by default
+    if (scope !== 'instance' && scope !== 'global') throw new ApiError(400, 'scope must be instance or global');
+    // a GLOBAL save writes to a tracked/publishable path — never let obvious
+    // secrets through (the govern PreToolUse hook guards agent file writes; this
+    // is the API-level backstop). instance saves are private (data/), so allowed.
+    if (scope === 'global' && /-----BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|PUNCHLIST_TOKEN=["']?[A-Za-z0-9+/_-]{24,}/.test(body.draft)) {
+      throw new ApiError(422, 'refusing to save a secret to a publishable (global) template — keep it instance-scoped or remove the secret');
+    }
 
     // 1) validate a temp copy NAMED <name>.md (filename must match for plt).
     // `plt` is not a global binary — it ships as bin/plt INSIDE the templates repo.
@@ -1923,17 +1931,22 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       return c.json({ ok: false, validation: v.stdout.trim() || v.stderr.trim() || 'validation failed' }, 422);
     }
 
-    // 2) write the override into authored/, then commit (no push). `name` is
-    // already constrained to ^[a-z0-9-]+$ above, so the join cannot traverse —
-    // that charset guard IS the containment here.
+    // 2) write to the chosen plane. `name` is constrained to ^[a-z0-9-]+$ above,
+    // so no join can traverse — that charset guard IS the containment.
+    if (scope === 'instance') {
+      // private plane: data/templates/<name>.md (gitignored — no commit)
+      mkdirSync(INSTANCE_TPL_DIR, { recursive: true });
+      writeFileSync(join(INSTANCE_TPL_DIR, `${name}.md`), body.draft);
+      return c.json({ ok: true, validation: (v.stdout || 'OK').trim(), scope: 'instance', committed: false });
+    }
+    // global plane: the shared repo's authored/ override, then commit (no push)
     const authoredDir = join(TPL.dir, 'templates', 'authored');
     mkdirSync(authoredDir, { recursive: true });
-    const dest = join(authoredDir, `${name}.md`);
-    writeFileSync(dest, body.draft);
+    writeFileSync(join(authoredDir, `${name}.md`), body.draft);
     const relDest = join('templates', 'authored', `${name}.md`);
     await TPL.run({ cmd: 'git', args: ['add', '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
-    const commit = await TPL.run({ cmd: 'git', args: ['commit', '-m', `template(${name}): AI-assisted edit via punchlist`, '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
-    return c.json({ ok: true, validation: (v.stdout || 'OK').trim(), committed: commit.code === 0 });
+    const commit = await TPL.run({ cmd: 'git', args: ['commit', '-m', `template(${name}): edit via punchlist`, '--', relDest], cwd: TPL.dir, timeoutMs: 15000 });
+    return c.json({ ok: true, validation: (v.stdout || 'OK').trim(), scope: 'global', committed: commit.code === 0 });
   });
 
   // ---- static UI (CSP on every static response — review O1) ----
