@@ -40,6 +40,14 @@ const SEARCH_DIRS = [
   'workflows/packs',
 ];
 
+// The private INSTANCE plane (punchlist data governance): flat <data>/templates,
+// searched at TOP precedence so a same-named instance template overrides a
+// global (authored/packs) one — matching the punchlist API/resolver. Absolute,
+// outside ROOT. PLT_INSTANCE_DIR overrides; else derived from PUNCHLIST_DATA.
+const INSTANCE_DIR = process.env.PLT_INSTANCE_DIR
+  ? path.resolve(process.env.PLT_INSTANCE_DIR)
+  : (process.env.PUNCHLIST_DATA ? path.join(path.resolve(process.env.PUNCHLIST_DATA), 'templates') : null);
+
 // ---------------------------------------------------------------- frontmatter
 
 function stripQuotes(s) {
@@ -218,6 +226,7 @@ function walk(dir, out) {
 // All template/workflow files under the repo, in resolution order.
 function collectFiles(root = ROOT) {
   const out = [];
+  if (INSTANCE_DIR && root === ROOT) walk(INSTANCE_DIR, out); // private plane wins (only for the real ROOT, not test fixtures)
   for (const d of SEARCH_DIRS) walk(path.join(root, d), out);
   return out;
 }
