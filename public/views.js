@@ -1053,6 +1053,9 @@ export function renderMain() {
   if (r.view === 'project') {
     const project = state.projects.find(p => p.id === r.projectId);
     titleEl.textContent = project ? project.name : 'Project';
+    // context (book icon → pill → dialog, which now also holds working_dir) sits
+    // inline on the title line, not on its own line below (owner request).
+    if (project) titleEl.after(projectContextPanel(project));
     renderProject(listEl, tasks);
   } else if (r.view === 'today') {
     titleEl.textContent = 'Today';
@@ -1339,43 +1342,10 @@ function projectContextPanel(project) {
     tplBtnId: 'project-context-tpl-btn',
     saveId: 'project-context-save',
     cancelId: 'project-context-cancel',
+    workdirId: 'project-context-workdir',   // working_dir edited in the same dialog
     unsetLabel: 'Add project context',
     editLabel: 'Edit project context',
   });
-}
-
-// Working directory: the absolute local path the agent cd's into to work this
-// project's tasks. Folder icon + path (mono) → edit dialog; empty = an add cue.
-function projectWorkingDir(project) {
-  const wrap = el('div', 'project-workdir');
-  const label = el('span', 'pw-label');
-  label.append(icon('folder', { size: 13 }), document.createTextNode('Working dir'));
-  const val = el('button', 'pw-val');
-  const paint = () => {
-    val.textContent = project.working_dir || 'Set a local working directory…';
-    val.classList.toggle('empty', !project.working_dir);
-  };
-  paint();
-  val.addEventListener('click', () => {
-    const dlg = document.getElementById('project-workdir-dialog');
-    const inp = document.getElementById('project-workdir-input');
-    inp.value = project.working_dir || '';
-    document.getElementById('project-workdir-save').onclick = async () => {
-      try {
-        const updated = await api('PATCH', `/projects/${project.id}`, { working_dir: inp.value.trim() || null });
-        project.working_dir = updated.working_dir;
-        const i = state.projects.findIndex(p => p.id === project.id);
-        if (i >= 0) state.projects[i] = { ...state.projects[i], working_dir: updated.working_dir };
-        paint();
-      } catch (e) { toast(`Save failed: ${e.message}`); }
-      dlg.open = false;
-    };
-    document.getElementById('project-workdir-cancel').onclick = () => { dlg.open = false; };
-    dlg.open = true;
-    setTimeout(() => inp.focus(), 0);
-  });
-  wrap.append(label, val);
-  return wrap;
 }
 
 // Tag "Context" notepad: same primitive as projectContextPanel, mirrored
@@ -1407,7 +1377,7 @@ function tagContextPanel(tag) {
 // and/or template name). Both open the shared edit dialog (textarea + the
 // template-picker button hosted inside it); the dialog/editor content itself
 // is untouched — only the outer trigger changed from an always-visible panel.
-function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId, saveId, cancelId, unsetLabel, editLabel }) {
+function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId, saveId, cancelId, unsetLabel, editLabel, workdirId }) {
   const wrap = el('div', 'meta-field project-context');
   const btn = el('button', 'meta-icon-btn');
   btn.type = 'button';
@@ -1457,6 +1427,11 @@ function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId
     const ta = document.getElementById(textId);
     const tplBtn = document.getElementById(tplBtnId);
     ta.value = subject.notes ?? '';
+    // working_dir lives in this same dialog for projects (owner asked to move it
+    // off the page into the dialog); the field is absent for tags.
+    const wd = workdirId ? document.getElementById(workdirId) : null;
+    const wdField = wd?.closest('.dialog-field');
+    if (wd) { wd.value = subject.working_dir ?? ''; if (wdField) wdField.hidden = false; }
     const paintTpl = () => {
       tplBtn.replaceChildren(icon('file-text', { size: 13 }),
         el('span', 'pc-template-text', subject.template || 'No template'));
@@ -1466,10 +1441,13 @@ function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId
     tplBtn.onclick = () => openTemplatePicker(subject, saveTemplate, () => { paintTpl(); paint(); });
     document.getElementById(saveId).onclick = async () => {
       try {
-        const updated = await api('PATCH', `${patch}${subject.id}`, { notes: ta.value });
+        const body = { notes: ta.value };
+        if (wd) body.working_dir = wd.value.trim() || null;
+        const updated = await api('PATCH', `${patch}${subject.id}`, body);
         subject.notes = updated.notes;
+        if (wd) subject.working_dir = updated.working_dir;
         const i = collection.findIndex(x => x.id === subject.id);
-        if (i >= 0) collection[i] = { ...collection[i], notes: updated.notes };
+        if (i >= 0) collection[i] = { ...collection[i], notes: updated.notes, ...(wd ? { working_dir: updated.working_dir } : {}) };
         paint();
       } catch (e) { toast(`Save failed: ${e.message}`); }
       dlg.open = false;
@@ -1486,8 +1464,8 @@ function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId
 }
 
 function renderProject(listEl, tasks) {
-  const project = state.projects.find(p => p.id === state.route.projectId);
-  if (project) { listEl.append(projectContextPanel(project)); listEl.append(projectWorkingDir(project)); }
+  // the project context control now lives up on the title line (see renderMain),
+  // not in the list body — so renderProject just lays out the task sections.
   const t = todayISO();
   const bySection = [[], [], [], []];
   for (const task of tasks) bySection[sectionOf(task, t)].push(task);

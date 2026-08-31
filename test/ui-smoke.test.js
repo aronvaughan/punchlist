@@ -128,11 +128,12 @@ test('project context notepad: compact icon/pill control + dialog + agent read p
   const views = await (await get('/views.js')).text();
   assert.match(views, /function projectContextPanel/);
   assert.match(views, /function contextNotepad/);        // shared icon->pill->dialog primitive
-  assert.match(views, /listEl\.append\(projectContextPanel\(project\)\)/);   // prepended in renderProject
+  assert.match(views, /titleEl\.after\(projectContextPanel\(project\)\)/);   // on the title line
   assert.match(views, /const btn = el\('button', 'meta-icon-btn'\)/);
   assert.match(views, /const pill = el\('button', 'meta-pill'\)/);
   assert.match(views, /pill\.replaceChildren\(icon\('file-text', \{ size: 13 \}\)/); // set state: distinct icon + readout
-  assert.match(views, /PATCH', `\$\{patch\}\$\{subject\.id\}`, \{ notes: ta\.value \}/); // saves to project.notes
+  assert.match(views, /const body = \{ notes: ta\.value \}/);                  // saves project.notes
+  assert.match(views, /PATCH', `\$\{patch\}\$\{subject\.id\}`, body\)/);         // (+ working_dir for projects)
   const html = await (await get('/')).text();
   assert.match(html, /id="project-context-dialog"/);
   assert.match(html, /id="project-context-text"/);
@@ -141,12 +142,15 @@ test('project context notepad: compact icon/pill control + dialog + agent read p
   assert.match(css, /\.project-context\s*\{/);
   assert.match(css, /\.meta-icon-btn\s*\{/);
   assert.match(css, /\.meta-pill\s*\{/);
-  // working_dir: a project control + dialog + PATCH; surfaced to agents
-  assert.match(views, /function projectWorkingDir/);
-  assert.match(views, /listEl\.append\(projectWorkingDir\(project\)\)/);
-  assert.match(views, /working_dir: inp\.value\.trim\(\) \|\| null/);
-  assert.match(html, /id="project-workdir-dialog"/);
-  assert.match(css, /\.project-workdir\s*\{/);
+  // context control sits on the title line, not a separate body row
+  assert.match(views, /titleEl\.after\(projectContextPanel\(project\)\)/);
+  assert.match(css, /#list-head \.project-context\s*\{/);
+  // working_dir now lives INSIDE the project context dialog (not a standalone line)
+  assert.match(html, /id="project-context-workdir"/);
+  assert.match(views, /workdirId: 'project-context-workdir'/);
+  assert.match(views, /body\.working_dir = wd\.value\.trim\(\) \|\| null/);
+  assert.doesNotMatch(views, /function projectWorkingDir/);   // standalone control removed
+  assert.doesNotMatch(html, /id="project-workdir-dialog"/);
   // Agent read: pl.sh marks projects with context and can print one project's readme
   const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
   assert.match(pl, /\[context\]/);                       // list marker
@@ -207,7 +211,7 @@ test('tag context notepad: can point to a template via the shared AI-edit picker
 test('context notepad icon: unset = bare icon, set = pill with word-count/template readout', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
-  const body = views.slice(views.indexOf('function contextNotepad'), views.indexOf('function contextNotepad') + 3000);
+  const body = views.slice(views.indexOf('function contextNotepad'), views.indexOf('function contextNotepad') + 3800);
   // unset state: bare book icon (same family as other unset meta-icon-btn triggers)
   assert.match(body, /btn\.append\(icon\('book', \{ size: 15 \}\)\)/);
   // set state: distinct icon (file-text) signals "changed" + a minimal readout
