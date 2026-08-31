@@ -612,6 +612,8 @@ html[data-theme="charcoal"] {
    always-visible card, so it only needs bottom margin to separate it from
    the task list below. */
 .project-context { margin: 2px 0 14px; }
+/* on the project title line the context control has no vertical margin */
+#list-head .project-context { margin: 0; align-self: center; }
 .pc-template {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 5px;
