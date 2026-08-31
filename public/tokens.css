@@ -629,6 +629,27 @@ html[data-theme="charcoal"] {
 .dir-up { color: var(--ink-soft); }
 .dir-empty { padding: 10px; color: var(--ink-faint); font-style: italic; font-size: 13px; }
 
+/* instance knowledge-base browser (tree + rendered content) */
+.instance-kb-link { display: block; margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.instance-kb-link:hover { background: var(--hover); }
+.kb-layout { display: grid; grid-template-columns: 260px 1fr; gap: 14px; height: 72vh; }
+.kb-tree { overflow: auto; border-right: 1px solid var(--line); padding-right: 8px; }
+.kb-content { overflow: auto; min-width: 0; }
+.kb-dir > summary { display: flex; align-items: center; gap: 6px; padding: 4px 6px; cursor: pointer; color: var(--ink-soft); font-weight: 600; border-radius: 6px; list-style: none; }
+.kb-dir > summary::-webkit-details-marker { display: none; }
+.kb-dir > summary:hover { background: var(--hover); }
+.kb-children { margin-left: 12px; border-left: 1px solid var(--line); padding-left: 6px; }
+.kb-file { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: none; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
+.kb-file:hover { background: var(--hover); }
+.kb-file.sel { background: var(--chip-bg); color: var(--accent); font-weight: 600; }
+.kb-filepath { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-faint); margin-bottom: 10px; }
+.kb-md { font-size: 14px; line-height: 1.55; }
+.kb-md :first-child { margin-top: 0; }
+.kb-md pre, .kb-pre { background: var(--chip-bg); padding: 10px; border-radius: 8px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.kb-hint { color: var(--ink-faint); font-size: 13px; padding: 8px 2px; }
+.kb-err { color: var(--danger); font-size: 13px; padding: 8px 2px; }
+@media (max-width: 720px) { .kb-layout { grid-template-columns: 1fr; height: auto; } .kb-tree { border-right: none; border-bottom: 1px solid var(--line); max-height: 30vh; } }
+
 .project-context { margin: 2px 0 14px; }
 /* on the project title line the context control has no vertical margin */
 #list-head .project-context { margin: 0; align-self: center; }

@@ -142,6 +142,7 @@ async function openInstanceDialog() {
     dlg.open = false;
   };
   document.getElementById('instance-cancel').onclick = () => { dlg.open = false; };
+  document.getElementById('instance-kb').onclick = () => { dlg.open = false; import('/kb.js').then(m => m.openKbBrowser()); };
   dlg.open = true;
 }
 // --- new-version detection: an SPA doesn't re-fetch its JS on in-app nav, so an

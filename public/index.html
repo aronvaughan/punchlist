@@ -112,8 +112,16 @@
       <label for="instance-backup-repo">Backup repo (path or remote — for repo/both)</label>
       <input id="instance-backup-repo" type="text" placeholder="/path/to/private-backup or git@host:you/backup.git" spellcheck="false" autocapitalize="off">
     </div>
+    <button type="button" id="instance-kb" class="instance-kb-link">📓 Open the instance knowledge base</button>
     <wa-button slot="footer" id="instance-cancel" appearance="plain">Cancel</wa-button>
     <wa-button slot="footer" id="instance-save" variant="brand">Save</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="kb-dialog" label="Knowledge base" style="--width: 92vw;">
+    <div class="kb-layout">
+      <div id="kb-tree" class="kb-tree"></div>
+      <div id="kb-content" class="kb-content"></div>
+    </div>
   </wa-dialog>
 
   <wa-dialog id="project-context-dialog" label="Project context">
