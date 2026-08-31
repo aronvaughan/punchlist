@@ -83,9 +83,12 @@ SB is an **optional capability**, provisioned like KiCad is "declared but option
   `backup/`, `govern/`, and `.env` stay out of SB's index.
 - **Bind:** `127.0.0.1:<sbport>`; `tailscale serve` config (or a documented
   command) for tailnet exposure; SB password from a gitignored secret.
-- **Security baseline:** add the new loopback port to `security-check.sh` so the
-  nightly check doesn't re-alert (cf. the orphaned-scratch-server finding on
-  2026-08-31).
+- **Security baseline:** a host port-baseline monitor (if present) flags SB's new
+  `:3001` loopback listener as `SEC-PORT-NEW`. Such monitors are baseline-diff with
+  a `--bless`/re-seed step — there is **no static port list to edit**. Handling is a
+  generic reminder (printed by `install-silverbullet`, and in the docs) to bless the
+  baseline after enabling SB (cf. the orphaned-scratch-server finding on 2026-08-31).
+  punchlist stays generic — it never hardcodes any specific monitor's path.
 - **Instance dialog:** add a link-out button to the tailscale-serve URL, next to
   the read-only native browser button.
 
@@ -120,7 +123,10 @@ git-aware; git-tracking of note edits (if ever wanted) is a separate manual step
 2. **Exposure** — `tailscale serve` wiring + docs; verify loopback-only bind.
    **Done.** `src/tailscale.js` (pure `tailscaleServeSpec()`) + `punchlist
    expose-kb [--off|--status|--print]`; see "Commands" above.
-3. **Security baseline** — teach `security-check.sh` about the SB port.
+3. **Security baseline** — **Done.** No code in any monitor: port-baseline checks
+   (e.g. `SEC-PORT-NEW`) are baseline-diff + `--bless`, so `install-silverbullet`
+   now prints a generic reminder to bless the new `:3001` listener, and the docs
+   say so. punchlist hardcodes no monitor path (stays publishable/generic).
 4. **Instance dialog link** — add the "Open editor →" button (tailscale-serve URL),
    keep the native read-only browser button.
 5. **Docs** — `docs/macos-setup.md` + install README: how to enable SB, where the

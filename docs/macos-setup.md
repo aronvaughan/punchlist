@@ -160,6 +160,9 @@ Notes:
   `SB_USER` login stays on as a second factor.
 - `punchlist doctor` reports whether the SB unit is installed and reminds you
   about `expose-kb`, but never runs `tailscale` itself.
+- **Security baseline:** SB adds a new `127.0.0.1:3001` listener. If this host runs
+  a port-baseline security monitor, it will flag the new port once — accept it in
+  the monitor's baseline (its `--bless` / re-seed step) after you start SB.
 
 ## 6. The local Claude agent (the sweep)
 

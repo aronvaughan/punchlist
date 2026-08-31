@@ -241,6 +241,7 @@ async function installSilverbullet(argv) {
   writeFileSync(spec.path, spec.contents);
   if (spec.mode) chmodSync(spec.path, spec.mode);
   console.log(`wrote ${spec.kind} unit -> ${spec.path}`);
+  console.log(`note: SB opens a new loopback listener on ${spec.host}:${spec.port}. If this host runs a port-baseline security monitor, accept the new port in its baseline (its --bless / re-seed step) so it isn't flagged as an unknown listener.`);
 
   if (noStart) { console.log(`(--no-start) not loading it. Start later with: ${spec.start[0][0]} ${spec.start[0][1].join(' ')}`); return; }
 
