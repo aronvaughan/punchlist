@@ -138,10 +138,11 @@ export function openTemplatePicker(task, save, render) {
     mount.replaceChildren();
     // rows are a container div (choose-button + optional AI-edit pencil sibling)
     // so the pencil is never a nested <button> inside the choose <button>.
-    const mk = (label, value, sel, editable) => {
+    const mk = (label, value, sel, editable, scope) => {
       const rowEl = el('div', 'picker-row-wrap' + (sel ? ' sel' : ''));
       const choose = el('button', 'picker-row-choose', label);
       choose.type = 'button';
+      if (scope) choose.append(el('span', `picker-scope scope-${scope}`, scope));
       choose.addEventListener('click', async () => { if (await save({ template: value })) render(); dlg.open = false; });
       rowEl.append(choose);
       if (editable && canEdit) {
@@ -161,8 +162,18 @@ export function openTemplatePicker(task, save, render) {
     };
     mk('(none)', null, !task.template, false);
     const names = new Set(items.map(t => t.name));
-    for (const tpl of items) mk(tpl.name, tpl.name, task.template === tpl.name, true);
+    for (const tpl of items) mk(tpl.name, tpl.name, task.template === tpl.name, true, tpl.scope);
     if (task.template && !names.has(task.template)) mk(`${task.template} (unlisted)`, task.template, true, true);
+    // create a brand-new template (opens the editor in create mode)
+    if (canEdit) {
+      const newRow = el('div', 'picker-row-wrap picker-row-new');
+      const b = el('button', 'picker-row-choose');
+      b.type = 'button';
+      b.append(icon('plus', { size: 14 }), el('span', 'pill-text', 'New template…'));
+      b.addEventListener('click', async () => { dlg.open = false; const { openTemplateEditor } = await import('/tpleditor.js'); openTemplateEditor(); });
+      newRow.append(b);
+      mount.append(newRow);
+    }
   };
   // the AI-edit pencil now lives HERE (per template row), gated by the same
   // template_editing config probe — not on the task detail page.

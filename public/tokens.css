@@ -2278,6 +2278,24 @@ wa-button[variant="brand"]::part(base) {
 .tpl-preview pre { background: var(--chip-bg); padding: 8px; border-radius: 8px; overflow-x: auto; }
 .tpl-preview code { background: var(--chip-bg); border-radius: 4px; padding: 0 3px; }
 .tpl-preview :first-child { margin-top: 0; }
+/* editable source column (manual edit) */
+.tpl-source {
+  min-height: 220px; max-height: 46vh; resize: vertical;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg); color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5;
+}
+/* header fields: name + scope */
+.tpl-field-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+.tpl-name, .tpl-scope { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+.tpl-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tpl-editor-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tpl-ai { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+/* scope tags in the template picker */
+.picker-scope { margin-left: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; }
+.scope-instance { background: var(--chip-bg); color: var(--ink-soft); }
+.scope-global { background: var(--accent); color: #fff; }
+.picker-row-new .picker-row-choose { color: var(--accent); font-weight: 600; }
 
 .tpl-composer { display: flex; align-items: flex-end; gap: 8px; margin-top: 12px; }
 .tpl-instruction {
