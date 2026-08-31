@@ -7,8 +7,9 @@
 //   punchlist install-service [--print] [--no-start]
 //                                                  install the always-on service:
 //                                                  systemd (Linux) or launchd (macOS)
-//   punchlist install-silverbullet [--print] [--no-start]
-//                                                  install the OPTIONAL SilverBullet
+//   punchlist install-silverbullet [--print] [--no-start] [--version TAG] [--skip-binary]
+//                                                  provision the pinned SilverBullet binary
+//                                                  and install the OPTIONAL SilverBullet
 //                                                  KB service (data/kb, loopback only)
 //   punchlist expose-kb [--off] [--status] [--print]
 //                                                  wire/inspect the tailnet edge for the
@@ -18,13 +19,16 @@
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { serviceSpec, silverbulletSpec } from '../src/service.js';
+import {
+  serviceSpec, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
+  SILVERBULLET_VERSION,
+} from '../src/service.js';
 import { tailscaleServeSpec } from '../src/tailscale.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -195,20 +199,86 @@ async function installService(argv) {
 // password from envFile (mode 600) at run time. Space root is
 // <dataDir>/kb — never the whole dataDir. Does NOT install Deno/SilverBullet
 // and does NOT start anything unless --no-start is absent and the OS matches.
+// Resolve which SB binary the wrapper should exec, in precedence order:
+//   1. SILVERBULLET_CMD env — user override, no download, used as-is.
+//   2. The managed pinned path (already installed) — idempotent, no re-download.
+//   3. The managed pinned path, not yet installed — caller must provision it
+//      first (see provisionSilverbullet below) unless --skip-binary.
+// Pure decision logic; no I/O beyond the existsSync presence check.
+function resolveSilverbulletCmd(home, version) {
+  if (process.env.SILVERBULLET_CMD) return { cmd: process.env.SILVERBULLET_CMD, source: 'env', needsInstall: false };
+  const pinned = silverbulletBinPath(home, version);
+  return { cmd: pinned, source: 'pinned', needsInstall: !existsSync(pinned) };
+}
+
+// Actually download + unzip the pinned SilverBullet release into the managed
+// bin dir. Only called from the live (non-print, non-skip) path — never from
+// --print or doctor. Fails loudly (exit 2) rather than leaving a half-baked
+// install; cleans up its temp zip either way.
+function provisionSilverbullet(home, version) {
+  const dlSpec = silverbulletDownloadSpec(process.platform, process.arch, version);
+  const missing = ['curl', 'unzip'].filter(c => spawnSync(c, [c === 'curl' ? '--version' : '-v'], { stdio: 'ignore' }).status !== 0);
+  if (missing.length) {
+    console.error(`punchlist: missing required tool(s): ${missing.join(', ')}. Install them, or set ` +
+      `SILVERBULLET_CMD=/path/to/silverbullet to point at an existing binary instead.`);
+    process.exit(2);
+  }
+  const binDir = silverbulletBinDir(home, version);
+  const binPath = silverbulletBinPath(home, version);
+  mkdirSync(binDir, { recursive: true });
+  const tmpZip = join(tmpdir(), `silverbullet-${version}-${process.pid}.zip`);
+  console.log(`downloading ${dlSpec.url} ...`);
+  const dl = spawnSync('curl', ['-fsSL', '--proto', '=https', '--tlsv1.2', '-o', tmpZip, dlSpec.url], { stdio: 'inherit' });
+  if (dl.status !== 0) {
+    try { unlinkSync(tmpZip); } catch { /* nothing to clean up */ }
+    console.error(`punchlist: download failed (curl exited ${dl.status}). No unit was written.`);
+    process.exit(2);
+  }
+  console.log(`unzipping -> ${binDir}`);
+  const uz = spawnSync('unzip', ['-o', tmpZip, '-d', binDir], { stdio: 'inherit' });
+  try { unlinkSync(tmpZip); } catch { /* best-effort cleanup */ }
+  if (uz.status !== 0) {
+    console.error(`punchlist: unzip failed (exited ${uz.status}). No unit was written.`);
+    process.exit(2);
+  }
+  if (!existsSync(binPath)) {
+    console.error(`punchlist: expected binary not found after unzip: ${binPath} (the release asset's internal ` +
+      `filename may differ from the assumed "silverbullet" — inspect ${binDir} and set SILVERBULLET_CMD as a workaround).`);
+    process.exit(2);
+  }
+  chmodSync(binPath, 0o755);
+  console.log(`provisioned SilverBullet ${version} -> ${binPath}`);
+}
+
 async function installSilverbullet(argv) {
-  let printOnly = false, noStart = false, platform = process.platform;
+  let printOnly = false, noStart = false, skipBinary = false, platform = process.platform;
+  let version = process.env.PUNCHLIST_SB_VERSION || SILVERBULLET_VERSION;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--print') printOnly = true;
     else if (argv[i] === '--no-start') noStart = true;
+    else if (argv[i] === '--skip-binary') skipBinary = true;
     else if (argv[i] === '--platform' && argv[i + 1]) platform = argv[++i]; // for --print / testing
-    else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform)`); process.exit(2); }
+    else if (argv[i] === '--version' && argv[i + 1]) version = argv[++i];
+    else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform, --version, --skip-binary)`); process.exit(2); }
   }
+  const home = homedir();
   const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
   const spaceDir = join(dataDir, 'kb');
-  const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home: homedir() });
+  const resolved = resolveSilverbulletCmd(home, version);
+  const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home, cmd: resolved.cmd });
 
   if (printOnly) {
-    console.log(`# wrapper -> ${spec.wrapperPath}\n`);
+    console.log(`# binary source: ${resolved.source}${resolved.needsInstall ? ' (not yet installed)' : ''} -> ${resolved.cmd}`);
+    if (resolved.source === 'pinned') {
+      try {
+        const dlSpec = silverbulletDownloadSpec(platform, process.arch, version);
+        console.log(`# download (NOT executed by --print): ${dlSpec.url}`);
+        console.log(`# target: ${silverbulletBinPath(home, version)}`);
+      } catch (err) {
+        console.log(`# download spec unavailable: ${err.message}`);
+      }
+    }
+    console.log(`\n# wrapper -> ${spec.wrapperPath}\n`);
     process.stdout.write(spec.wrapperContents);
     console.log(`\n# ${spec.kind} unit -> ${spec.path}\n`);
     process.stdout.write(spec.contents);
@@ -219,6 +289,16 @@ async function installSilverbullet(argv) {
   if (platform !== process.platform) {
     console.error(`punchlist: refusing to install a ${platform} service on ${process.platform} (drop --platform, or use --print)`);
     process.exit(2);
+  }
+
+  if (resolved.needsInstall && !skipBinary) {
+    provisionSilverbullet(home, version);
+  } else if (resolved.needsInstall && skipBinary) {
+    console.log(`(--skip-binary) not provisioning ${resolved.cmd} — install it yourself before starting the service.`);
+  } else if (resolved.source === 'pinned') {
+    console.log(`SB binary already provisioned -> ${resolved.cmd}`);
+  } else {
+    console.log(`SB binary from SILVERBULLET_CMD -> ${resolved.cmd}`);
   }
 
   mkdirSync(spaceDir, { recursive: true });
@@ -381,6 +461,12 @@ async function doctor() {
   }
 
   console.log('\nSilverBullet KB (optional):');
+  onPath('curl') ? ok('curl (provisioning)') : warn('curl missing', 'needed to provision the SB binary');
+  onPath('unzip') ? ok('unzip (provisioning)') : warn('unzip missing', 'needed to provision the SB binary');
+  const sbPinnedPath = silverbulletBinPath(home, SILVERBULLET_VERSION);
+  if (process.env.SILVERBULLET_CMD) ok('SB binary (SILVERBULLET_CMD)', process.env.SILVERBULLET_CMD);
+  else if (existsSync(sbPinnedPath)) ok(`SB binary pinned ${SILVERBULLET_VERSION}`, sbPinnedPath);
+  else warn('SB binary not installed', 'run: punchlist install-silverbullet');
   const sbSpec = silverbulletSpec(platform, { repo: ROOT, spaceDir: join(dataDir, 'kb'), home });
   existsSync(sbSpec.path)
     ? ok(`${sbSpec.kind} unit installed`, sbSpec.path)
@@ -537,7 +623,8 @@ Now give each agent its token (this tool never edits your env files):
 
   default:
     console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
-      'install-service [--print] [--no-start] | install-silverbullet [--print] [--no-start] | ' +
+      'install-service [--print] [--no-start] | ' +
+      'install-silverbullet [--print] [--no-start] [--version TAG] [--skip-binary] | ' +
       'expose-kb [--off] [--status] [--print] | ' +
       'gen-token <actor> | doctor | backup [--dry-run] | ' +
       'install-skills [--claude DIR] [--hermes DIR] | snapshot');
