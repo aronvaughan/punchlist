@@ -41,6 +41,8 @@
 #   pl.sh vet <id>                     mark an unvetted task safe for agents (admin only)
 #   pl.sh allow-push <id> [--revoke]   authorize pushing this task's work (admin only;
 #                                      lifts the commit-local-only rule for it)
+#   pl.sh report <id> "text"           revise a task's summary/report in place
+#                                      (assignee/admin; in_progress|review|done)
 #   pl.sh update <id> [--title T] [--notes N] [--project P] [--due D] [--due-time HH:MM]
 #                    [--when W|someday|none] [--assignee A] [--status active|archived]
 #                    [--tags a,b] [--auto-close 0|1]
@@ -159,7 +161,7 @@ resolve_tag() { # name-or-id (leading # tolerated) -> id on stdout
   printf '%s' "$id"
 }
 
-[ $# -ge 1 ] || { sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,61p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd="$1"; shift
 
 case "$cmd" in
@@ -350,6 +352,12 @@ case "$cmd" in
     body='{}'; [ "${2:-}" = "--revoke" ] && body='{"allow":false}'
     api POST "/tasks/$(uri "$1")/allow-push" "$body"; one ;;
 
+  report)
+    # Revise a task's summary/report in place (assignee or admin; in_progress/
+    # review/done only). Use to run a review report through the writing skill.
+    [ $# -eq 2 ] || { echo "usage: pl.sh report <id> \"text\"" >&2; exit 2; }
+    api POST "/tasks/$(uri "$1")/report" "$(jq -n --arg r "$2" '{report: $r}')"; one ;;
+
   update)
     [ $# -ge 3 ] || { echo "usage: pl.sh update <id> --field val ..." >&2; exit 2; }
     id="$1"; shift
@@ -437,6 +445,6 @@ case "$cmd" in
 
   *)
     echo "pl: unknown subcommand '$cmd'" >&2
-    sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,61p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2 ;;
 esac

@@ -942,6 +942,26 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return c.json({ task: attach(getTask(id)) });
   });
 
+  // Revise a task's summary/report IN PLACE — e.g. run a review report through
+  // the writing skill without churning state. The report is otherwise owned by
+  // /finish (PATCH still rejects it); this is the one edit door. Assignee or
+  // admin; only where a report is meaningful (in_progress/review/done). Bumps
+  // version so an open editor re-reads.
+  app.post('/api/v1/tasks/:id/report', async c => {
+    const id = c.req.param('id');
+    const task = getTask(id);
+    if (!task) throw new ApiError(404, 'task not found');
+    const actor = c.get('actor');
+    if (actor !== task.assignee && actor !== HUMAN) throw new ApiError(403, 'only the assignee or admin can edit the report');
+    if (!['in_progress', 'review', 'done'].includes(task.status)) throw new ApiError(400, `cannot set a report on a ${task.status} task`);
+    const body = await readJson(c);
+    if (typeof body.report !== 'string' || !body.report.trim()) throw new ApiError(400, 'report required (non-empty string)');
+    if (body.report.length > CAPS.notes) throw new ApiError(400, 'report too long');
+    db.prepare('UPDATE tasks SET report = ?, updated_at = ?, version = version + 1 WHERE id = ?')
+      .run(body.report, new Date().toISOString(), id);
+    return c.json({ task: attach(getTask(id)) });
+  });
+
   // ---- activity thread (comments) ----
   // Model: a task is a GitHub-style issue with a typed, append-only, attributed
   // timeline. Async and poll-refreshed like everything else — no live chat.
