@@ -317,6 +317,33 @@ test('allow_push: admin-only trusted door; PATCH cannot set it; task text cannot
   assert.equal(rev.task.allow_push, 0);
 });
 
+test('report edit door: assignee/admin revise report (in_progress/review/done); PATCH rejects; guards', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32), C = 'c'.repeat(32), E = 'e'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A, claude: C, extra: E }, admin: 'alex', today: () => '2026-03-10' });
+  const req = (tok, m, p, body) => app.fetch(new Request(`http://x${p}`, {
+    method: m, headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined }));
+  const t = await (await req(A, 'POST', '/api/v1/tasks', { title: 'x', assignee: 'claude' })).json();
+  // active task has no report lifecycle → 400
+  assert.equal((await req(C, 'POST', `/api/v1/tasks/${t.id}/report`, { report: 'r' })).status, 400);
+  await req(A, 'POST', `/api/v1/tasks/${t.id}/vet`);
+  await req(C, 'POST', `/api/v1/tasks/${t.id}/claim`);
+  await req(C, 'POST', `/api/v1/tasks/${t.id}/finish`, { report: 'first' }); // → review
+  // non-owner cannot edit
+  assert.equal((await req(E, 'POST', `/api/v1/tasks/${t.id}/report`, { report: 'nope' })).status, 403);
+  // assignee revises in place
+  const r1 = await req(C, 'POST', `/api/v1/tasks/${t.id}/report`, { report: 'concise v2' });
+  assert.equal(r1.status, 200);
+  assert.equal((await r1.json()).task.report, 'concise v2');
+  // admin may too; empty rejected
+  assert.equal((await req(A, 'POST', `/api/v1/tasks/${t.id}/report`, { report: 'admin v3' })).status, 200);
+  assert.equal((await req(A, 'POST', `/api/v1/tasks/${t.id}/report`, { report: '  ' })).status, 400);
+  // PATCH still refuses the report field
+  assert.equal((await req(A, 'PATCH', `/api/v1/tasks/${t.id}`, { report: 'via patch' })).status, 400);
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();
