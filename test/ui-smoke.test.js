@@ -260,6 +260,20 @@ test("template editor: create/edit/save/scope + New-template entry", async () =>
   assert.match(css, /\.scope-global/);
 });
 
+test("kb browser UI: dialog + kb.js + Instance-dialog link", async () => {
+  const { get } = makeApp();
+  const html = await (await get("/")).text();
+  assert.match(html, /id="kb-dialog"/);
+  assert.match(html, /id="kb-tree"/);
+  assert.match(html, /id="instance-kb"/);
+  const kb = await (await get("/kb.js")).text();
+  assert.match(kb, /export async function openKbBrowser/);
+  assert.match(kb, /\/kb\/tree/);
+  assert.match(kb, /mdToHtml\(f\.content\)/);   // safe render
+  const app = await (await get("/app.js")).text();
+  assert.match(app, /instance-kb.\)\.onclick/);
+});
+
 test('notifications are quiet: event poll updates a browser-tab count badge, not toasts', async () => {
   const { get } = makeApp();
   const app = await (await get('/app.js')).text();
