@@ -129,6 +129,7 @@ test('project context notepad: compact icon/pill control + dialog + agent read p
   assert.match(views, /function projectContextPanel/);
   assert.match(views, /function contextNotepad/);        // shared icon->pill->dialog primitive
   assert.match(views, /titleEl\.after\(projectContextPanel\(project\)\)/);   // on the title line
+  assert.match(views, /querySelectorAll\('#list-head \.project-context'\)\.forEach\(n => n\.remove\(\)\)/); // no dup on re-render
   assert.match(views, /const btn = el\('button', 'meta-icon-btn'\)/);
   assert.match(views, /const pill = el\('button', 'meta-pill'\)/);
   assert.match(views, /pill\.replaceChildren\(icon\('file-text', \{ size: 13 \}\)/); // set state: distinct icon + readout
