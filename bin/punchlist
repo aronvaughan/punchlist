@@ -7,6 +7,9 @@
 //   punchlist install-service [--print] [--no-start]
 //                                                  install the always-on service:
 //                                                  systemd (Linux) or launchd (macOS)
+//   punchlist install-silverbullet [--print] [--no-start]
+//                                                  install the OPTIONAL SilverBullet
+//                                                  KB service (data/kb, loopback only)
 //   punchlist gen-token <actor>                    print a ready-to-paste token pair
 //   punchlist install-skills [--claude DIR] [--hermes DIR]
 //                                                  copy the agent skills into place
@@ -18,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { serviceSpec } from '../src/service.js';
+import { serviceSpec, silverbulletSpec } from '../src/service.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -182,6 +185,67 @@ async function installService(argv) {
   }
 }
 
+// ---- SilverBullet service install (optional, second service) ----
+// Mirrors installService() above but for the SilverBullet KB editor: writes
+// a secret-free unit/plist plus a wrapper script that sources the SB auth
+// password from envFile (mode 600) at run time. Space root is
+// <dataDir>/kb — never the whole dataDir. Does NOT install Deno/SilverBullet
+// and does NOT start anything unless --no-start is absent and the OS matches.
+async function installSilverbullet(argv) {
+  let printOnly = false, noStart = false, platform = process.platform;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--print') printOnly = true;
+    else if (argv[i] === '--no-start') noStart = true;
+    else if (argv[i] === '--platform' && argv[i + 1]) platform = argv[++i]; // for --print / testing
+    else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform)`); process.exit(2); }
+  }
+  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const spaceDir = join(dataDir, 'kb');
+  const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home: homedir() });
+
+  if (printOnly) {
+    console.log(`# wrapper -> ${spec.wrapperPath}\n`);
+    process.stdout.write(spec.wrapperContents);
+    console.log(`\n# ${spec.kind} unit -> ${spec.path}\n`);
+    process.stdout.write(spec.contents);
+    console.log(`\n# reload: ${spec.reload.map(([c, a]) => `${c} ${a.join(' ')}`).join(' && ')}`);
+    console.log(`# start:  ${spec.start.map(([c, a]) => `${c} ${a.join(' ')}`).join(' && ')}`);
+    return;
+  }
+  if (platform !== process.platform) {
+    console.error(`punchlist: refusing to install a ${platform} service on ${process.platform} (drop --platform, or use --print)`);
+    process.exit(2);
+  }
+
+  mkdirSync(spaceDir, { recursive: true });
+
+  if (!existsSync(spec.envFile)) {
+    mkdirSync(dirname(spec.envFile), { recursive: true });
+    writeFileSync(spec.envFile, 'SB_USER=admin:CHANGME\n');
+    chmodSync(spec.envFile, 0o600);
+    console.log(`wrote ${spec.envFile} (mode 600) — EDIT THIS before starting: set SB_USER=user:pass`);
+  } else {
+    console.log(`envFile already present, left untouched: ${spec.envFile}`);
+  }
+
+  mkdirSync(dirname(spec.wrapperPath), { recursive: true });
+  writeFileSync(spec.wrapperPath, spec.wrapperContents);
+  chmodSync(spec.wrapperPath, spec.wrapperMode);
+  console.log(`wrote wrapper -> ${spec.wrapperPath}`);
+
+  mkdirSync(dirname(spec.path), { recursive: true });
+  writeFileSync(spec.path, spec.contents);
+  if (spec.mode) chmodSync(spec.path, spec.mode);
+  console.log(`wrote ${spec.kind} unit -> ${spec.path}`);
+
+  if (noStart) { console.log(`(--no-start) not loading it. Start later with: ${spec.start[0][0]} ${spec.start[0][1].join(' ')}`); return; }
+
+  // reload/unload is best-effort (fails harmlessly on a first install)
+  for (const [c, a] of spec.reload) spawnSync(c, a, { stdio: 'ignore' });
+  for (const [c, a] of spec.start) spawnSync(c, a, { stdio: 'inherit' });
+  console.log(`punchlist: SilverBullet unit started (bound to ${spec.host}:${spec.port}, loopback only) — check ${spec.status[0]} ${spec.status[1].join(' ')}`);
+}
+
 // ---- token generation: print a ready-to-paste PUNCHLIST_TOKENS pair ----
 // Never writes your env files (same policy as install-skills); prints only.
 function genToken(argv) {
@@ -237,6 +301,12 @@ async function doctor() {
   } else if (spec.kind === 'launchd') {
     spawnSync('launchctl', ['list', spec.label], { stdio: 'ignore' }).status === 0 ? ok('LaunchAgent loaded') : warn('LaunchAgent not loaded');
   }
+
+  console.log('\nSilverBullet KB (optional):');
+  const sbSpec = silverbulletSpec(platform, { repo: ROOT, spaceDir: join(dataDir, 'kb'), home });
+  existsSync(sbSpec.path)
+    ? ok(`${sbSpec.kind} unit installed`, sbSpec.path)
+    : warn(`${sbSpec.kind} unit not installed`, 'optional — run: punchlist install-silverbullet');
 
   console.log('\nHealth:');
   try {
@@ -327,6 +397,10 @@ switch (cmd) {
     await installService(rest);
     break;
 
+  case 'install-silverbullet':
+    await installSilverbullet(rest);
+    break;
+
   case 'gen-token':
     genToken(rest);
     break;
@@ -380,7 +454,8 @@ Now give each agent its token (this tool never edits your env files):
 
   default:
     console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
-      'install-service [--print] [--no-start] | gen-token <actor> | doctor | backup [--dry-run] | ' +
+      'install-service [--print] [--no-start] | install-silverbullet [--print] [--no-start] | ' +
+      'gen-token <actor> | doctor | backup [--dry-run] | ' +
       'install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);
 }
