@@ -224,7 +224,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // body cap — the upload route does NOT go through readJson.
   const MEDIA_DIR = mediaDir || process.env.PUNCHLIST_MEDIA_DIR || join(ROOT_DIR, 'data', 'media');
   // instance (private) templates plane — <data>/templates, sibling of media
-  const INSTANCE_TPL_DIR = instanceTemplatesDir || process.env.PUNCHLIST_INSTANCE_TEMPLATES_DIR || join(dirname(MEDIA_DIR), 'templates');
+  const DATA_ROOT = dirname(MEDIA_DIR); // the instance private plane root (<data>)
+  const INSTANCE_TPL_DIR = instanceTemplatesDir || process.env.PUNCHLIST_INSTANCE_TEMPLATES_DIR || join(DATA_ROOT, 'templates');
   // root the working-dir browser is sandboxed to (admin lists dir names within it)
   const FS_ROOT = fsRoot || process.env.PUNCHLIST_FS_ROOT || homedir();
   const MAX_UPLOAD = maxUpload || Number(process.env.PUNCHLIST_MAX_UPLOAD_BYTES) || 10485760;
@@ -1470,6 +1471,50 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
         .map(d => d.name).sort();
     } catch { throw new ApiError(400, 'cannot read directory'); }
     return c.json({ root: realRoot, path: real, parent: real === realRoot ? null : dirname(real), dirs });
+  });
+
+  // ---- instance KB browser (native "web notebook" over the private plane) ----
+  // Browses the markdown/text under the instance data root — kb, templates,
+  // skills, notes — EXCLUDING secrets and non-KB blobs: .env & dotfiles, *.db*,
+  // and the media/backup/govern dirs. Admin-only; every path realpath-contained
+  // to DATA_ROOT (no ../ or symlink escape); read-only for now.
+  const KB_DENY_DIR = new Set(['media', 'backup', 'govern', 'node_modules']);
+  const KB_TEXT = /\.(md|markdown|txt|json|ya?ml)$/i;
+  const kbTree = (dir, rel = '') => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    const out = [];
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (e.name.startsWith('.')) continue;                 // .env, dotfiles/dirs
+      if (e.isDirectory()) {
+        if (KB_DENY_DIR.has(e.name)) continue;
+        out.push({ type: 'dir', name: e.name, path: join(rel, e.name), children: kbTree(join(dir, e.name), join(rel, e.name)) });
+      } else if (e.isFile() && KB_TEXT.test(e.name)) {
+        out.push({ type: 'file', name: e.name, path: join(rel, e.name) });
+      }
+    }
+    return out;
+  };
+  app.get('/api/v1/kb/tree', c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
+    return c.json({ root: DATA_ROOT, tree: existsSync(DATA_ROOT) ? kbTree(DATA_ROOT) : [] });
+  });
+  app.get('/api/v1/kb/file', c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
+    let root;
+    try { root = realpathSync(DATA_ROOT); } catch { throw new ApiError(404, 'no instance data'); }
+    const rel = c.req.query('path') || '';
+    if (!rel || rel.includes('\0')) throw new ApiError(400, 'path required');
+    let real;
+    try { real = realpathSync(join(root, rel)); } catch { throw new ApiError(404, 'not found'); }
+    if (real !== root && !real.startsWith(root + '/')) throw new ApiError(400, 'outside instance data');
+    const segs = real.slice(root.length + 1).split('/');
+    if (segs.some(s => s.startsWith('.') || KB_DENY_DIR.has(s))) throw new ApiError(403, 'not a KB file');
+    if (!KB_TEXT.test(real)) throw new ApiError(400, 'not a text file');
+    const st = statSync(real);
+    if (!st.isFile()) throw new ApiError(400, 'not a file');
+    if (st.size > 524288) throw new ApiError(413, 'file too large');
+    return c.json({ path: rel, content: readFileSync(real, 'utf8') });
   });
 
   // The instance identity + governance surface. GET is readable by any actor
