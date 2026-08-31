@@ -7,7 +7,7 @@ import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'no
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { makeRunner, parseAiReply, resolveTemplatePath, readTemplate, buildEditPrompt } from './templates.js';
+import { makeRunner, parseAiReply, resolveTemplatePath, readTemplate, buildEditPrompt, templateScope } from './templates.js';
 import { ulid } from './db.js';
 import { sniffMime, normalizeMime, normalizeDocMime, docMimeForExt, isDocMime, isUtf8Text,
   filePathFor, sanitizeFilename } from './media.js';
@@ -217,12 +217,14 @@ function sectionOf(task, today) {
 }
 
 export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
-    maxDoc, docRoots, templateEditing }) {
+    maxDoc, docRoots, templateEditing, instanceTemplatesDir }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
   // references the row. Cap is separate from (and far larger than) the JSON
   // body cap — the upload route does NOT go through readJson.
   const MEDIA_DIR = mediaDir || process.env.PUNCHLIST_MEDIA_DIR || join(ROOT_DIR, 'data', 'media');
+  // instance (private) templates plane — <data>/templates, sibling of media
+  const INSTANCE_TPL_DIR = instanceTemplatesDir || process.env.PUNCHLIST_INSTANCE_TEMPLATES_DIR || join(dirname(MEDIA_DIR), 'templates');
   const MAX_UPLOAD = maxUpload || Number(process.env.PUNCHLIST_MAX_UPLOAD_BYTES) || 10485760;
   // Document (.md/.txt) uploads have their own, smaller cap — a text doc has no
   // business being 10MB, and keeping it separate documents the intent.
@@ -1813,9 +1815,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   app.get('/api/v1/templates/:name', c => {
     requireTemplateEditing(c);
     const name = c.req.param('name');
-    const markdown = readTemplate(TPL.dir, name);
+    const markdown = readTemplate(TPL.dir, name, { instanceDir: INSTANCE_TPL_DIR });
     if (markdown == null) throw new ApiError(404, 'template not found');
-    return c.json({ name, markdown });
+    return c.json({ name, markdown, scope: templateScope(TPL.dir, name, { instanceDir: INSTANCE_TPL_DIR }) });
   });
 
   app.post('/api/v1/templates/:name/ai-edit', async c => {

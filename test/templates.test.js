@@ -1,6 +1,36 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAiReply, makeRunner } from '../src/templates.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseAiReply, makeRunner, resolveTemplatePath, templateScope, readTemplate } from '../src/templates.js';
+
+test('template scope: instance plane wins over global authored/packs; scope is derived from location', () => {
+  const base = mkdtempSync(join(tmpdir(), 'tpl-'));
+  const repo = join(base, 'repo'); const inst = join(base, 'data-templates');
+  mkdirSync(join(repo, 'templates', 'authored'), { recursive: true });
+  mkdirSync(join(repo, 'templates', 'packs', 'core'), { recursive: true });
+  mkdirSync(inst, { recursive: true });
+  writeFileSync(join(repo, 'templates', 'packs', 'core', 'coding.md'), 'PACK');
+  writeFileSync(join(repo, 'templates', 'authored', 'coding.md'), 'AUTHORED');
+  writeFileSync(join(inst, 'coding.md'), 'INSTANCE');
+  writeFileSync(join(inst, 'private-only.md'), 'PRIVATE');
+
+  // instance wins over authored wins over packs
+  assert.equal(readTemplate(repo, 'coding', { instanceDir: inst }), 'INSTANCE');
+  assert.equal(templateScope(repo, 'coding', { instanceDir: inst }), 'instance');
+  // without the instance plane, authored wins over packs
+  assert.equal(readTemplate(repo, 'coding'), 'AUTHORED');
+  assert.equal(templateScope(repo, 'coding'), 'global');
+  // an instance-only template resolves + scopes instance
+  assert.equal(readTemplate(repo, 'private-only', { instanceDir: inst }), 'PRIVATE');
+  assert.equal(templateScope(repo, 'private-only', { instanceDir: inst }), 'instance');
+  // missing everywhere → null; bad names rejected; no escape via ../
+  assert.equal(resolveTemplatePath(repo, 'nope', { instanceDir: inst }), null);
+  assert.equal(templateScope(repo, 'nope', { instanceDir: inst }), null);
+  assert.equal(resolveTemplatePath(repo, '../evil', { instanceDir: inst }), null);
+  rmSync(base, { recursive: true, force: true });
+});
 
 test('parseAiReply: splits NOTE and TEMPLATE blocks', () => {
   const raw = [

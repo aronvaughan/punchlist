@@ -15,11 +15,28 @@ export function parseAiReply(raw) {
   return { note: (block('NOTE') ?? '').trim(), draft: draft.replace(/\s+$/, '') };
 }
 
-// name -> absolute path of the resolved template file (authored wins over packs),
-// or null. Only a-z0-9- names; the returned path is realpath-contained under
-// <dir>/templates so a crafted name can never escape the repo.
-export function resolveTemplatePath(dir, name) {
+// realpath-containment guard: return `cand` (its realpath) only if it resolves
+// inside `rootDir` — a crafted name can never escape the plane's root.
+function containedReal(cand, rootDir) {
+  if (!existsSync(cand)) return null;
+  const realRoot = realpathSync(rootDir);
+  const real = realpathSync(cand);
+  return (real === realRoot || real.startsWith(realRoot + '/')) ? real : null;
+}
+
+// name -> absolute path of the resolved template file, or null. Two planes,
+// highest precedence first:
+//   instance (<instanceDir>/<name>.md, private)  >  global authored  >  global packs
+// So a same-named instance template overrides a global one locally. Only a-z0-9-
+// names; every returned path is realpath-contained under its plane's root.
+export function resolveTemplatePath(dir, name, { instanceDir } = {}) {
   if (!/^[a-z0-9-]+$/.test(name)) return null;
+  // 1. instance plane (private, wins) — flat <instanceDir>/<name>.md
+  if (instanceDir && existsSync(instanceDir)) {
+    const hit = containedReal(join(instanceDir, `${name}.md`), instanceDir);
+    if (hit) return hit;
+  }
+  // 2. global plane — <dir>/templates/{authored, packs/*}
   const root = join(dir, 'templates');
   // Defensive: a configured repo dir whose templates/ root is missing must not
   // throw from realpathSync below — degrade to null (→ 404) instead of a 500.
@@ -29,17 +46,23 @@ export function resolveTemplatePath(dir, name) {
   if (existsSync(packs)) {
     for (const p of readdirSync(packs)) candidates.push(join(packs, p, `${name}.md`));
   }
-  const realRoot = realpathSync(root);
   for (const c of candidates) {
-    if (!existsSync(c)) continue;
-    const real = realpathSync(c);
-    if (real === realRoot || real.startsWith(realRoot + '/')) return real;
+    const hit = containedReal(c, root);
+    if (hit) return hit;
   }
   return null;
 }
 
-export function readTemplate(dir, name) {
-  const p = resolveTemplatePath(dir, name);
+// Which plane a template resolves from: 'instance' | 'global' | null (missing).
+export function templateScope(dir, name, { instanceDir } = {}) {
+  if (instanceDir && existsSync(instanceDir) && containedReal(join(instanceDir, `${name}.md`), instanceDir)) {
+    return 'instance';
+  }
+  return resolveTemplatePath(dir, name) ? 'global' : null;
+}
+
+export function readTemplate(dir, name, opts = {}) {
+  const p = resolveTemplatePath(dir, name, opts);
   return p ? readFileSync(p, 'utf8') : null;
 }
 
