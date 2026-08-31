@@ -67,19 +67,26 @@ No DB migration. Templates are files:
 default `<PUNCHLIST_DATA>/templates`) at top precedence, so `plt show/list/launch`
 see instance templates too. Same precedence rule as the API.
 
-## Task-driven authoring (the point)
+## The split: UI does manual, tasks do AI
 
-No new UI required. An agent working a template task:
+**UI (direct, manual — admin only):**
+- **Create** a new template: name + scope + starter content (seeded with a valid
+  frontmatter skeleton so `plt validate` passes).
+- **Edit** an existing template's text and **Save** (plain save — not only AI).
+- **Scope** control: set/switch `global` ⇄ `instance` (moving planes on save).
+- Entry points: a "New template" action + editing any template (the existing
+  template-picker pencil, extended from AI-only to create/edit/save/scope).
 
-1. `plt validate` / read existing (or scaffold a new frontmatter skeleton).
-2. `POST /templates/<name>/ai-edit` to draft (tool-less `claude -p`, as v1).
-3. Owner reviews the live draft.
-4. `POST /templates/<name>/save` with `scope` (default `instance`) — validate +
-   local commit (global) or write to `data/templates` (instance). Push stays
-   ask-gated / `allow_push`-authorized.
+**Task system (AI improvement pass):** "improve template X with AI" is a task an
+agent works — `POST /templates/<name>/ai-edit` (tool-less `claude -p`, as v1) →
+owner reviews → `save`. The heavy/iterative AI work lives in the queue, not a
+long-held UI session.
 
-Optional later: a scope toggle in the existing editor dialog; a "move scope"
-action (instance ↔ global = read one plane, write the other, remove source).
+So: **UI to create/edit/save/scope; tasks to improve with AI.** Both write through
+the same `save` endpoint (validate + scope routing); push stays ask-gated /
+`allow_push`-authorized.
+
+Later (optional): a dedicated "move scope" affordance beyond save-with-new-scope.
 
 ## Security / governance
 
@@ -97,8 +104,13 @@ action (instance ↔ global = read one plane, write the other, remove source).
 3. **Write path** — `save` honors `scope` (default instance) + create-new +
    collision check + global-content guard; tests.
 4. **plt** — instance search dir; tests.
+5. **UI — create/edit/save/scope** — a "New template" action + an editor that
+   loads a template's text, edits it, sets scope (global/instance), and Saves
+   through the endpoint; the existing template-picker pencil extends from AI-only
+   to this create/edit/save/scope surface. Admin-only, feature-gated. Tests.
 
-(1–4 = MVP.) 5. move-scope + UI toggle — later, only if wanted.
+(1–5 = MVP.) Later: a dedicated move-scope affordance; keeping/relocating the
+in-UI AI chat if wanted (default is AI-via-tasks).
 
 ## Out of scope
 
