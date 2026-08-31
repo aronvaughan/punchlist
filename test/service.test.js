@@ -124,12 +124,10 @@ test('silverbulletWrapper: sources envFile, execs cmd with host/port/spaceDir, n
     envFile: '/home/u/.config/punchlist/silverbullet.env',
   });
   assert.match(w, /^#!/); // shebang
-  assert.match(w, /\.\s+"\/home\/u\/\.config\/punchlist\/silverbullet\.env"/); // sources the env file
+  assert.match(w, /\.\s+"\/home\/u\/\.config\/punchlist\/silverbullet\.env"/); // sources the env file (SB_USER)
   assert.match(w, /set -a/); // exported vars from the sourced file reach the child process
-  assert.match(w, /SB_HOSTNAME="127\.0\.0\.1"/); // host via SB's documented env interface, not a CLI flag
-  assert.match(w, /SB_PORT="3001"/);             // port likewise
-  assert.match(w, /exec "silverbullet" "\/home\/u\/app\/data\/kb"/); // space folder is the positional arg
-  assert.doesNotMatch(w, /--hostname|--port/);   // no version-specific CLI flags
+  // SB standalone binary interface: -p <port> -L <host> <space> (silverbullet.md Install/Binary)
+  assert.match(w, /exec "silverbullet" -p "3001" -L "127\.0\.0\.1" "\/home\/u\/app\/data\/kb"/);
   assert.ok(!w.includes(SECRET_PASSWORD));
   assert.doesNotMatch(w, /SB_USER=/); // the wrapper never hardcodes the credential itself
 });

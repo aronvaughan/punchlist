@@ -18,7 +18,7 @@
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -222,6 +222,19 @@ async function installSilverbullet(argv) {
   }
 
   mkdirSync(spaceDir, { recursive: true });
+
+  // Seed a starter index page so a fresh space isn't an empty screen. Only when
+  // the space is genuinely empty — never overwrite existing notes.
+  if (readdirSync(spaceDir).length === 0) {
+    writeFileSync(join(spaceDir, 'index.md'),
+      `# Knowledge base\n\n` +
+      `This is the SilverBullet space for this punchlist instance. It lives in ` +
+      `\`data/kb\` (the private plane) and is served read-write here, read-only in ` +
+      `the app's Instance dialog.\n\n` +
+      `Create a page with \`[[Some Page]]\` and click it. Everything you write ` +
+      `stays on this machine and is covered by the instance backup.\n`);
+    console.log(`seeded starter -> ${join(spaceDir, 'index.md')}`);
+  }
 
   if (!existsSync(spec.envFile)) {
     mkdirSync(dirname(spec.envFile), { recursive: true });

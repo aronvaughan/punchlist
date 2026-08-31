@@ -75,22 +75,21 @@ const SB_LABEL = 'com.punchlist.silverbullet';
 // in envFile (mode 0600), never in the unit/plist (which is world-readable,
 // mode 0644) — the unit execs this wrapper, which sources envFile (bringing
 // SB_USER=user:pass into the environment via `set -a`) and then execs the
-// real SilverBullet command. Host/port go through SB_HOSTNAME/SB_PORT —
-// SilverBullet's documented, version-stable env interface (silverbullet.md)
-// — rather than CLI flags, which differ across SB builds; the space folder
-// is the positional arg. Pure string rendering — no I/O; the CLI writes this
-// to disk and chmods it 0755.
+// real SilverBullet command. Bind host/port go through the standalone
+// binary's documented flags — `-p <port>` and `-L <host>` (silverbullet.md
+// Install/Binary) — with the space folder as the positional arg; auth is the
+// SB_USER env from envFile. `-L 127.0.0.1` keeps SB loopback-only (tailnet
+// exposure is `tailscale serve`, a separate concern). Pure string rendering —
+// no I/O; the CLI writes this to disk and chmods it 0755.
 export function silverbulletWrapper({ cmd, spaceDir, host, port, envFile }) {
   return `#!/usr/bin/env bash
 # punchlist-silverbullet wrapper — sources the SB auth secret from envFile
 # (mode 600) so it never appears in the world-readable service unit/plist.
-# SB_HOSTNAME/SB_PORT bind loopback only; the SB_USER credential comes from envFile.
+# -L binds loopback only; -p sets the port; the SB_USER credential comes from envFile.
 set -a
 . "${envFile}"
-SB_HOSTNAME="${host}"
-SB_PORT="${port}"
 set +a
-exec "${cmd}" "${spaceDir}"
+exec "${cmd}" -p "${port}" -L "${host}" "${spaceDir}"
 `;
 }
 
