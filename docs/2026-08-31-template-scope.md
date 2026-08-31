@@ -1,6 +1,6 @@
 # Template scope (global vs instance) — design
 
-**Status:** approved design (2026-08-31), pending implementation.
+**Status:** implemented (2026-08-31) — increments 1–5 landed (API read/list/write scope, plt, UI). See git log.
 **Tracks:** template-editor v2 (`docs/2026-08-30-template-editor-v2-candidates.md`),
 distilled to the one piece worth building; the rest runs through tasks.
 
