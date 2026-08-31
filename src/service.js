@@ -69,6 +69,39 @@ export function launchdPlist({ label = LABEL, node, serverJs, repo, dataDir, log
 `;
 }
 
+// Pinned SilverBullet release. Bump deliberately (with a matching human
+// verification pass — see docs/2026-08-31-kb-silverbullet.md) rather than
+// tracking `latest`, so a fresh `install-silverbullet` always provisions the
+// exact binary this repo has been checked against.
+export const SILVERBULLET_VERSION = '2.10.0';
+
+// Map Node's process.arch/process.platform values onto the asset naming
+// SilverBullet's GitHub release zips use, and compute the download spec.
+// Pure — no I/O; the CLI (bin/punchlist) does the actual curl/unzip.
+const SB_ARCH_MAP = { x64: 'x86_64', arm64: 'aarch64', arm: 'armv7' };
+const SB_OS_MAP = { linux: 'linux', darwin: 'darwin' };
+
+export function silverbulletDownloadSpec(platform, arch, version = SILVERBULLET_VERSION) {
+  const os = SB_OS_MAP[platform];
+  if (!os) throw new Error(`silverbulletDownloadSpec: unsupported platform "${platform}" (supported: linux, darwin)`);
+  const a = SB_ARCH_MAP[arch];
+  if (!a) throw new Error(`silverbulletDownloadSpec: unsupported arch "${arch}" (supported: x64, arm64, arm)`);
+  const asset = `silverbullet-server-${os}-${a}.zip`;
+  const url = `https://github.com/silverbulletmd/silverbullet/releases/download/${version}/${asset}`;
+  return { version, os, arch: a, asset, url, binName: 'silverbullet' };
+}
+
+// Managed, version-pinned install location for the provisioned binary —
+// distinct per version so bumping SILVERBULLET_VERSION never collides with
+// (or silently upgrades) an already-installed one. Pure — join only.
+export function silverbulletBinDir(home, version = SILVERBULLET_VERSION) {
+  return join(home, '.local', 'share', 'punchlist', 'silverbullet', version);
+}
+
+export function silverbulletBinPath(home, version = SILVERBULLET_VERSION) {
+  return join(silverbulletBinDir(home, version), 'silverbullet');
+}
+
 const SB_LABEL = 'com.punchlist.silverbullet';
 
 // Wrapper script for the SilverBullet service. The auth password lives only

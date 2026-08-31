@@ -3,7 +3,10 @@
 // without touching the real system.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { serviceSpec, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper } from '../src/service.js';
+import {
+  serviceSpec, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper,
+  silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath, SILVERBULLET_VERSION,
+} from '../src/service.js';
 
 const base = { repo: '/home/u/app', dataDir: '/home/u/app/data', node: '/usr/bin/node', home: '/home/u' };
 
@@ -130,4 +133,56 @@ test('silverbulletWrapper: sources envFile, execs cmd with host/port/spaceDir, n
   assert.match(w, /exec "silverbullet" -p "3001" -L "127\.0\.0\.1" "\/home\/u\/app\/data\/kb"/);
   assert.ok(!w.includes(SECRET_PASSWORD));
   assert.doesNotMatch(w, /SB_USER=/); // the wrapper never hardcodes the credential itself
+});
+
+// ---- silverbulletDownloadSpec / silverbulletBinDir / silverbulletBinPath ----
+// Pinned-binary provisioning specs. Pure — no I/O, no network.
+
+test('SILVERBULLET_VERSION is pinned to 2.10.0', () => {
+  assert.equal(SILVERBULLET_VERSION, '2.10.0');
+});
+
+test('silverbulletDownloadSpec(linux, x64) -> linux-x86_64 asset at the pinned version', () => {
+  const s = silverbulletDownloadSpec('linux', 'x64');
+  assert.equal(s.version, '2.10.0');
+  assert.equal(s.os, 'linux');
+  assert.equal(s.arch, 'x86_64');
+  assert.equal(s.asset, 'silverbullet-server-linux-x86_64.zip');
+  assert.ok(s.url.includes('/download/2.10.0/'));
+  assert.ok(s.url.endsWith('silverbullet-server-linux-x86_64.zip'));
+  assert.equal(s.binName, 'silverbullet');
+});
+
+test('silverbulletDownloadSpec(darwin, arm64) -> darwin-aarch64 asset', () => {
+  const s = silverbulletDownloadSpec('darwin', 'arm64');
+  assert.equal(s.asset, 'silverbullet-server-darwin-aarch64.zip');
+  assert.equal(s.os, 'darwin');
+  assert.equal(s.arch, 'aarch64');
+});
+
+test('silverbulletDownloadSpec(linux, arm) -> linux-armv7 asset', () => {
+  const s = silverbulletDownloadSpec('linux', 'arm');
+  assert.equal(s.asset, 'silverbullet-server-linux-armv7.zip');
+  assert.equal(s.arch, 'armv7');
+});
+
+test('silverbulletDownloadSpec honors an explicit version override', () => {
+  const s = silverbulletDownloadSpec('linux', 'x64', '9.9.9');
+  assert.equal(s.version, '9.9.9');
+  assert.ok(s.url.includes('/download/9.9.9/'));
+});
+
+test('silverbulletDownloadSpec throws on an unsupported platform', () => {
+  assert.throws(() => silverbulletDownloadSpec('win32', 'x64'), /unsupported platform/i);
+});
+
+test('silverbulletDownloadSpec throws on an unsupported arch', () => {
+  assert.throws(() => silverbulletDownloadSpec('linux', 'mips'), /unsupported arch/i);
+});
+
+test('silverbulletBinPath/silverbulletBinDir: version-pinned managed install location', () => {
+  assert.equal(silverbulletBinDir('/home/u'), '/home/u/.local/share/punchlist/silverbullet/2.10.0');
+  assert.equal(silverbulletBinPath('/home/u'), '/home/u/.local/share/punchlist/silverbullet/2.10.0/silverbullet');
+  // a custom version flows through and lands in a distinct directory
+  assert.equal(silverbulletBinPath('/home/u', '3.0.0'), '/home/u/.local/share/punchlist/silverbullet/3.0.0/silverbullet');
 });
