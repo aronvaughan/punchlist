@@ -76,7 +76,10 @@ SSO + embed. Documented as a future option, not built now.
 
 SB is an **optional capability**, provisioned like KiCad is "declared but optional":
 
-- **Runtime:** install Deno + SilverBullet.
+- **Runtime:** install the SilverBullet **standalone binary** (recommended, from
+  GitHub releases) — Docker is the alternative; no Deno. The wrapper execs it with
+  the binary's documented flags `-p <port> -L <host> <space>` (auth via `SB_USER`);
+  the command is overridable via `SILVERBULLET_CMD`.
 - **Service unit:** reuse the existing `src/service.js` abstraction — systemd user
   unit on Linux, launchd LaunchAgent on macOS, auto-detected by `process.platform`.
 - **Space root:** `data/kb` — **not** all of `data/`, so the sqlite db, `media/`,
@@ -129,11 +132,22 @@ git-aware; git-tracking of note edits (if ever wanted) is a separate manual step
    say so. punchlist hardcodes no monitor path (stays publishable/generic).
 4. **Instance dialog link** — add the "Open editor →" button (tailscale-serve URL),
    keep the native read-only browser button.
-5. **Docs** — `docs/macos-setup.md` + install README: how to enable SB, where the
-   space lives, the governance caveat.
+5. **Docs + provisioning** — **Done.** `docs/macos-setup.md` covers enabling SB
+   (binary download, the `-p/-L` wrapper, macOS case-sensitivity caveat); the
+   wrapper was reconciled to the binary's flag interface; `install-silverbullet`
+   seeds a starter `data/kb/index.md` when the space is empty.
 
-## Open items
+## Resolved (were open items)
 
-- Exact SB distribution on macOS (Deno vs. single binary vs. Docker) — pick during
-  increment 1.
-- Whether to seed `data/kb` with a starter index page on first enable.
+- **SB distribution:** the standalone **binary** from GitHub releases (Docker as
+  alternative; no Deno). Binary interface is `-p <port> -L <host> <space>` with
+  `SB_USER` auth; overridable via `SILVERBULLET_CMD`.
+- **Starter page:** yes — `install-silverbullet` writes a `data/kb/index.md`
+  welcome page only when the space is empty (never overwrites).
+- **macOS filesystem:** SB recommends a case-sensitive FS; macOS default APFS is
+  case-insensitive. Documented in `macos-setup.md` (use a case-sensitive APFS
+  volume for the space, or accept the caveat) — not enforced by punchlist.
+
+## Not building now
+
+- Reverse proxy / SSO + iframe embed (revisit only if two-logins friction bites).

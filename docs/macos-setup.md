@@ -125,7 +125,16 @@ editor ("web Obsidian") for `data/kb`. It stays bound to loopback only;
 `docs/2026-08-31-kb-silverbullet.md` for the design rationale).
 
 ```bash
-# 1. install the SB service (writes a secret-free unit/wrapper + an env file)
+# 0. install the SilverBullet binary (recommended; Docker is an alternative).
+#    Download the standalone binary for your OS/arch from the releases page and
+#    put it on PATH as `silverbullet` (or set SILVERBULLET_CMD to its full path):
+#      https://github.com/silverbulletmd/silverbullet/releases
+#    Linux:  silverbullet-server-linux-<arch>.zip
+#    macOS:  silverbullet-server-darwin-<arch>.zip
+#    The service wrapper runs it as:  silverbullet -p <port> -L 127.0.0.1 <space>
+
+# 1. install the SB service (writes a secret-free unit/wrapper + an env file,
+#    and seeds data/kb/index.md if the space is empty)
 punchlist install-silverbullet
 #    -> wrote ~/.config/punchlist/silverbullet.env (mode 600) — EDIT THIS
 #       before starting: set SB_USER=user:pass
@@ -163,6 +172,10 @@ Notes:
 - **Security baseline:** SB adds a new `127.0.0.1:3001` listener. If this host runs
   a port-baseline security monitor, it will flag the new port once — accept it in
   the monitor's baseline (its `--bless` / re-seed step) after you start SB.
+- **macOS filesystem:** SilverBullet recommends a case-sensitive filesystem, and
+  macOS's default APFS is case-insensitive. For a clean setup, put the space on a
+  case-sensitive APFS volume; otherwise pages whose names differ only in case can
+  collide. Linux filesystems are case-sensitive already, so no action there.
 
 ## 6. The local Claude agent (the sweep)
 
