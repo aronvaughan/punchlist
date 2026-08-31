@@ -2,7 +2,7 @@
 // The API is the ONLY write path to the database (invariant).
 // tokens: {actorName: token}; server sets created_by from the token, always.
 import { Hono } from 'hono';
-import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync, mkdtempSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, realpathSync, mkdtempSync, readdirSync } from 'node:fs';
 import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
@@ -217,7 +217,7 @@ function sectionOf(task, today) {
 }
 
 export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
-    maxDoc, docRoots, templateEditing, instanceTemplatesDir }) {
+    maxDoc, docRoots, templateEditing, instanceTemplatesDir, fsRoot }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
   // references the row. Cap is separate from (and far larger than) the JSON
@@ -225,6 +225,8 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   const MEDIA_DIR = mediaDir || process.env.PUNCHLIST_MEDIA_DIR || join(ROOT_DIR, 'data', 'media');
   // instance (private) templates plane — <data>/templates, sibling of media
   const INSTANCE_TPL_DIR = instanceTemplatesDir || process.env.PUNCHLIST_INSTANCE_TEMPLATES_DIR || join(dirname(MEDIA_DIR), 'templates');
+  // root the working-dir browser is sandboxed to (admin lists dir names within it)
+  const FS_ROOT = fsRoot || process.env.PUNCHLIST_FS_ROOT || homedir();
   const MAX_UPLOAD = maxUpload || Number(process.env.PUNCHLIST_MAX_UPLOAD_BYTES) || 10485760;
   // Document (.md/.txt) uploads have their own, smaller cap — a text doc has no
   // business being 10MB, and keeping it separate documents the intent.
@@ -1447,6 +1449,28 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     instance_name: getSetting('instance_name'), // for the footer's first paint
     actor: c.get('actor'),
   }));
+
+  // Admin-only directory browser for picking a working_dir (server-side path).
+  // Lists SUBDIRECTORY NAMES only — never file bytes, never hidden dotdirs — of a
+  // path constrained to realpath-inside FS_ROOT, so a crafted ../ or a symlink
+  // can't escape or read outside the sandbox.
+  app.get('/api/v1/fs/dirs', c => {
+    if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
+    let realRoot;
+    try { realRoot = realpathSync(FS_ROOT); } catch { throw new ApiError(500, 'fs root unavailable'); }
+    let real;
+    try { real = realpathSync(c.req.query('path') || realRoot); }
+    catch { throw new ApiError(400, 'path not found'); }
+    if (real !== realRoot && !real.startsWith(realRoot + '/')) throw new ApiError(400, 'path outside the allowed root');
+    if (!statSync(real).isDirectory()) throw new ApiError(400, 'not a directory');
+    let dirs;
+    try {
+      dirs = readdirSync(real, { withFileTypes: true })
+        .filter(d => d.isDirectory() && !d.name.startsWith('.')) // dirs only; symlinks (isSymbolicLink) and dotdirs excluded
+        .map(d => d.name).sort();
+    } catch { throw new ApiError(400, 'cannot read directory'); }
+    return c.json({ root: realRoot, path: real, parent: real === realRoot ? null : dirname(real), dirs });
+  });
 
   // The instance identity + governance surface. GET is readable by any actor
   // (the sweep injects context into agents); PATCH is admin-only (the context

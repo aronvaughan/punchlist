@@ -1381,6 +1381,43 @@ function tagContextPanel(tag) {
 // and/or template name). Both open the shared edit dialog (textarea + the
 // template-picker button hosted inside it); the dialog/editor content itself
 // is untouched — only the outer trigger changed from an always-visible panel.
+// Server-side directory browser for the working_dir field. Lists subdir names
+// (admin-only, sandboxed to FS_ROOT server-side) and lets you descend/ascend and
+// pick a folder — because working_dir is a path on the SERVER (where the agent
+// runs), not the browser's machine, so a native file input can't supply it.
+async function mountDirPicker(nav, input) {
+  let cur = input.value.trim() || null;
+  const render = async () => {
+    let data;
+    try { data = await api('GET', `/fs/dirs${cur ? `?path=${encodeURIComponent(cur)}` : ''}`); }
+    catch (e) { toast(`Browse failed: ${e.message}`); return; }
+    cur = data.path;
+    nav.replaceChildren();
+    const bar = el('div', 'dir-bar');
+    bar.append(el('span', 'dir-path', data.path));
+    const use = el('button', 'dir-use'); use.type = 'button'; use.textContent = 'Use this folder';
+    use.addEventListener('click', () => { input.value = data.path; nav.hidden = true; });
+    bar.append(use);
+    const list = el('div', 'dir-list');
+    if (data.parent) {
+      const up = el('button', 'dir-item dir-up'); up.type = 'button';
+      up.append(icon('folder', { size: 13 }), el('span', 'pill-text', '.. (up)'));
+      up.addEventListener('click', () => { cur = data.parent; render(); });
+      list.append(up);
+    }
+    for (const d of data.dirs) {
+      const b = el('button', 'dir-item'); b.type = 'button';
+      b.append(icon('folder', { size: 13 }), el('span', 'pill-text', d));
+      b.addEventListener('click', () => { cur = `${data.path}/${d}`; render(); });
+      list.append(b);
+    }
+    if (!data.dirs.length) list.append(el('div', 'dir-empty', '(no subfolders)'));
+    nav.append(bar, list);
+    nav.hidden = false;
+  };
+  await render();
+}
+
 function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId, saveId, cancelId, unsetLabel, editLabel, workdirId }) {
   const wrap = el('div', 'meta-field project-context');
   const btn = el('button', 'meta-icon-btn');
@@ -1435,7 +1472,16 @@ function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId
     // off the page into the dialog); the field is absent for tags.
     const wd = workdirId ? document.getElementById(workdirId) : null;
     const wdField = wd?.closest('.dialog-field');
-    if (wd) { wd.value = subject.working_dir ?? ''; if (wdField) wdField.hidden = false; }
+    if (wd) {
+      wd.value = subject.working_dir ?? '';
+      if (wdField) wdField.hidden = false;
+      const nav = document.getElementById(`${workdirId}-nav`);
+      const browse = document.getElementById(`${workdirId}-browse`);
+      if (browse && nav) {
+        if (nav.hasChildNodes()) nav.hidden = true; // reset on reopen
+        browse.onclick = () => (nav.hidden ? mountDirPicker(nav, wd) : (nav.hidden = true));
+      }
+    }
     const paintTpl = () => {
       tplBtn.replaceChildren(icon('file-text', { size: 13 }),
         el('span', 'pc-template-text', subject.template || 'No template'));

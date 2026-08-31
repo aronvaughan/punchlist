@@ -148,6 +148,10 @@ test('project context notepad: compact icon/pill control + dialog + agent read p
   assert.match(css, /#list-head \.project-context\s*\{/);
   // working_dir now lives INSIDE the project context dialog (not a standalone line)
   assert.match(html, /id="project-context-workdir"/);
+  assert.match(html, /id="project-context-workdir-browse"/);   // dir browser
+  assert.match(html, /id="project-context-workdir-nav"/);
+  assert.match(await (await get("/views.js")).text(), /async function mountDirPicker/);
+  assert.match(await (await get("/tokens.css")).text(), /\.dir-nav\s*\{/);
   assert.match(views, /workdirId: 'project-context-workdir'/);
   assert.match(views, /body\.working_dir = wd\.value\.trim\(\) \|\| null/);
   assert.doesNotMatch(views, /function projectWorkingDir/);   // standalone control removed

@@ -122,7 +122,11 @@
     </div>
     <div class="dialog-field">
       <label for="project-context-workdir">Working directory — absolute local path the agent cd's into to work this project's tasks</label>
-      <input id="project-context-workdir" type="text" placeholder="/Users/you/code/the-repo" spellcheck="false" autocapitalize="off">
+      <div class="workdir-row">
+        <input id="project-context-workdir" type="text" placeholder="/Users/you/code/the-repo" spellcheck="false" autocapitalize="off">
+        <button type="button" id="project-context-workdir-browse" class="workdir-browse">Browse…</button>
+      </div>
+      <div id="project-context-workdir-nav" class="dir-nav" hidden></div>
     </div>
     <div class="dialog-field">
       <label for="project-context-text">A readme/overview agents read for project background (markdown)</label>

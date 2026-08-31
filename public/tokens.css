@@ -611,6 +611,24 @@ html[data-theme="charcoal"] {
    icon->pill control (see .meta-icon-btn/.meta-pill) rather than an
    always-visible card, so it only needs bottom margin to separate it from
    the task list below. */
+/* working-dir field: input + Browse, and the server-side directory navigator */
+.workdir-row { display: flex; gap: 8px; align-items: center; }
+.workdir-row input { flex: 1; min-width: 0; }
+.workdir-browse {
+  flex: none; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--ink); font: inherit; cursor: pointer; white-space: nowrap;
+}
+.workdir-browse:hover { background: var(--hover); }
+.dir-nav { margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.dir-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--pane); border-bottom: 1px solid var(--line); }
+.dir-path { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-use { flex: none; padding: 4px 10px; border: none; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.dir-list { max-height: 240px; overflow-y: auto; }
+.dir-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: none; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.dir-item:hover { background: var(--hover); }
+.dir-up { color: var(--ink-soft); }
+.dir-empty { padding: 10px; color: var(--ink-faint); font-style: italic; font-size: 13px; }
+
 .project-context { margin: 2px 0 14px; }
 /* on the project title line the context control has no vertical margin */
 #list-head .project-context { margin: 0; align-self: center; }
