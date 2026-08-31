@@ -29,7 +29,7 @@
 # private, never published) holding client/company/personal identifiers.
 set -u
 
-DATA="${PUNCHLIST_DATA:-$HOME/code/punchlist/data}"
+DATA="${PUNCHLIST_DATA:-$HOME/punchlist/data}"
 TERMS="${GOVERN_TERMS:-$DATA/govern/private-terms.txt}"
 
 # secrets that must never reach a publishable path. High-signal ONLY — match real

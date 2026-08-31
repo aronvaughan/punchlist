@@ -100,7 +100,7 @@ scripts/reap-media.sh   # pins PUNCHLIST_DATA/PUNCHLIST_MEDIA_DIR, logs to
 ### Cron (personal box)
 
 Wired in the claude-config repo, not here: a daily entry in
-`~/.claude/setup/directives.json` (`machines.host.crons`) installed by
+`~/.claude/setup/directives.json` (`machines.<hostname>.crons`) installed by
 `setup/register-crons.sh`:
 
 ```

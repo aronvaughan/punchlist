@@ -13,7 +13,7 @@ in your **review lane**, where you approve it into the logbook (or mark tasks
 auto-close to skip review). Every task records `created_by` from the auth
 token, so you always know who put what on the list.
 
-- Single small Node service, SQLite storage, one runtime dependency (Hono).
+- Single small Node service, SQLite storage, two small runtime dependencies (Hono + the official MCP SDK).
 - Per-actor bearer tokens; the server refuses to start without them.
 - Ships skills for Claude Code and Hermes, all backed by one canonical
   `pl.sh` CLI (`skills/shared/pl.sh`).

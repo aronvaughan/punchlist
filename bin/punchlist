@@ -19,11 +19,11 @@
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync, unlinkSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync, unlinkSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   serviceSpec, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
@@ -233,6 +233,19 @@ function provisionSilverbullet(home, version) {
     try { unlinkSync(tmpZip); } catch { /* nothing to clean up */ }
     console.error(`punchlist: download failed (curl exited ${dl.status}). No unit was written.`);
     process.exit(2);
+  }
+  if (dlSpec.sha256) {
+    const actual = createHash('sha256').update(readFileSync(tmpZip)).digest('hex');
+    if (actual.toLowerCase() !== dlSpec.sha256.toLowerCase()) {
+      try { unlinkSync(tmpZip); } catch { /* nothing to clean up */ }
+      console.error(`punchlist: sha256 mismatch for ${dlSpec.asset} — expected ${dlSpec.sha256}, got ${actual}. ` +
+        `The download may be corrupted or tampered with. No unit was written.`);
+      process.exit(2);
+    }
+    console.log(`sha256 verified: ${dlSpec.asset}`);
+  } else {
+    console.warn(`punchlist: no pinned sha256 for ${dlSpec.asset} (custom --version ${version}) — ` +
+      `download integrity cannot be verified. Proceeding anyway.`);
   }
   console.log(`unzipping -> ${binDir}`);
   const uz = spawnSync('unzip', ['-o', tmpZip, '-d', binDir], { stdio: 'inherit' });

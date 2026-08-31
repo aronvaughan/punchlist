@@ -28,7 +28,7 @@ the Linux box), each with its own name, projects, and queue.
   ship with punchlist. Generic, with **no client *or personal* specifics**. When
   punchlist is open-sourced, only this plane is exposed.
 - **Private (the default for everything else):** an instance's task data, client
-  codebases, **and Aron's own personal work.** Personal work follows the SAME
+  codebases, **and the maintainer's own personal work.** Personal work follows the SAME
   isolation rules as client work — open-sourcing pl would leak it too. Private
   content never enters the public plane.
 

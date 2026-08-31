@@ -1,6 +1,6 @@
 # Delegation — agent-native tasks (design)
 
-*Agreed with Aron 2026-08-24: assignee model, agent lifecycle with claim/
+*Agreed with the maintainer 2026-08-24: assignee model, agent lifecycle with claim/
 report, review lane by default with per-task auto-close, Agents nav view.*
 
 ## Model deltas (migration 002 — table rebuild for the status CHECK)

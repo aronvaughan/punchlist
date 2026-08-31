@@ -5,7 +5,7 @@
 # reaper only deletes files+rows whose retention rule has fired.
 #
 # Cron (personal box) is registered via ~/.claude/setup/directives.json
-# (machines.host.crons) + register-crons.sh. Run by hand any time:
+# (machines.<hostname>.crons) + register-crons.sh. Run by hand any time:
 #   PUNCHLIST_DATA=… PUNCHLIST_MEDIA_DIR=… scripts/reap-media.sh
 set -euo pipefail
 

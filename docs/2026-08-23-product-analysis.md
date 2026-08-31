@@ -52,7 +52,7 @@ onto someone else's product. Vikunja is the fallback if this stalls.
 
 ## Success criteria (v1)
 
-1. Aron manages a real week of tasks in it, from phone and desktop.
+1. The maintainer manages a real week of tasks in it, from phone and desktop.
 2. Claude and Hermes can each: add to Inbox, list today/overdue, complete,
    and file a task under a domain project — via the skill, no UI.
 3. A recurring task regenerates correctly at least once in production.

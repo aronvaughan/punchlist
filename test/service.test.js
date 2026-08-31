@@ -151,6 +151,7 @@ test('silverbulletDownloadSpec(linux, x64) -> linux-x86_64 asset at the pinned v
   assert.ok(s.url.includes('/download/2.10.0/'));
   assert.ok(s.url.endsWith('silverbullet-server-linux-x86_64.zip'));
   assert.equal(s.binName, 'silverbullet');
+  assert.equal(s.sha256, 'ca33f7de3bae2f2e7d95cdd2cca1a023e51267388c9dbc8ff5acc33b1cbd5a7d');
 });
 
 test('silverbulletDownloadSpec(darwin, arm64) -> darwin-aarch64 asset', () => {
@@ -170,6 +171,11 @@ test('silverbulletDownloadSpec honors an explicit version override', () => {
   const s = silverbulletDownloadSpec('linux', 'x64', '9.9.9');
   assert.equal(s.version, '9.9.9');
   assert.ok(s.url.includes('/download/9.9.9/'));
+});
+
+test('silverbulletDownloadSpec has no pinned sha256 for a custom (non-pinned) version', () => {
+  const s = silverbulletDownloadSpec('linux', 'x64', '9.9.9');
+  assert.equal(s.sha256, null);
 });
 
 test('silverbulletDownloadSpec throws on an unsupported platform', () => {
