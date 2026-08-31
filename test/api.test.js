@@ -366,6 +366,28 @@ test('fs/dirs: admin-only sandboxed directory browser — subdir names only, no 
   rmSync(base, { recursive: true, force: true });
 });
 
+test('GET /templates: merges global index.json + instance data/templates, tags scope, instance overrides', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'tpllist-'));
+  const repo = join(base, 'repo'), inst = join(base, 'inst');
+  mkdirSync(join(repo, 'templates'), { recursive: true });
+  mkdirSync(inst, { recursive: true });
+  writeFileSync(join(repo, 'templates', 'index.json'), JSON.stringify({ templates: [{ name: 'coding' }, { name: 'review' }] }));
+  writeFileSync(join(inst, 'coding.md'), 'INSTANCE');   // overrides global 'coding'
+  writeFileSync(join(inst, 'private.md'), 'PRIVATE');   // instance-only
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A }, admin: 'alex', today: () => '2026-03-10',
+    templateEditing: { dir: repo, available: false }, instanceTemplatesDir: inst });
+  const r = await (await app.fetch(new Request('http://x/api/v1/templates', { headers: { Authorization: `Bearer ${A}` } }))).json();
+  const byName = Object.fromEntries(r.items.map(t => [t.name, t.scope]));
+  assert.equal(byName['coding'], 'instance');           // instance wins over global
+  assert.equal(byName['private'], 'instance');
+  assert.equal(byName['review'], 'global');
+  assert.equal(r.items.filter(t => t.name === 'coding').length, 1); // deduped
+  rmSync(base, { recursive: true, force: true });
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();

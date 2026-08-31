@@ -1817,14 +1817,29 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // empty list whenever the repo/index isn't present or is unreadable — public
   // users may not have the templates repo at all.
   app.get('/api/v1/templates', c => {
-    const dir = process.env.PUNCHLIST_TEMPLATES_DIR ||
+    const dir = process.env.PUNCHLIST_TEMPLATES_DIR || TPL.dir ||
       join(homedir(), 'code', 'punchlist-templates');
-    const file = join(dir, 'templates', 'index.json');
+    // global plane: the prebuilt index.json (packs + authored), tagged scope
+    let global = [];
     try {
-      if (!existsSync(file)) return c.json({ items: [] });
-      const data = JSON.parse(readFileSync(file, 'utf8'));
-      return c.json({ items: Array.isArray(data.templates) ? data.templates : [] });
-    } catch { return c.json({ items: [] }); }
+      const file = join(dir, 'templates', 'index.json');
+      if (existsSync(file)) {
+        const data = JSON.parse(readFileSync(file, 'utf8'));
+        if (Array.isArray(data.templates)) global = data.templates.map(t => ({ ...t, scope: 'global' }));
+      }
+    } catch { global = []; }
+    // instance plane: flat data/templates/<name>.md (private), tagged scope
+    let instance = [];
+    try {
+      if (existsSync(INSTANCE_TPL_DIR)) {
+        instance = readdirSync(INSTANCE_TPL_DIR)
+          .filter(f => /^[a-z0-9-]+\.md$/.test(f))
+          .map(f => ({ name: f.slice(0, -3), scope: 'instance' }));
+      }
+    } catch { instance = []; }
+    // instance overrides a same-named global entry (the private plane wins)
+    const overridden = new Set(instance.map(t => t.name));
+    return c.json({ items: [...instance, ...global.filter(t => !overridden.has(t.name))] });
   });
 
   // Admin + feature gate shared by every template-editing route. 404 (not 403)
