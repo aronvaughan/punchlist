@@ -43,6 +43,32 @@ Three options were considered:
    - The nightly `security-check.sh` sees only a loopback listener (baseline once).
    - SB's own auth stays on as defense-in-depth.
 
+### Commands (`punchlist expose-kb`)
+
+The port is derived from `silverbulletSpec()` (`src/service.js`) so it can
+never drift from the service `install-silverbullet` actually wires up —
+`3001` by default.
+
+```bash
+# enable (background, persistent)
+tailscale serve --bg --https=443 http://127.0.0.1:3001
+
+# status
+tailscale serve status
+
+# disable
+tailscale serve --https=443 off
+```
+
+Resulting URL: `https://<magicdns-name>/` (this machine's Tailscale MagicDNS
+name). Prerequisites (documented, not enforced by punchlist): MagicDNS +
+HTTPS certs enabled on the tailnet; on Linux, a non-root user needs
+`tailscale set --operator=$USER` (or sudo) to run `tailscale serve`.
+
+`punchlist expose-kb [--off] [--status] [--print]` wraps these — `--print`
+renders the commands without touching the system; the CLI never mutates SB
+itself, only tailscaled state.
+
 If two-logins friction later proves annoying, revisit the reverse proxy for
 SSO + embed. Documented as a future option, not built now.
 
@@ -90,7 +116,10 @@ git-aware; git-tracking of note edits (if ever wanted) is a separate manual step
 1. **Service scaffolding** — extend `service.js` + the `install-service` path to
    provision an optional SB unit (space root `data/kb`, loopback bind, secret-based
    password). Tests for the generated unit/plist (mirror `test/service.test.js`).
+   **Done.**
 2. **Exposure** — `tailscale serve` wiring + docs; verify loopback-only bind.
+   **Done.** `src/tailscale.js` (pure `tailscaleServeSpec()`) + `punchlist
+   expose-kb [--off|--status|--print]`; see "Commands" above.
 3. **Security baseline** — teach `security-check.sh` about the SB port.
 4. **Instance dialog link** — add the "Open editor →" button (tailscale-serve URL),
    keep the native read-only browser button.

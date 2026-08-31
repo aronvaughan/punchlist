@@ -10,6 +10,9 @@
 //   punchlist install-silverbullet [--print] [--no-start]
 //                                                  install the OPTIONAL SilverBullet
 //                                                  KB service (data/kb, loopback only)
+//   punchlist expose-kb [--off] [--status] [--print]
+//                                                  wire/inspect the tailnet edge for the
+//                                                  SilverBullet KB via `tailscale serve`
 //   punchlist gen-token <actor>                    print a ready-to-paste token pair
 //   punchlist install-skills [--claude DIR] [--hermes DIR]
 //                                                  copy the agent skills into place
@@ -22,6 +25,7 @@ import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { serviceSpec, silverbulletSpec } from '../src/service.js';
+import { tailscaleServeSpec } from '../src/tailscale.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -246,6 +250,66 @@ async function installSilverbullet(argv) {
   console.log(`punchlist: SilverBullet unit started (bound to ${spec.host}:${spec.port}, loopback only) — check ${spec.status[0]} ${spec.status[1].join(' ')}`);
 }
 
+// ---- expose-kb: wire the tailnet edge for the SilverBullet KB ----
+// `tailscale serve` fronts the loopback-bound SB service with tailnet
+// identity + automatic HTTPS (see docs/2026-08-31-kb-silverbullet.md,
+// "Exposure model"). This command never touches SB itself — it only renders
+// and (optionally) runs `tailscale serve` commands. The port is derived from
+// silverbulletSpec() so it can never drift out of sync with the service that
+// install-silverbullet actually wires up.
+function exposeKbSpec(platform = process.platform) {
+  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const sb = silverbulletSpec(platform, { repo: ROOT, spaceDir: join(dataDir, 'kb'), home: homedir() });
+  return tailscaleServeSpec({ port: sb.port });
+}
+
+function printExposeKb(spec) {
+  console.log('# enable (background, persistent):');
+  console.log(`${spec.on[0]} ${spec.on[1].join(' ')}`);
+  console.log('\n# status:');
+  console.log(`${spec.status[0]} ${spec.status[1].join(' ')}`);
+  console.log('\n# disable:');
+  console.log(`${spec.off[0]} ${spec.off[1].join(' ')}`);
+  console.log(`\n# resulting URL: https://<magicdns-name>/  (this machine's Tailscale MagicDNS name)`);
+  console.log('# prerequisites: MagicDNS + HTTPS certs enabled on the tailnet;');
+  console.log('# on Linux a non-root user needs `tailscale set --operator=$USER` (or sudo) to run serve.');
+}
+
+function expose(argv) {
+  let printOnly = false, off = false, status = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--print') printOnly = true;
+    else if (argv[i] === '--off') off = true;
+    else if (argv[i] === '--status') status = true;
+    else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --off, --status, --print)`); process.exit(2); }
+  }
+  if (off && status) { console.error('punchlist: --off and --status are mutually exclusive'); process.exit(2); }
+
+  const spec = exposeKbSpec();
+
+  if (printOnly) { printExposeKb(spec); return; }
+
+  // cheap precondition: is `tailscale` even on PATH?
+  const found = spawnSync('tailscale', ['version'], { stdio: 'ignore' });
+  if (found.error || found.status !== 0) {
+    console.error('punchlist: `tailscale` not found on PATH. Install Tailscale first: https://tailscale.com/download');
+    process.exit(2);
+  }
+
+  if (status) { spawnSync(spec.status[0], spec.status[1], { stdio: 'inherit' }); return; }
+  if (off) {
+    spawnSync(spec.off[0], spec.off[1], { stdio: 'inherit' });
+    console.log('punchlist: tailscale serve disabled for the KB target.');
+    return;
+  }
+
+  spawnSync(spec.on[0], spec.on[1], { stdio: 'inherit' });
+  console.log(`\npunchlist: tailscale serve enabled -> ${spec.target} (https=${spec.httpsPort})`);
+  console.log('Check `tailscale serve status` to confirm, and visit https://<magicdns-name>/.');
+  console.log('Prerequisites: MagicDNS + HTTPS certs enabled on the tailnet; on Linux you may need');
+  console.log('`tailscale set --operator=$USER` (or sudo) for this command to work.');
+}
+
 // ---- token generation: print a ready-to-paste PUNCHLIST_TOKENS pair ----
 // Never writes your env files (same policy as install-skills); prints only.
 function genToken(argv) {
@@ -307,6 +371,7 @@ async function doctor() {
   existsSync(sbSpec.path)
     ? ok(`${sbSpec.kind} unit installed`, sbSpec.path)
     : warn(`${sbSpec.kind} unit not installed`, 'optional — run: punchlist install-silverbullet');
+  warn('tailnet exposure', 'optional — run: punchlist expose-kb (wires `tailscale serve`)');
 
   console.log('\nHealth:');
   try {
@@ -401,6 +466,10 @@ switch (cmd) {
     await installSilverbullet(rest);
     break;
 
+  case 'expose-kb':
+    expose(rest);
+    break;
+
   case 'gen-token':
     genToken(rest);
     break;
@@ -455,6 +524,7 @@ Now give each agent its token (this tool never edits your env files):
   default:
     console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
       'install-service [--print] [--no-start] | install-silverbullet [--print] [--no-start] | ' +
+      'expose-kb [--off] [--status] [--print] | ' +
       'gen-token <actor> | doctor | backup [--dry-run] | ' +
       'install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);
