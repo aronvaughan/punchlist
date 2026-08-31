@@ -1,6 +1,9 @@
 {
-  "name": "punchlist",
+  "name": "@aronvaughan/punchlist",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Agent-first task manager: a Things-style drag-and-drop web app for humans, the same REST API + ready-made skills for AI agents, with claim/finish/report delegation and a review lane",
   "type": "module",
   "keywords": [
@@ -32,6 +35,8 @@
     "skills",
     "scripts",
     "bin",
+    "punchlist-templates/templates",
+    "punchlist-templates/bin",
     "README.md",
     "LICENSE"
   ],

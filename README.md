@@ -431,56 +431,28 @@ theme's readability on real controls, not just its background color.
   </tr>
 </table>
 
-## Publishing punchlist publicly / as an npm package
+## Install
 
-This repo is currently private and unpublished — the checklist below is
-**advice for the owner to execute manually**; nothing here has been run
-automatically as part of writing these docs. It has not been decided that
-punchlist should be published, so no repository visibility was changed and
-`npm publish` was not run.
+From source (works today):
 
-If you (the owner) later decide to publish, roughly in order:
+```bash
+git clone https://github.com/aronvaughan/punchlist && cd punchlist
+npm install && npm link          # puts `punchlist` on PATH
+punchlist serve                  # http://127.0.0.1:8600
+```
 
-1. **Decide the package name.** `punchlist` is very likely already taken on
-   the public npm registry — check `npm view punchlist` first. If it's
-   taken, either pick a scoped name (`@aronvaughan/punchlist`, published
-   with `npm publish --access public` since scoped packages default to
-   private) or an unscoped alternative (`punchlist-agent`, `punchlist-cli`,
-   etc.) and update `"name"` in `package.json` accordingly.
-2. **Make the git repo public** (if you want the source visible, separate
-   from npm publishing). On GitHub: repo Settings → General → Danger Zone →
-   *Change visibility*. This is a one-way-feeling decision (secrets, past
-   commit history, and `data/.env`-shaped mistakes in old commits all
-   become visible) — audit history for accidentally committed tokens first
-   (`git log -p -- data/.env` should show nothing; the `.gitignore` already
-   excludes `data/`).
-3. **Add/confirm a `LICENSE` file** — already present ([MIT](LICENSE)) and
-   already listed in `package.json`'s `"files"`, so it will ship in the
-   published tarball.
-4. **Fill out `package.json` metadata** — `repository.url`,
-   `description`, and `keywords` are already set; consider adding
-   `"author"`, `"homepage"`, and `"bugs"` fields pointing at the GitHub
-   repo/issues page.
-5. **Sanity-check the publish contents.** `"files"` in `package.json`
-   already scopes the tarball to `src`, `migrations`, `public`, `skills`,
-   `scripts`, `bin`, `README.md`, `LICENSE` — run `npm pack --dry-run`
-   locally to see exactly what would ship, and confirm no `data/`,
-   `.env`, or local secrets are included.
-6. **Bump the version** from `0.1.0` to whatever first-publish version you
-   want (npm won't let you reuse a version number once published).
-7. **Run the test suite** (`npm test`) and a fresh `npm ci` in a scratch
-   clone to make sure the package installs and runs cleanly outside your
-   dev environment.
-8. **Publish.** `npm login`, then `npm publish` (add `--access public` if
-   using a scoped name). This step — like making the repo public — is a
-   deliberate, one-way action for the owner to take; it is not something
-   any agent should run on your behalf.
-9. **After publishing**, double check `npm view <name>` shows what you
-   expect, and that the `bin.punchlist` entry actually works via
-   `npx <name>` in a clean environment.
+Also published on npm as **`@aronvaughan/punchlist`**:
 
-None of the above was executed by this task — no visibility was changed,
-nothing was published, and no `package.json` version was bumped.
+```bash
+npx @aronvaughan/punchlist serve
+# or install the CLI globally:
+npm install -g @aronvaughan/punchlist
+```
+
+The published tarball ships `src`, `bin`, `migrations`, `public`, `skills`,
+`scripts`, and the bundled `punchlist-templates/` packs — run
+`npm pack --dry-run` to see exactly what's included. Two runtime dependencies:
+Hono and the official MCP SDK.
 
 ## License
 
