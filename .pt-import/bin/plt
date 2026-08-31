@@ -1,0 +1,1237 @@
+#!/usr/bin/env node
+'use strict';
+// plt — punchlist-templates CLI. Zero dependencies, plain node.
+//
+// Subcommands:
+//   plt validate [path|all]   validate template + workflow files (default: all)
+//   plt index                 regenerate templates/index.json (the punchlist bridge)
+//   plt list [--kind K] [--tag T] [--domain D]
+//   plt show <name>           print a template/workflow's full markdown
+//   plt render <workflow>     (re)generate the mermaid diagram in the file
+//   plt launch <workflow> --input k=v ...   compile to punchlist tasks
+//   plt advance [--run ID | --all]          advance launched runs
+//   plt runs                  list run states
+//
+// Frontmatter is a documented SIMPLE SUBSET of YAML (see README
+// "Format reference"): scalar `key: value`, inline lists `key: [a, b]`,
+// inline maps `key: { a: 1, b: 2 }`, and one level of block lists of maps:
+//   inputs:
+//     - name: foo
+//       exemplar: "..."
+// Nothing else is supported, by design. Workflow files carry a `steps:`
+// block in the BODY (after the frontmatter), same subset.
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const ROOT = process.env.PUNCHLIST_TEMPLATES_DIR
+  ? path.resolve(process.env.PUNCHLIST_TEMPLATES_DIR)
+  : path.resolve(__dirname, '..');
+
+// Per-run advancer state lives here (gitignored). Overridable for tests.
+const RUNS_DIR = process.env.PLT_RUNS_DIR || path.join(ROOT, 'runs');
+
+// Authored dirs first: on a name collision the owner's copy wins.
+const SEARCH_DIRS = [
+  'templates/authored',
+  'templates/packs',
+  'workflows/authored',
+  'workflows/packs',
+];
+
+// The private INSTANCE plane (punchlist data governance): flat <data>/templates,
+// searched at TOP precedence so a same-named instance template overrides a
+// global (authored/packs) one — matching the punchlist API/resolver. Absolute,
+// outside ROOT. PLT_INSTANCE_DIR overrides; else derived from PUNCHLIST_DATA.
+const INSTANCE_DIR = process.env.PLT_INSTANCE_DIR
+  ? path.resolve(process.env.PLT_INSTANCE_DIR)
+  : (process.env.PUNCHLIST_DATA ? path.join(path.resolve(process.env.PUNCHLIST_DATA), 'templates') : null);
+
+// ---------------------------------------------------------------- frontmatter
+
+function stripQuotes(s) {
+  if (s.length >= 2 && ((s[0] === '"' && s.endsWith('"')) || (s[0] === "'" && s.endsWith("'")))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function parseScalar(raw) {
+  let v = raw.trim();
+  if (!v.startsWith('"') && !v.startsWith("'")) {
+    v = v.replace(/\s+#.*$/, '').trim(); // trailing comment
+  }
+  if (v.startsWith('[') && v.endsWith(']')) {
+    return v
+      .slice(1, -1)
+      .split(',')
+      .map((s) => stripQuotes(s.trim()))
+      .filter((s) => s.length > 0);
+  }
+  if (v.startsWith('{') && v.endsWith('}')) {
+    const obj = {};
+    const inner = v.slice(1, -1).trim();
+    if (inner === '') return obj;
+    for (const part of inner.split(',')) {
+      const i = part.indexOf(':');
+      if (i === -1) return v; // not a well-formed map — hand back the raw string
+      obj[part.slice(0, i).trim()] = stripQuotes(part.slice(i + 1).trim());
+    }
+    return obj;
+  }
+  return stripQuotes(v);
+}
+
+// Parse the frontmatter block of `text`. Returns:
+//   { fm, fmStart, fmEnd, bodyStart, body, errors: [{line, msg}] }
+// fm is null when no frontmatter block exists at all.
+function parseFrontmatter(text) {
+  const lines = text.split(/\r?\n/);
+  const errors = [];
+  if (lines[0] !== '---') {
+    return { fm: null, errors: [{ line: 1, msg: 'missing frontmatter (file must start with ---)' }] };
+  }
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === '---') { close = i; break; }
+  }
+  if (close === -1) {
+    return { fm: null, errors: [{ line: 1, msg: 'unterminated frontmatter (no closing ---)' }] };
+  }
+
+  const fm = {};
+  const fmLines = {}; // key -> line number (1-based) where it was defined
+  let listKey = null;   // key of the block list being filled
+  let listItems = null;
+  let current = null;   // current map item within the block list
+  for (let i = 1; i < close; i++) {
+    const raw = lines[i];
+    const ln = i + 1;
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    let m;
+    if ((m = raw.match(/^([A-Za-z_][\w-]*):\s*(.*)$/))) {
+      const key = m[1];
+      const val = m[2].replace(/\s+#.*$/, '');
+      if (val.trim() === '') {
+        listItems = [];
+        fm[key] = listItems;
+        fmLines[key] = ln;
+        listKey = key;
+        current = null;
+      } else {
+        fm[key] = parseScalar(val);
+        fmLines[key] = ln;
+        listKey = null;
+        current = null;
+      }
+    } else if (listKey && (m = raw.match(/^\s+-\s+([\w-]+):\s*(.*)$/))) {
+      current = { [m[1]]: parseScalar(m[2]) };
+      current.__line = ln;
+      listItems.push(current);
+    } else if (listKey && (m = raw.match(/^\s+-\s+(.+)$/))) {
+      listItems.push(parseScalar(m[1]));
+      current = null;
+    } else if (current && (m = raw.match(/^\s+([\w-]+):\s*(.*)$/))) {
+      current[m[1]] = parseScalar(m[2]);
+    } else {
+      errors.push({ line: ln, msg: `unparseable frontmatter line: ${raw.trim()}` });
+    }
+  }
+  return {
+    fm,
+    fmLines,
+    fmStart: 1,
+    fmEnd: close + 1,
+    bodyStart: close + 2,
+    body: lines.slice(close + 1).join('\n'),
+    bodyLines: lines.slice(close + 1),
+    errors,
+  };
+}
+
+// ------------------------------------------------------------ workflow steps
+
+// Parse the body-level `steps:` block of a workflow file. Same simple-subset
+// rules as frontmatter block lists, plus inline maps for when:/on_fail:.
+// The block ends at the first non-indented line (a heading, the mermaid
+// markers, prose...). Returns { steps, stepsLine, errors }; steps is null
+// when no `steps:` block exists.
+function parseSteps(bodyLines, bodyStart) {
+  const errors = [];
+  let steps = null;
+  let stepsLine = null;
+  let fenced = false;
+  let inBlock = false;
+  let current = null;
+  for (let i = 0; i < bodyLines.length; i++) {
+    const raw = bodyLines[i];
+    const ln = bodyStart + i;
+    if (/^\s*```/.test(raw)) { fenced = !fenced; inBlock = inBlock && /^\s/.test(raw); continue; }
+    if (fenced) continue;
+    if (!inBlock) {
+      if (/^steps:\s*(#.*)?$/.test(raw)) {
+        if (steps) errors.push({ line: ln, msg: 'duplicate `steps:` block' });
+        else { steps = []; stepsLine = ln; inBlock = true; current = null; }
+      }
+      continue;
+    }
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    let m;
+    if ((m = raw.match(/^\s+-\s+([\w-]+):\s*(.*)$/))) {
+      current = { [m[1]]: parseScalar(m[2]), __line: ln };
+      steps.push(current);
+    } else if (current && (m = raw.match(/^\s+([\w-]+):\s*(.*)$/))) {
+      current[m[1]] = parseScalar(m[2]);
+    } else if (/^\S/.test(raw)) {
+      inBlock = false; // block ended (heading, markers, prose)
+      current = null;
+    } else {
+      errors.push({ line: ln, msg: `unparseable step line: ${raw.trim()}` });
+    }
+  }
+  return { steps, stepsLine, errors };
+}
+
+// Parse a whole workflow file: frontmatter + steps block.
+function parseWorkflow(text) {
+  const parsed = parseFrontmatter(text);
+  if (!parsed.fm) return { ...parsed, steps: null };
+  const { steps, stepsLine, errors } = parseSteps(parsed.bodyLines, parsed.bodyStart);
+  return { ...parsed, steps, stepsLine, errors: [...parsed.errors, ...errors] };
+}
+
+// -------------------------------------------------------------------- corpus
+
+function isTemplateFile(file) {
+  const base = path.basename(file);
+  return base.endsWith('.md') && base !== 'README.md';
+}
+
+function walk(dir, out) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walk(p, out);
+    else if (e.isFile() && isTemplateFile(p)) out.push(p);
+  }
+  return out;
+}
+
+// All template/workflow files under the repo, in resolution order.
+function collectFiles(root = ROOT) {
+  const out = [];
+  if (INSTANCE_DIR && root === ROOT) walk(INSTANCE_DIR, out); // private plane wins (only for the real ROOT, not test fixtures)
+  for (const d of SEARCH_DIRS) walk(path.join(root, d), out);
+  return out;
+}
+
+// The set of resolvable template names (authored wins, but for existence
+// checks the union is what matters).
+function templateNames(root = ROOT) {
+  const names = new Set();
+  for (const file of collectFiles(root)) {
+    const { fm } = parseFrontmatter(fs.readFileSync(file, 'utf8'));
+    if (fm && fm.kind === 'template' && fm.name) names.add(fm.name);
+  }
+  return names;
+}
+
+// ---------------------------------------------------------------- validation
+
+// Find a `## Heading` in the body. Returns {line, content} or null.
+// line is 1-based within the whole file. Content runs from the heading to
+// the next `## ` heading outside a fenced code block — or to EOF when
+// `toEnd` is set (used for `## Golden exemplar`, which is by convention
+// the LAST section and may itself contain `##` headings).
+function findSection(bodyLines, bodyStart, heading, { toEnd = false } = {}) {
+  const want = heading.toLowerCase();
+  let fenced = false;
+  for (let i = 0; i < bodyLines.length; i++) {
+    if (/^\s*```/.test(bodyLines[i])) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    const m = bodyLines[i].match(/^##\s+(.*?)\s*$/);
+    if (m && m[1].toLowerCase() === want) {
+      let end = bodyLines.length;
+      if (!toEnd) {
+        let innerFenced = false;
+        for (let j = i + 1; j < bodyLines.length; j++) {
+          if (/^\s*```/.test(bodyLines[j])) { innerFenced = !innerFenced; continue; }
+          if (!innerFenced && /^##\s+/.test(bodyLines[j])) { end = j; break; }
+        }
+      }
+      return {
+        line: bodyStart + i,
+        content: bodyLines.slice(i + 1, end).join('\n').trim(),
+      };
+    }
+  }
+  return null;
+}
+
+const MIN_EXEMPLAR_CHARS = 200;
+
+// Interpolation placeholders used in a string: {input_name}
+function placeholders(s) {
+  const out = [];
+  for (const m of String(s).matchAll(/\{([A-Za-z_][\w-]*)\}/g)) out.push(m[1]);
+  return out;
+}
+
+// The step edges that participate in dependency cycles. on_fail.then and
+// repeat_until are deliberately excluded — they are the sanctioned loops.
+function depEdges(step) {
+  const deps = [];
+  if (Array.isArray(step.needs)) deps.push(...step.needs);
+  if (step.when && typeof step.when === 'object' && step.when.step) deps.push(step.when.step);
+  if (step.else_of) deps.push(step.else_of);
+  return deps;
+}
+
+// Detect a dependency cycle over needs/when/else_of. Returns the cycle as
+// an array of ids, or null. Unknown edge targets are ignored here — they
+// are reported separately by the reference checks.
+function findDependencyCycle(steps) {
+  const ids = new Set(steps.map((s) => s.id));
+  const deps = new Map(steps.map((s) => [s.id, depEdges(s).filter((d) => ids.has(d))]));
+  const state = new Map(); // id -> 1 (visiting) | 2 (done)
+  const stack = [];
+  function visit(id) {
+    if (state.get(id) === 2) return null;
+    if (state.get(id) === 1) return [...stack.slice(stack.indexOf(id)), id];
+    state.set(id, 1);
+    stack.push(id);
+    for (const d of deps.get(id) || []) {
+      const c = visit(d);
+      if (c) return c;
+    }
+    stack.pop();
+    state.set(id, 2);
+    return null;
+  }
+  for (const id of ids) {
+    const c = visit(id);
+    if (c) return c;
+  }
+  return null;
+}
+
+// Validate a workflow file's parsed form. `templates` is a Set of known
+// template names. Returns [{line, msg}].
+function validateWorkflow(parsed, file, templates) {
+  const errors = [...parsed.errors];
+  const { fm, fmLines, steps } = parsed;
+  const at = (key) => (fmLines && fmLines[key]) || 1;
+
+  const expectedName = path.basename(file, '.md');
+  if (!fm.name) errors.push({ line: 1, msg: 'missing `name` in frontmatter' });
+  else if (fm.name !== expectedName) {
+    errors.push({ line: at('name'), msg: `name \`${fm.name}\` does not match filename \`${expectedName}.md\`` });
+  }
+
+  if (!Array.isArray(fm.actors) || fm.actors.length === 0) {
+    errors.push({ line: at('actors'), msg: 'workflow must declare `actors: [..]`' });
+  }
+  if (fm.inputs !== undefined &&
+      (!Array.isArray(fm.inputs) || fm.inputs.some((i) => typeof i !== 'string' || !i.trim()))) {
+    errors.push({ line: at('inputs'), msg: '`inputs` must be an inline list of names, e.g. `inputs: [item, budget]`' });
+  }
+  const inputs = new Set(Array.isArray(fm.inputs) ? fm.inputs : []);
+  const actors = new Set(Array.isArray(fm.actors) ? fm.actors : []);
+
+  if (!Array.isArray(steps) || steps.length === 0) {
+    errors.push({ line: parsed.bodyStart || 1, msg: 'workflow must have a body-level `steps:` block with at least one step' });
+    return errors;
+  }
+
+  const ids = new Set();
+  for (const s of steps) {
+    const line = s.__line || 1;
+    if (!s.id || typeof s.id !== 'string') {
+      errors.push({ line, msg: 'step is missing `id`' });
+      continue;
+    }
+    if (ids.has(s.id)) errors.push({ line, msg: `duplicate step id \`${s.id}\`` });
+    ids.add(s.id);
+  }
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const ref = (s, field, target) => {
+    if (!byId.has(target)) {
+      errors.push({ line: s.__line || 1, msg: `step \`${s.id}\`: ${field} references unknown step \`${target}\`` });
+      return false;
+    }
+    if (target === s.id) {
+      errors.push({ line: s.__line || 1, msg: `step \`${s.id}\`: ${field} references itself` });
+      return false;
+    }
+    return true;
+  };
+  const outcomesOf = (id) => {
+    const t = byId.get(id);
+    return t && Array.isArray(t.outcomes) ? t.outcomes : ['done'];
+  };
+
+  for (const s of steps) {
+    if (!s.id) continue;
+    const line = s.__line || 1;
+
+    if (!s.assignee || typeof s.assignee !== 'string') {
+      errors.push({ line, msg: `step \`${s.id}\` is missing \`assignee\`` });
+    } else if (actors.size > 0 && !actors.has(s.assignee)) {
+      errors.push({ line, msg: `step \`${s.id}\`: assignee \`${s.assignee}\` is not in the declared actors` });
+    }
+
+    if (s.template !== undefined) {
+      if (typeof s.template !== 'string' || !templates.has(s.template)) {
+        errors.push({ line, msg: `step \`${s.id}\`: template \`${s.template}\` does not exist (plt list --kind template)` });
+      }
+    }
+
+    if (s.outcomes !== undefined) {
+      if (!Array.isArray(s.outcomes) || s.outcomes.length === 0 ||
+          s.outcomes.some((o) => typeof o !== 'string' || !o.trim())) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`outcomes\` must be a nonempty inline list of names` });
+      } else if (new Set(s.outcomes).size !== s.outcomes.length) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`outcomes\` has duplicates` });
+      }
+    }
+
+    if (s.needs !== undefined) {
+      if (!Array.isArray(s.needs) || s.needs.length === 0) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`needs\` must be an inline list of step ids` });
+      } else {
+        for (const n of s.needs) ref(s, 'needs', n);
+      }
+    }
+
+    if (s.when !== undefined) {
+      if (typeof s.when !== 'object' || Array.isArray(s.when) || !s.when.step || !s.when.outcome) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`when\` must be \`{ step: <id>, outcome: <name> }\`` });
+      } else if (ref(s, 'when', s.when.step)) {
+        if (!outcomesOf(s.when.step).includes(s.when.outcome)) {
+          errors.push({ line, msg: `step \`${s.id}\`: \`when\` outcome \`${s.when.outcome}\` is not a declared outcome of \`${s.when.step}\`` });
+        }
+      }
+    }
+
+    if (s.else_of !== undefined) {
+      if (typeof s.else_of !== 'string') {
+        errors.push({ line, msg: `step \`${s.id}\`: \`else_of\` must be a step id` });
+      } else if (ref(s, 'else_of', s.else_of)) {
+        const siblings = steps.filter((x) => x.when && typeof x.when === 'object' && x.when.step === s.else_of);
+        if (siblings.length === 0) {
+          errors.push({ line, msg: `step \`${s.id}\`: \`else_of: ${s.else_of}\` but no step has a \`when\` branch on \`${s.else_of}\`` });
+        }
+      }
+    }
+
+    if (s.on_fail !== undefined) {
+      if (typeof s.on_fail !== 'object' || Array.isArray(s.on_fail)) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`on_fail\` must be \`{ retry: N, then: <id> }\`` });
+      } else {
+        if (s.on_fail.retry !== undefined && !/^\d+$/.test(String(s.on_fail.retry))) {
+          errors.push({ line, msg: `step \`${s.id}\`: \`on_fail.retry\` must be a non-negative integer` });
+        }
+        if (s.on_fail.then !== undefined) ref(s, 'on_fail.then', s.on_fail.then);
+        for (const k of Object.keys(s.on_fail)) {
+          if (!['retry', 'then'].includes(k)) {
+            errors.push({ line, msg: `step \`${s.id}\`: unknown \`on_fail\` key \`${k}\`` });
+          }
+        }
+      }
+    }
+
+    if (s.repeat_until !== undefined) {
+      if (typeof s.repeat_until !== 'string' || !s.repeat_until.trim()) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`repeat_until\` must be an outcome name` });
+      } else if (!Array.isArray(s.outcomes)) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`repeat_until\` requires the step to declare \`outcomes\`` });
+      } else if (!s.outcomes.includes(s.repeat_until)) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`repeat_until: ${s.repeat_until}\` is not one of the step's outcomes` });
+      }
+    }
+
+    for (const field of ['title', 'notes']) {
+      if (s[field] === undefined) continue;
+      for (const ph of placeholders(s[field])) {
+        if (!inputs.has(ph)) {
+          errors.push({ line, msg: `step \`${s.id}\`: ${field} uses {${ph}} which is not a declared input` });
+        }
+      }
+    }
+  }
+
+  const cycle = findDependencyCycle(steps.filter((s) => s.id));
+  if (cycle) {
+    errors.push({ line: parsed.stepsLine || 1, msg: `dependency cycle: ${cycle.join(' -> ')} (loops are only allowed via repeat_until/on_fail)` });
+  }
+
+  return errors;
+}
+
+// Validate one file. Returns array of {line, msg}; empty means valid.
+function validateFile(file, templates) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return [{ line: 1, msg: `cannot read file: ${e.message}` }];
+  }
+  const parsed = parseFrontmatter(text);
+  if (!parsed.fm) return parsed.errors;
+  const errors = [...parsed.errors];
+  const { fm, fmLines, bodyStart, bodyLines } = parsed;
+  const at = (key) => (fmLines && fmLines[key]) || 1;
+
+  if (!fm.kind) {
+    errors.push({ line: 1, msg: 'missing `kind` in frontmatter' });
+    return errors;
+  }
+  if (fm.kind === 'workflow') {
+    return validateWorkflow(parseWorkflow(text), file, templates || templateNames());
+  }
+  if (fm.kind !== 'template') {
+    errors.push({ line: at('kind'), msg: `unknown kind \`${fm.kind}\` (expected: template|workflow)` });
+    return errors;
+  }
+
+  const expectedName = path.basename(file, '.md');
+  if (!fm.name) {
+    errors.push({ line: 1, msg: 'missing `name` in frontmatter' });
+  } else if (fm.name !== expectedName) {
+    errors.push({ line: at('name'), msg: `name \`${fm.name}\` does not match filename \`${expectedName}.md\`` });
+  }
+
+  if (!Array.isArray(fm.inputs) || fm.inputs.length === 0) {
+    errors.push({ line: at('inputs'), msg: 'template must declare at least one input under `inputs:`' });
+  } else {
+    fm.inputs.forEach((input, idx) => {
+      const line = (input && input.__line) || at('inputs');
+      if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+        errors.push({ line, msg: `inputs[${idx}] must be a map with \`name\` and \`exemplar\`` });
+        return;
+      }
+      if (!input.name) errors.push({ line, msg: `inputs[${idx}] is missing \`name\`` });
+      if (!input.exemplar || String(input.exemplar).trim() === '') {
+        errors.push({ line, msg: `input \`${input.name || idx}\` is missing an \`exemplar\`` });
+      }
+    });
+  }
+
+  const shape = findSection(bodyLines, bodyStart, 'Output shape');
+  if (!shape) {
+    errors.push({ line: bodyStart, msg: 'missing `## Output shape` section' });
+  } else if (shape.content === '') {
+    errors.push({ line: shape.line, msg: '`## Output shape` section is empty' });
+  }
+
+  const golden = findSection(bodyLines, bodyStart, 'Golden exemplar', { toEnd: true });
+  if (!golden) {
+    errors.push({ line: bodyStart, msg: 'missing `## Golden exemplar` section (REQUIRED — templates teach by example)' });
+  } else if (golden.content.length < MIN_EXEMPLAR_CHARS) {
+    errors.push({
+      line: golden.line,
+      msg: `\`## Golden exemplar\` is too thin (${golden.content.length} chars, need >= ${MIN_EXEMPLAR_CHARS}) — write a complete, real-quality example`,
+    });
+  }
+
+  return errors;
+}
+
+// ------------------------------------------------------------------- mermaid
+
+const MERMAID_OPEN = '<!-- plt:mermaid -->';
+const MERMAID_CLOSE = '<!-- /plt:mermaid -->';
+
+// Generate the mermaid flowchart for a workflow's steps. Deterministic:
+// nodes in file order, then edges grouped by kind. Branch edges carry the
+// outcome label; on_fail edges are dashed.
+function renderMermaid(steps) {
+  const lines = ['flowchart TD'];
+  for (const s of steps) lines.push(`  ${s.id}["${s.id} (${s.assignee})"]`);
+  for (const s of steps) {
+    for (const n of s.needs || []) lines.push(`  ${n} --> ${s.id}`);
+    if (s.when && s.when.step) lines.push(`  ${s.when.step} -- ${s.when.outcome} --> ${s.id}`);
+    if (s.else_of) lines.push(`  ${s.else_of} -- else --> ${s.id}`);
+    if (s.repeat_until) lines.push(`  ${s.id} -- until ${s.repeat_until} --> ${s.id}`);
+  }
+  for (const s of steps) {
+    if (s.on_fail && s.on_fail.then) {
+      const n = Number(s.on_fail.retry || 0);
+      lines.push(`  ${s.id} -. fail x${n} .-> ${s.on_fail.then}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// Write/update the generated mermaid block between markers in `text`.
+function injectMermaid(text, mermaid) {
+  const block = `${MERMAID_OPEN}\n\`\`\`mermaid\n${mermaid}\n\`\`\`\n${MERMAID_CLOSE}`;
+  const open = text.indexOf(MERMAID_OPEN);
+  const close = text.indexOf(MERMAID_CLOSE);
+  if (open !== -1 && close !== -1 && close > open) {
+    return text.slice(0, open) + block + text.slice(close + MERMAID_CLOSE.length);
+  }
+  return text.replace(/\n*$/, '\n\n') + block + '\n';
+}
+
+// ------------------------------------------------------------ punchlist API
+
+// Auth resolution mirrors punchlist's skills/shared/pl.sh:
+//   1. $PUNCHLIST_TOKEN  2. $PUNCHLIST_ENV_FILE  3. ~/.claude/secrets.local.env
+//   4. $HERMES_HOME/.env
+// PUNCHLIST_OWNER (the human actor workflow `owner` steps map to) resolves
+// the same way. NEVER print the token.
+function readEnvVal(file, key) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  for (const line of text.split('\n')) {
+    const m = line.match(new RegExp(`^${key}=(.*)$`));
+    if (m) return stripQuotes(m[1].trim());
+  }
+  return null;
+}
+
+function resolveEnv() {
+  const files = [
+    process.env.PUNCHLIST_ENV_FILE,
+    path.join(os.homedir(), '.claude', 'secrets.local.env'),
+    process.env.HERMES_HOME && path.join(process.env.HERMES_HOME, '.env'),
+  ].filter(Boolean);
+  const lookup = (key) => {
+    if (process.env[key]) return process.env[key];
+    for (const f of files) {
+      const v = readEnvVal(f, key);
+      if (v) return v;
+    }
+    return null;
+  };
+  return {
+    url: process.env.PUNCHLIST_URL || 'http://127.0.0.1:8600',
+    token: lookup('PUNCHLIST_TOKEN'),
+    owner: lookup('PUNCHLIST_OWNER'),
+  };
+}
+
+function makeClient(env) {
+  if (!env.token) {
+    throw new Error('PUNCHLIST_TOKEN is not set (export it, or put it in ~/.claude/secrets.local.env or $HERMES_HOME/.env)');
+  }
+  return async function api(method, p, body) {
+    const res = await fetch(`${env.url}/api/v1${p}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${env.token}`,
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    let json = null;
+    try { json = await res.json(); } catch { /* non-JSON */ }
+    if (!res.ok) {
+      throw new Error(`punchlist HTTP ${res.status} on ${method} ${p}: ${(json && json.error) || 'error'}`);
+    }
+    return json;
+  };
+}
+
+// --------------------------------------------------------------------- runs
+
+function interpolate(s, inputs) {
+  return String(s).replace(/\{([A-Za-z_][\w-]*)\}/g, (m, k) => (k in inputs ? inputs[k] : m));
+}
+
+// Machine-parseable trailer at the END of a spawned task's notes.
+function buildTrailer(workflow, runId, stepId, template, attempt) {
+  return `\n\n---\nplt: workflow=${workflow} run=${runId} step=${stepId} template=${template || '-'} attempt=${attempt}`;
+}
+
+const OUTCOME_PREFIX = 'Outcome: ';
+
+function taskBodyForStep(wf, runId, step, inputs, attempt, ownerName) {
+  const assignee = step.assignee === 'owner' ? ownerName : step.assignee;
+  if (!assignee) {
+    throw new Error(`step \`${step.id}\` is assigned to \`owner\` but PUNCHLIST_OWNER is not set — export it or add it to the env file`);
+  }
+  const parts = [];
+  if (step.notes) parts.push(interpolate(step.notes, inputs));
+  if (Array.isArray(step.outcomes)) {
+    parts.push('Record the result by checking exactly ONE "Outcome:" checklist item, then complete the task.');
+  }
+  if (step.template) parts.push(`Produce output per template: ${step.template} (plt show ${step.template})`);
+  const body = {
+    title: interpolate(step.title || `${wf.name}: ${step.id}`, inputs).slice(0, 500),
+    notes: parts.join('\n\n') + buildTrailer(wf.name, runId, step.id, step.template, attempt),
+    assignee,
+  };
+  if (Array.isArray(step.outcomes)) body.steps = step.outcomes.map((o) => OUTCOME_PREFIX + o);
+  return body;
+}
+
+function loadWorkflowByName(name) {
+  for (const file of collectFiles()) {
+    const text = fs.readFileSync(file, 'utf8');
+    const parsed = parseFrontmatter(text);
+    if (parsed.fm && parsed.fm.kind === 'workflow' &&
+        (parsed.fm.name === name || path.basename(file, '.md') === name)) {
+      return { file, text, parsed: parseWorkflow(text) };
+    }
+  }
+  return null;
+}
+
+function runFile(id) { return path.join(RUNS_DIR, `${id}.json`); }
+
+function loadRuns() {
+  let entries;
+  try { entries = fs.readdirSync(RUNS_DIR); } catch { return []; }
+  return entries
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => JSON.parse(fs.readFileSync(path.join(RUNS_DIR, f), 'utf8')));
+}
+
+function saveRun(run) {
+  fs.mkdirSync(RUNS_DIR, { recursive: true });
+  fs.writeFileSync(runFile(run.run), JSON.stringify(run, null, 2) + '\n');
+}
+
+// Steps eligible at launch: no inbound edge of any kind — and not the
+// `then` target of an on_fail (those spawn only via the failure chain).
+function initialSteps(steps) {
+  const failTargets = new Set(steps.filter((s) => s.on_fail && s.on_fail.then).map((s) => s.on_fail.then));
+  return steps.filter((s) => !s.needs && !s.when && !s.else_of && !failTargets.has(s.id));
+}
+
+// ----------------------------------------------------------------- advancer
+
+// decide(wf, run, tasks) — the PURE advancer decision function.
+//   wf:   { name, steps: [stepDef] }
+//   run:  the run-state object (not mutated; a copy is returned)
+//   tasks: { [stepId]: { state: 'open'|'done'|'gone', checkedOutcomes: [] } }
+//          for every step whose run status is 'spawned'; a missing entry
+//          means "no information this cycle" (leave the step alone).
+// Returns { run, actions } where actions is a list of:
+//   { type: 'spawn',  stepId, attempt }
+//   { type: 'notify', reason: 'ambiguous'|'failed', stepId?, title, notes }
+// The imperative shell applies spawns/notifies via the punchlist API and
+// records the created task ids back into the run state.
+function decide(wf, run0, tasks) {
+  const run = JSON.parse(JSON.stringify(run0));
+  const actions = [];
+  const byId = new Map(wf.steps.map((s) => [s.id, s]));
+
+  const spawn = (stepId, attempt) => {
+    run.steps[stepId] = {
+      ...(run.steps[stepId] || {}),
+      task_id: null, status: 'spawned', outcome: null, attempts: attempt,
+    };
+    actions.push({ type: 'spawn', stepId, attempt });
+  };
+
+  // 1. settle steps whose task reached a terminal state
+  for (const [id, st] of Object.entries(run.steps)) {
+    if (st.status !== 'spawned') continue;
+    const info = tasks[id];
+    if (!info || info.state === 'open') continue;
+    const step = byId.get(id);
+    if (info.state === 'done') {
+      let outcome = 'done';
+      if (Array.isArray(step.outcomes)) {
+        const checked = info.checkedOutcomes || [];
+        if (checked.length !== 1) {
+          // ambiguous: block advancement for this step; tell the admin ONCE,
+          // keep re-checking every cycle until exactly one outcome is checked
+          if (!st.ambiguous_notified) {
+            st.ambiguous_notified = true;
+            actions.push({
+              type: 'notify', reason: 'ambiguous', stepId: id,
+              title: `Workflow ${run.run} step ${id}: ambiguous outcome — check exactly one`,
+              notes: `Task ${st.task_id || '?'} completed with ${checked.length} outcome boxes checked. ` +
+                `Check exactly one "Outcome:" item; the advancer retries every cycle.`,
+            });
+          }
+          continue;
+        }
+        outcome = checked[0];
+      }
+      if (step.repeat_until && outcome !== step.repeat_until) {
+        st.outcome = outcome; // last recorded outcome, superseded by respawn
+        spawn(id, st.attempts + 1);
+        continue;
+      }
+      st.status = 'done';
+      st.outcome = outcome;
+    } else if (info.state === 'gone') {
+      // task archived without completing = the step FAILED
+      const of = step.on_fail;
+      if (of && st.attempts <= Number(of.retry || 0)) {
+        spawn(id, st.attempts + 1);
+      } else if (of && of.then) {
+        st.status = 'failed';
+        st.outcome = 'failed';
+        const t = of.then;
+        if (!run.steps[t]) spawn(t, 1);
+      } else {
+        st.status = 'failed';
+        st.outcome = 'failed';
+        run.status = 'failed';
+        if (!run.failure_notified) {
+          run.failure_notified = true;
+          actions.push({
+            type: 'notify', reason: 'failed', stepId: id,
+            title: `Workflow ${run.run} halted: step ${id} failed`,
+            notes: `The task for step ${id} was archived without completing and the step has no on_fail. ` +
+              `The run is halted with status failed (${runFile(run.run)}).`,
+          });
+        }
+      }
+    }
+  }
+  if (run.status === 'failed') return { run, actions };
+
+  // 2. spawn newly-eligible steps
+  const done = (id) => run.steps[id] && run.steps[id].status === 'done';
+  const outcomeOf = (id) => (run.steps[id] ? run.steps[id].outcome : null);
+  for (const s of wf.steps) {
+    if (run.steps[s.id]) continue; // already spawned / settled
+    if (!s.needs && !s.when && !s.else_of) continue; // initial or on_fail-only
+    if (s.needs && !s.needs.every(done)) continue;
+    if (s.when) {
+      if (!done(s.when.step) || outcomeOf(s.when.step) !== s.when.outcome) continue;
+    }
+    if (s.else_of) {
+      if (!done(s.else_of)) continue;
+      const matched = wf.steps.some((x) => x.when && x.when.step === s.else_of &&
+        x.when.outcome === outcomeOf(s.else_of));
+      if (matched) continue;
+    }
+    spawn(s.id, 1);
+  }
+
+  // 3. completion: nothing pending, nothing left to spawn
+  if (run.status === 'running' &&
+      !Object.values(run.steps).some((st) => st.status === 'spawned')) {
+    run.status = 'completed';
+  }
+  return { run, actions };
+}
+
+// Fetch each pending step's task state from punchlist. Matches by recorded
+// task id first, then by the notes trailer (belt + suspenders): the search
+// API is queried with q="run=<id>", which hits the trailer text.
+async function fetchTaskStates(api, run) {
+  const q = encodeURIComponent(`run=${run.run}`);
+  const open = (await api('GET', `/tasks?q=${q}&limit=500`)).items;           // active/in_progress/blocked/review
+  const doneItems = (await api('GET', `/tasks?view=logbook&q=${q}&limit=500`)).items;
+  const states = {};
+  for (const [id, st] of Object.entries(run.steps)) {
+    if (st.status !== 'spawned') continue;
+    const trailerMatch = (t) => typeof t.notes === 'string' &&
+      t.notes.includes(` run=${run.run} step=${id} `) &&
+      new RegExp(`attempt=${st.attempts}(\\s|$)`).test(t.notes);
+    const find = (items) => items.find((t) => t.id === st.task_id) || items.find(trailerMatch);
+    const t = find(open);
+    if (t) { states[id] = { state: 'open' }; continue; }
+    const d = find(doneItems);
+    if (d) {
+      states[id] = {
+        state: 'done',
+        checkedOutcomes: (d.steps || [])
+          .filter((s) => s.done && s.title.startsWith(OUTCOME_PREFIX))
+          .map((s) => s.title.slice(OUTCOME_PREFIX.length)),
+      };
+      continue;
+    }
+    states[id] = { state: 'gone' }; // archived (or deleted) without completing
+  }
+  return states;
+}
+
+// Apply one decide() pass's actions via the punchlist API, recording
+// created task ids into the run state. Returns lines describing what happened.
+async function applyActions(api, wf, run, actions, ownerName) {
+  const lines = [];
+  const byId = new Map(wf.steps.map((s) => [s.id, s]));
+  for (const a of actions) {
+    if (a.type === 'spawn') {
+      const step = byId.get(a.stepId);
+      const body = taskBodyForStep(wf, run.run, step, run.inputs, a.attempt, ownerName);
+      const t = await api('POST', '/tasks', body);
+      run.steps[a.stepId].task_id = t.id;
+      lines.push(`spawned ${a.stepId} (attempt ${a.attempt}) -> task ${t.id} @${body.assignee}`);
+    } else if (a.type === 'notify') {
+      // no assignee: the server assigns its admin actor by default
+      await api('POST', '/tasks', { title: a.title.slice(0, 500), notes: a.notes });
+      lines.push(`notified admin: ${a.title}`);
+    }
+  }
+  return lines;
+}
+
+// ------------------------------------------------------------------ commands
+
+function rel(file) {
+  return path.relative(ROOT, file);
+}
+
+function cmdValidate(args) {
+  const target = args[0] || 'all';
+  let files;
+  if (target === 'all') {
+    files = collectFiles();
+    if (files.length === 0) {
+      process.stderr.write('plt validate: no template files found under templates/ or workflows/\n');
+      return 1;
+    }
+  } else {
+    const p = path.resolve(target);
+    if (!fs.existsSync(p)) {
+      process.stderr.write(`plt validate: no such file: ${target}\n`);
+      return 1;
+    }
+    files = fs.statSync(p).isDirectory() ? walk(p, []) : [p];
+  }
+
+  const templates = templateNames();
+  let failed = 0;
+  for (const file of files) {
+    const result = validateFile(file, templates);
+    const shown = file.startsWith(ROOT + path.sep) ? rel(file) : file;
+    if (result.length === 0) {
+      process.stdout.write(`OK    ${shown}\n`);
+    } else {
+      failed++;
+      for (const e of result) process.stdout.write(`FAIL  ${shown}:${e.line}: ${e.msg}\n`);
+    }
+  }
+  if (failed > 0) {
+    process.stdout.write(`\n${failed} of ${files.length} file(s) failed validation\n`);
+    return 1;
+  }
+  // keep the generated index.json fresh: any templates change is meant to pass
+  // `validate all` first, so regenerate here on a clean full run (post-write).
+  if (target === 'all' && writeIndex()) {
+    process.stdout.write(`(regenerated ${path.relative(ROOT, indexPath())})\n`);
+  }
+  return 0;
+}
+
+function loadCorpus() {
+  return collectFiles().map((file) => {
+    const parsed = parseFrontmatter(fs.readFileSync(file, 'utf8'));
+    return { file, fm: parsed.fm || {}, };
+  });
+}
+
+// templates/index.json — the least-coupled bridge to punchlist: it READS this
+// generated file (never shells plt). One row per TEMPLATE (workflows are not
+// output templates), sorted by name for a stable diff.
+//   { templates: [ { name, kind, tags, domain, output, path } ] }
+function buildIndex(root = ROOT) {
+  const templates = loadCorpus()
+    .filter((r) => r.fm.kind === 'template' && r.fm.name)
+    .map((r) => ({
+      name: r.fm.name,
+      kind: 'template',
+      tags: Array.isArray(r.fm.tags) ? r.fm.tags : [],
+      domain: r.fm.domain || null,
+      output: r.fm.output || null,
+      path: path.relative(root, r.file),
+    }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { templates };
+}
+
+function indexPath(root = ROOT) {
+  return path.join(root, 'templates', 'index.json');
+}
+
+// Write index.json only when it would change (keeps a no-op `validate` from
+// dirtying the file / its mtime). Returns true if the file was (re)written.
+function writeIndex(root = ROOT) {
+  const next = JSON.stringify(buildIndex(root), null, 2) + '\n';
+  const file = indexPath(root);
+  let prev = null;
+  try { prev = fs.readFileSync(file, 'utf8'); } catch { /* absent */ }
+  if (prev === next) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, next);
+  return true;
+}
+
+function cmdIndex() {
+  const changed = writeIndex();
+  process.stdout.write(
+    `${changed ? 'wrote' : 'up to date'} ${path.relative(ROOT, indexPath())}\n`);
+  return 0;
+}
+
+function cmdList(args) {
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--kind') opts.kind = args[++i];
+    else if (args[i] === '--tag') opts.tag = args[++i];
+    else if (args[i] === '--domain') opts.domain = args[++i];
+    else {
+      process.stderr.write(`plt list: unknown option ${args[i]}\n`);
+      return 2;
+    }
+  }
+  let rows = loadCorpus();
+  if (opts.kind) rows = rows.filter((r) => r.fm.kind === opts.kind);
+  if (opts.domain) rows = rows.filter((r) => r.fm.domain === opts.domain);
+  if (opts.tag) rows = rows.filter((r) => Array.isArray(r.fm.tags) && r.fm.tags.includes(opts.tag));
+
+  const table = rows.map((r) => [
+    r.fm.name || '?',
+    r.fm.kind || '?',
+    Array.isArray(r.fm.tags) ? r.fm.tags.join(',') : '',
+    rel(r.file),
+  ]);
+  const header = ['NAME', 'KIND', 'TAGS', 'PATH'];
+  const widths = header.map((h, c) => Math.max(h.length, ...table.map((row) => row[c].length)));
+  const fmt = (row) => row.map((cell, c) => cell.padEnd(widths[c])).join('  ').trimEnd() + '\n';
+  process.stdout.write(fmt(header));
+  for (const row of table) process.stdout.write(fmt(row));
+  return 0;
+}
+
+function cmdShow(args) {
+  const name = args[0];
+  if (!name) {
+    process.stderr.write('usage: plt show <name>\n');
+    return 2;
+  }
+  for (const file of collectFiles()) {
+    const text = fs.readFileSync(file, 'utf8');
+    const parsed = parseFrontmatter(text);
+    if ((parsed.fm && parsed.fm.name === name) || path.basename(file, '.md') === name) {
+      process.stdout.write(text.endsWith('\n') ? text : text + '\n');
+      return 0;
+    }
+  }
+  process.stderr.write(`plt show: no template or workflow named \`${name}\`\n`);
+  return 1;
+}
+
+function cmdRender(args) {
+  const name = args[0];
+  if (!name) {
+    process.stderr.write('usage: plt render <workflow>\n');
+    return 2;
+  }
+  const wf = loadWorkflowByName(name);
+  if (!wf) {
+    process.stderr.write(`plt render: no workflow named \`${name}\`\n`);
+    return 1;
+  }
+  const errors = validateWorkflow(wf.parsed, wf.file, templateNames());
+  if (errors.length > 0) {
+    for (const e of errors) process.stderr.write(`FAIL  ${rel(wf.file)}:${e.line}: ${e.msg}\n`);
+    return 1;
+  }
+  const next = injectMermaid(wf.text, renderMermaid(wf.parsed.steps));
+  if (next !== wf.text) {
+    fs.writeFileSync(wf.file, next);
+    process.stdout.write(`rendered mermaid into ${rel(wf.file)}\n`);
+  } else {
+    process.stdout.write(`mermaid already up to date in ${rel(wf.file)}\n`);
+  }
+  return 0;
+}
+
+async function cmdLaunch(args) {
+  const name = args[0];
+  if (!name || name.startsWith('--')) {
+    process.stderr.write('usage: plt launch <workflow> --input k=v [--input k=v ...]\n');
+    return 2;
+  }
+  const inputs = {};
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--input') {
+      const kv = args[++i] || '';
+      const eq = kv.indexOf('=');
+      if (eq === -1) { process.stderr.write(`plt launch: --input wants k=v, got \`${kv}\`\n`); return 2; }
+      inputs[kv.slice(0, eq)] = kv.slice(eq + 1);
+    } else {
+      process.stderr.write(`plt launch: unknown option ${args[i]}\n`);
+      return 2;
+    }
+  }
+  const wf = loadWorkflowByName(name);
+  if (!wf) { process.stderr.write(`plt launch: no workflow named \`${name}\`\n`); return 1; }
+  const errors = validateWorkflow(wf.parsed, wf.file, templateNames());
+  if (errors.length > 0) {
+    for (const e of errors) process.stderr.write(`FAIL  ${rel(wf.file)}:${e.line}: ${e.msg}\n`);
+    return 1;
+  }
+  const declared = Array.isArray(wf.parsed.fm.inputs) ? wf.parsed.fm.inputs : [];
+  for (const k of declared) {
+    if (!(k in inputs)) { process.stderr.write(`plt launch: missing --input ${k}=...\n`); return 2; }
+  }
+  for (const k of Object.keys(inputs)) {
+    if (!declared.includes(k)) { process.stderr.write(`plt launch: \`${k}\` is not a declared input of ${name}\n`); return 2; }
+  }
+
+  const env = resolveEnv();
+  let api;
+  try { api = makeClient(env); } catch (e) { process.stderr.write(`plt launch: ${e.message}\n`); return 1; }
+
+  const wfDef = { name: wf.parsed.fm.name, steps: wf.parsed.steps };
+  const runId = `${wfDef.name}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const run = {
+    run: runId,
+    workflow: wfDef.name,
+    inputs,
+    started: new Date().toISOString(),
+    status: 'running',
+    steps: {},
+  };
+  const firsts = initialSteps(wfDef.steps);
+  if (firsts.length === 0) { process.stderr.write('plt launch: workflow has no initial steps\n'); return 1; }
+  try {
+    for (const step of firsts) {
+      const body = taskBodyForStep(wfDef, runId, step, inputs, 1, env.owner);
+      const t = await api('POST', '/tasks', body);
+      run.steps[step.id] = { task_id: t.id, status: 'spawned', outcome: null, attempts: 1 };
+      process.stdout.write(`spawned ${step.id} -> task ${t.id} @${body.assignee}\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`plt launch: ${e.message}\n`);
+    return 1;
+  }
+  saveRun(run);
+  process.stdout.write(`run ${runId}\n`);
+  return 0;
+}
+
+async function cmdAdvance(args) {
+  let only = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--run') only = args[++i];
+    else if (args[i] === '--all') only = null;
+    else { process.stderr.write(`plt advance: unknown option ${args[i]}\n`); return 2; }
+  }
+  let runs = loadRuns().filter((r) => r.status === 'running');
+  if (only) runs = runs.filter((r) => r.run === only);
+  if (runs.length === 0) {
+    process.stdout.write(only ? `no running run \`${only}\`\n` : 'no running runs\n');
+    return only ? 1 : 0;
+  }
+  const env = resolveEnv();
+  let api;
+  try { api = makeClient(env); } catch (e) { process.stderr.write(`plt advance: ${e.message}\n`); return 1; }
+
+  let rc = 0;
+  for (const run of runs) {
+    const wf = loadWorkflowByName(run.workflow);
+    if (!wf) {
+      process.stderr.write(`plt advance: run ${run.run}: workflow \`${run.workflow}\` no longer exists\n`);
+      rc = 1;
+      continue;
+    }
+    const wfDef = { name: wf.parsed.fm.name, steps: wf.parsed.steps };
+    try {
+      const tasks = await fetchTaskStates(api, run);
+      const { run: next, actions } = decide(wfDef, run, tasks);
+      const lines = await applyActions(api, wfDef, next, actions, env.owner);
+      saveRun(next);
+      const changed = lines.length > 0 || next.status !== run.status;
+      process.stdout.write(`${run.run}: ${next.status}${changed ? '' : ' (no change)'}\n`);
+      for (const l of lines) process.stdout.write(`  ${l}\n`);
+    } catch (e) {
+      process.stderr.write(`plt advance: run ${run.run}: ${e.message}\n`);
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+function cmdRuns() {
+  const runs = loadRuns();
+  if (runs.length === 0) {
+    process.stdout.write('no runs (nothing launched yet)\n');
+    return 0;
+  }
+  for (const r of runs.sort((a, b) => (a.started < b.started ? -1 : 1))) {
+    const steps = Object.entries(r.steps)
+      .map(([id, s]) => `${id}=${s.status}${s.outcome && s.outcome !== 'done' ? `:${s.outcome}` : ''}`)
+      .join(' ');
+    process.stdout.write(`${r.run}  ${r.status}  ${r.workflow}  ${steps}\n`);
+  }
+  return 0;
+}
+
+const USAGE = `plt — punchlist-templates CLI
+
+usage:
+  plt validate [path|all]                   validate templates + workflows (default: all)
+  plt index                                 regenerate templates/index.json (punchlist reads it)
+  plt list [--kind K] [--tag T] [--domain D]  list templates and workflows
+  plt show <name>                           print a template/workflow's full markdown
+  plt render <workflow>                     (re)generate the file's mermaid diagram
+  plt launch <workflow> --input k=v ...     compile: create the first step task(s)
+  plt advance [--run ID | --all]            advance launched runs (cron calls this)
+  plt runs                                  list run states
+
+Repo root: $PUNCHLIST_TEMPLATES_DIR, else the checkout containing this script.
+Punchlist auth: $PUNCHLIST_URL + $PUNCHLIST_TOKEN (or the pl.sh env files).
+Workflows with \`owner\` steps additionally require $PUNCHLIST_OWNER.
+`;
+
+async function main(argv) {
+  const [cmd, ...rest] = argv;
+  switch (cmd) {
+    case 'validate': return cmdValidate(rest);
+    case 'index': return cmdIndex(rest);
+    case 'list': return cmdList(rest);
+    case 'show': return cmdShow(rest);
+    case 'render': return cmdRender(rest);
+    case 'launch': return cmdLaunch(rest);
+    case 'advance': return cmdAdvance(rest);
+    case 'runs': return cmdRuns(rest);
+    default:
+      process.stderr.write(USAGE);
+      return 2;
+  }
+}
+
+if (require.main === module) {
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (err) => { process.stderr.write(`plt: ${err.message}\n`); process.exit(1); }
+  );
+}
+
+module.exports = {
+  ROOT,
+  parseFrontmatter,
+  parseScalar,
+  parseSteps,
+  parseWorkflow,
+  findSection,
+  validateFile,
+  validateWorkflow,
+  findDependencyCycle,
+  collectFiles,
+  templateNames,
+  buildIndex,
+  writeIndex,
+  indexPath,
+  renderMermaid,
+  injectMermaid,
+  interpolate,
+  buildTrailer,
+  taskBodyForStep,
+  initialSteps,
+  decide,
+  main,
+  MIN_EXEMPLAR_CHARS,
+  MERMAID_OPEN,
+  MERMAID_CLOSE,
+};

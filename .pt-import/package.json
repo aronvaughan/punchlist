@@ -1,0 +1,15 @@
+{
+  "name": "punchlist-templates",
+  "version": "0.1.0",
+  "description": "Templates and workflows for agent-assisted work — the driving-context layer above punchlist.",
+  "license": "MIT",
+  "bin": {
+    "plt": "bin/plt"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

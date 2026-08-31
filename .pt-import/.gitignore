@@ -1,0 +1,15 @@
+# Whitelist-first: ignore everything at the top level, then re-allow tracked paths.
+/*
+!/.gitignore
+!/package.json
+!/README.md
+!/LICENSE
+!/docs/
+!/templates/
+!/workflows/
+!/skills/
+!/bin/
+!/scripts/
+!/test/
+# runs/ (per-run advancer state), .obsidian/ (vault config), and
+# node_modules stay ignored by /*
