@@ -244,6 +244,22 @@ test('instance identity: footer name link + Instance dialog + PATCH /instance', 
   assert.match(css, /\.foot-instance\s*\{/);
 });
 
+test("template editor: create/edit/save/scope + New-template entry", async () => {
+  const { get } = makeApp();
+  const ed = await (await get("/tpleditor.js")).text();
+  assert.match(ed, /const creating = !name/);                 // create mode
+  assert.match(ed, /class=.tpl-source|el\(.textarea., .tpl-source.\)/);  // editable source
+  assert.match(ed, /scope: scopeSel\.value/);                // save passes scope
+  assert.match(ed, /const scopeSel = /);
+  const det = await (await get("/detail.js")).text();
+  assert.match(det, /New template/);                          // picker entry
+  assert.match(det, /openTemplateEditor\(\)/);              // create mode call
+  assert.match(det, /picker-scope scope-/);                   // scope tags
+  const css = await (await get("/tokens.css")).text();
+  assert.match(css, /\.tpl-source\s*\{/);
+  assert.match(css, /\.scope-global/);
+});
+
 test('notifications are quiet: event poll updates a browser-tab count badge, not toasts', async () => {
   const { get } = makeApp();
   const app = await (await get('/app.js')).text();
