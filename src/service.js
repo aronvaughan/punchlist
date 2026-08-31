@@ -69,6 +69,124 @@ export function launchdPlist({ label = LABEL, node, serverJs, repo, dataDir, log
 `;
 }
 
+const SB_LABEL = 'com.punchlist.silverbullet';
+
+// Wrapper script for the SilverBullet service. The auth password lives only
+// in envFile (mode 0600), never in the unit/plist (which is world-readable,
+// mode 0644) — the unit execs this wrapper, which sources envFile (bringing
+// SB_USER=user:pass into the environment via `set -a`) and then execs the
+// real SilverBullet command. Pure string rendering — no I/O; the CLI writes
+// this to disk and chmods it 0755.
+export function silverbulletWrapper({ cmd, spaceDir, host, port, envFile }) {
+  return `#!/usr/bin/env bash
+# punchlist-silverbullet wrapper — sources the SB auth secret from envFile
+# (mode 600) so it never appears in the world-readable service unit/plist.
+set -a
+. "${envFile}"
+set +a
+exec "${cmd}" --hostname "${host}" --port "${port}" "${spaceDir}"
+`;
+}
+
+// systemd user unit for the SilverBullet service. ExecStart points at the
+// wrapper script (never at a raw password), and the service is bound to
+// loopback only — tailnet exposure is handled separately via `tailscale
+// serve`, a later increment.
+function silverbulletSystemdUnit({ wrapperPath, spaceDir, host, port }) {
+  return `[Unit]
+Description=punchlist SilverBullet KB (${host}:${port}, loopback only)
+After=network-online.target
+StartLimitBurst=4
+
+[Service]
+ExecStart=${wrapperPath}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+// launchd LaunchAgent for the SilverBullet service. ProgramArguments points
+// at the wrapper script (never at a raw password).
+function silverbulletLaunchdPlist({ wrapperPath, logPath }) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${xml(SB_LABEL)}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(wrapperPath)}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>${xml(logPath)}</string>
+  <key>StandardErrorPath</key><string>${xml(logPath)}</string>
+</dict>
+</plist>
+`;
+}
+
+// Resolve the full install spec for the optional SilverBullet KB service:
+// where the wrapper + unit go, their contents, and the idempotent
+// reload/start commands the CLI should run. Same spec shape as
+// serviceSpec() plus `wrapperPath`/`wrapperContents` for the secret-free
+// unit's ExecStart target. `spaceDir` is expected to be `<dataDir>/kb` —
+// never the whole dataDir (keeps the sqlite db, media/, backup/, govern/,
+// and .env out of SB's index). `host` MUST stay loopback (127.0.0.1);
+// tailnet exposure is `tailscale serve`, a later increment.
+export function silverbulletSpec(platform, {
+  repo, spaceDir, home, port = 3001, host = '127.0.0.1',
+  cmd = process.env.SILVERBULLET_CMD || 'silverbullet',
+  envFile = join(home, '.config', 'punchlist', 'silverbullet.env'),
+} = {}) {
+  if (platform === 'darwin') {
+    const wrapperPath = join(home, 'Library', 'Application Support', 'punchlist', 'silverbullet-wrapper.sh');
+    const path = join(home, 'Library', 'LaunchAgents', `${SB_LABEL}.plist`);
+    const logPath = join(home, 'Library', 'Logs', 'punchlist-silverbullet.log');
+    return {
+      kind: 'launchd',
+      label: SB_LABEL,
+      path,
+      logPath,
+      port,
+      host,
+      spaceDir,
+      envFile,
+      mode: 0o644,
+      wrapperPath,
+      wrapperMode: 0o755,
+      wrapperContents: silverbulletWrapper({ cmd, spaceDir, host, port, envFile }),
+      contents: silverbulletLaunchdPlist({ wrapperPath, logPath }),
+      reload: [['launchctl', ['unload', path]]],
+      start: [['launchctl', ['load', '-w', path]]],
+      status: ['launchctl', ['list', SB_LABEL]],
+    };
+  }
+  // default: systemd user unit (Linux)
+  const wrapperPath = join(home, '.config', 'punchlist', 'silverbullet-wrapper.sh');
+  const path = join(home, '.config', 'systemd', 'user', 'punchlist-silverbullet.service');
+  return {
+    kind: 'systemd',
+    path,
+    port,
+    host,
+    spaceDir,
+    envFile,
+    mode: 0o644,
+    wrapperPath,
+    wrapperMode: 0o755,
+    wrapperContents: silverbulletWrapper({ cmd, spaceDir, host, port, envFile }),
+    contents: silverbulletSystemdUnit({ wrapperPath, spaceDir, host, port }),
+    reload: [['systemctl', ['--user', 'daemon-reload']]],
+    start: [['systemctl', ['--user', 'enable', '--now', 'punchlist-silverbullet.service']]],
+    status: ['systemctl', ['--user', 'status', 'punchlist-silverbullet.service']],
+  };
+}
+
 // Resolve the full install spec for a platform: where the unit goes, its
 // contents, and the idempotent reload/start commands the CLI should run.
 // `platform` is a node process.platform value ('linux' | 'darwin' | ...).
