@@ -390,6 +390,31 @@ test('GET /templates: merges global index.json + instance data/templates, tags s
   rmSync(base, { recursive: true, force: true });
 });
 
+test('kb browser: tree lists instance markdown/text; hides secrets/db/media/backup/govern; file read is sandboxed', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'kb-'));
+  for (const d of ['kb', 'templates', 'media', 'backup', 'govern']) mkdirSync(join(base, d), { recursive: true });
+  writeFileSync(join(base, 'kb', 'note.md'), '# Note\nbody');
+  writeFileSync(join(base, 'templates', 't.md'), 'tpl');
+  writeFileSync(join(base, '.env'), 'PUNCHLIST_TOKENS=aron:secret');
+  writeFileSync(join(base, 'punchlist.db'), 'binary');
+  writeFileSync(join(base, 'media', 'x.png'), 'img');
+  writeFileSync(join(base, 'govern', 'private-terms.txt'), 'acme-corp');
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32), C = 'c'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A, claude: C }, admin: 'alex', today: () => '2026-03-10', mediaDir: join(base, 'media') });
+  const req = (tok, p) => app.fetch(new Request(`http://x${p}`, { headers: { Authorization: `Bearer ${tok}` } }));
+  assert.equal((await req(C, '/api/v1/kb/tree')).status, 403);           // non-admin
+  const tree = (await (await req(A, '/api/v1/kb/tree')).json()).tree;
+  assert.deepEqual(tree.map(n => n.name).sort(), ['kb', 'templates']);   // media/backup/govern hidden; .env/db excluded
+  const f = await (await req(A, `/api/v1/kb/file?path=${encodeURIComponent('kb/note.md')}`)).json();
+  assert.match(f.content, /# Note/);
+  assert.equal((await req(A, `/api/v1/kb/file?path=${encodeURIComponent('.env')}`)).status, 403);            // secret
+  assert.equal((await req(A, `/api/v1/kb/file?path=${encodeURIComponent('govern/private-terms.txt')}`)).status, 403);
+  assert.ok([400, 404].includes((await req(A, `/api/v1/kb/file?path=${encodeURIComponent('../etc/passwd')}`)).status)); // escape
+  rmSync(base, { recursive: true, force: true });
+});
+
 // ---- tasks CRUD ----
 test('POST /tasks: full create with tags/steps; defaults; validation', async () => {
   const { call } = makeApp();
