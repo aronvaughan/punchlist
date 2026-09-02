@@ -413,10 +413,11 @@ test('report edit door: assignee/admin revise report (in_progress/review/done); 
   assert.equal((await req(A, 'PATCH', `/api/v1/tasks/${t.id}`, { report: 'via patch' })).status, 400);
 });
 
-test('fs/dirs: admin-only sandboxed directory browser — subdir names only, no dotdirs/files, no escape', async () => {
+test('fs/dirs: admin-only sandboxed directory browser — subdir names only, hidden dirs shown except denylist, no escape', async () => {
   const base = mkdtempSync(join(tmpdir(), 'fsdir-'));
   mkdirSync(join(base, 'code', 'repo-a'), { recursive: true });
-  mkdirSync(join(base, 'code', '.hidden'), { recursive: true });
+  mkdirSync(join(base, 'code', '.myproject'), { recursive: true }); // ordinary hidden dir — should now show
+  mkdirSync(join(base, 'code', '.ssh'), { recursive: true });       // denylisted sensitive dir — must stay hidden
   writeFileSync(join(base, 'code', 'file.txt'), 'x');
   const { db, migrate } = open(':memory:');
   migrate();
@@ -428,7 +429,7 @@ test('fs/dirs: admin-only sandboxed directory browser — subdir names only, no 
   assert.deepEqual(r.dirs, ['code']);
   assert.equal(r.parent, null);
   const r2 = await (await req(A, `/api/v1/fs/dirs?path=${encodeURIComponent(join(base, 'code'))}`)).json();
-  assert.deepEqual(r2.dirs, ['repo-a']);                                 // .hidden + file.txt excluded
+  assert.deepEqual(r2.dirs, ['.myproject', 'repo-a']);                   // .ssh denylisted + file.txt excluded
   assert.ok(r2.parent);
   assert.equal((await req(A, `/api/v1/fs/dirs?path=${encodeURIComponent(join(base, '..'))}`)).status, 400); // escape
   assert.equal((await req(A, `/api/v1/fs/dirs?path=${encodeURIComponent(join(base, 'nope'))}`)).status, 400); // missing

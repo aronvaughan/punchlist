@@ -1452,9 +1452,14 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   }));
 
   // Admin-only directory browser for picking a working_dir (server-side path).
-  // Lists SUBDIRECTORY NAMES only — never file bytes, never hidden dotdirs — of a
-  // path constrained to realpath-inside FS_ROOT, so a crafted ../ or a symlink
-  // can't escape or read outside the sandbox.
+  // Lists SUBDIRECTORY NAMES only — never file bytes — of a path constrained to
+  // realpath-inside FS_ROOT, so a crafted ../ or a symlink can't escape or read
+  // outside the sandbox. Hidden (dot) directories ARE shown (many real project
+  // roots live under dotdirs), except for a denylist of well-known
+  // security-sensitive names that should never be offered as a cd target.
+  const FS_DENY_DIR = new Set([
+    '.ssh', '.gnupg', '.aws', '.git', '.config', '.claude', '.docker', '.kube', '.npm', '.cache',
+  ]);
   app.get('/api/v1/fs/dirs', c => {
     if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
     let realRoot;
@@ -1467,7 +1472,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     let dirs;
     try {
       dirs = readdirSync(real, { withFileTypes: true })
-        .filter(d => d.isDirectory() && !d.name.startsWith('.')) // dirs only; symlinks (isSymbolicLink) and dotdirs excluded
+        .filter(d => d.isDirectory() && !FS_DENY_DIR.has(d.name)) // dirs only; symlinks (isSymbolicLink) and denylisted names excluded
         .map(d => d.name).sort();
     } catch { throw new ApiError(400, 'cannot read directory'); }
     return c.json({ root: realRoot, path: real, parent: real === realRoot ? null : dirname(real), dirs });
