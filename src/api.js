@@ -1525,6 +1525,16 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // The instance identity + governance surface. GET is readable by any actor
   // (the sweep injects context into agents); PATCH is admin-only (the context
   // becomes agent directives, so only the human may set it).
+  // working_dir / kb_path mirror the project- and tag-level fields (migrations
+  // 013/017): working_dir is the code checkout an agent cd's into, kb_path is
+  // a folder to read for background AND write notes/new pages to. Set here
+  // they're the instance-wide BASE every task gets; project/tag-level values
+  // (if set) additively supplement — not override — them, per the existing
+  // root -> project -> tag injection order (an orchestrator reads instance,
+  // then project, then tag, and gives an agent all that apply). Stored in the
+  // settings k/v table like every other instance field, so "unset" is '' (not
+  // null, unlike the project/tag columns) — consistent with how name/context/
+  // kb_url already represent "unset" here.
   app.get('/api/v1/instance', c => c.json({
     name: getSetting('instance_name'),
     context: getSetting('instance_context'),
@@ -1532,9 +1542,11 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     backup_mode: getSetting('backup_mode', 'snapshot'),
     backup_repo: getSetting('backup_repo'),
     kb_url: getSetting('kb_url'),
+    working_dir: getSetting('working_dir'),
+    kb_path: getSetting('kb_path'),
   }));
 
-  const INSTANCE_FIELDS = new Set(['name', 'context', 'data_isolation', 'backup_mode', 'backup_repo', 'kb_url']);
+  const INSTANCE_FIELDS = new Set(['name', 'context', 'data_isolation', 'backup_mode', 'backup_repo', 'kb_url', 'working_dir', 'kb_path']);
   app.patch('/api/v1/instance', async c => {
     if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
     const body = await readJson(c);
@@ -1562,11 +1574,20 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       if (trimmed && !/^https?:\/\//i.test(trimmed)) throw new ApiError(400, 'kb_url must be an http(s) URL');
       setSetting('kb_url', trimmed);
     }
+    if (body.working_dir !== undefined) {
+      if (typeof body.working_dir !== 'string' || body.working_dir.length > 1024) throw new ApiError(400, 'working_dir must be a string (<=1024 chars)');
+      setSetting('working_dir', body.working_dir.trim());
+    }
+    if (body.kb_path !== undefined) {
+      if (typeof body.kb_path !== 'string' || body.kb_path.length > 1024) throw new ApiError(400, 'kb_path must be a string (<=1024 chars)');
+      setSetting('kb_path', body.kb_path.trim());
+    }
     return c.json({
       name: getSetting('instance_name'), context: getSetting('instance_context'),
       data_isolation: getSetting('data_isolation', '1') === '1',
       backup_mode: getSetting('backup_mode', 'snapshot'), backup_repo: getSetting('backup_repo'),
       kb_url: getSetting('kb_url'),
+      working_dir: getSetting('working_dir'), kb_path: getSetting('kb_path'),
     });
   });
 

@@ -1426,7 +1426,7 @@ async function mountDirPicker(nav, input) {
 // server-side directory browser, PATCHed alongside notes. working_dir is
 // project-only (no field/id passed for tags); kb_path applies to both.
 // Returns the mounted input element, or null when fieldId is absent.
-function mountPathField(fieldId, subject, prop) {
+export function mountPathField(fieldId, subject, prop) {
   const input = fieldId ? document.getElementById(fieldId) : null;
   const field = input?.closest('.dialog-field');
   if (!input) return null;

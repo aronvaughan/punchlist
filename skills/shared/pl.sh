@@ -76,7 +76,18 @@
 #                                      edit an EXISTING tag's context fields
 #                                      (at least one flag required)
 #   pl.sh instance                     this deployment's global context + data-
-#                                      isolation policy (applies to every agent)
+#                                      isolation policy, working_dir, and kb_path
+#                                      if set (applies to every agent as the BASE
+#                                      context — read it FIRST, before project/tag;
+#                                      project/tag working_dir/kb_path, if set,
+#                                      additively supplement it rather than
+#                                      replacing it: root -> project -> tag)
+#   pl.sh instance-edit [--working-dir D] [--kb-path D]
+#                                      set/change the instance-level working_dir
+#                                      and/or kb_path (admin only, at least one
+#                                      flag required); mirrors project-edit/
+#                                      tag-edit. Unlike project/tag, there is no
+#                                      "unset" (null) — pass "" to clear.
 #   pl.sh counts                       nav counts (inbox/today/review/delegated...)
 #
 # Auth: Bearer $PUNCHLIST_TOKEN. Base URL: $PUNCHLIST_URL (default 127.0.0.1:8600).
@@ -522,13 +533,38 @@ case "$cmd" in
       + (if (.kb_path // "") != "" then "  kb_path:" + .kb_path else "" end)' ;;
 
   instance)
-    # This deployment's global context + data-governance policy. Read it before
-    # working — it applies to you and every subagent (deployment-wide rules).
+    # This deployment's global context + data-governance policy. Read it FIRST,
+    # before project/tag context — it applies to you and every subagent
+    # (deployment-wide rules), and its working_dir/kb_path (if set) are the BASE
+    # context every task gets. Project- or tag-level working_dir/kb_path, if
+    # set, additively supplement this (not override it): root -> project -> tag.
     api GET /instance
     printf '%s' "$RESP" | jq -r '
       "# instance: " + (if (.name // "") != "" then .name else "(unnamed)" end)
       + "\ndata_isolation: " + (if .data_isolation then "ON — private by default; keep client/personal content out of publishable paths" else "off" end)
+      + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end)
+      + (if (.kb_path // "") != "" then "\nkb_path: " + .kb_path + "  (read for background / write notes here when asked)" else "" end)
       + "\n\n" + (if (.context // "") != "" then .context else "(no instance context set)" end)' ;;
+
+  instance-edit)
+    # Set/change the instance-level working_dir and/or kb_path — the base
+    # context every task gets, mirroring project-edit/tag-edit. Admin only
+    # (server-enforced); at least one flag required. There is no "unset" at
+    # the instance level (settings are a plain k/v store, not nullable columns
+    # like projects/tags) — pass "" to clear a field.
+    [ $# -ge 1 ] || { echo "usage: pl.sh instance-edit [--working-dir D] [--kb-path D]" >&2; exit 2; }
+    body='{}'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --working-dir) body=$(jq --arg v "$2" '.working_dir=$v' <<<"$body"); shift 2 ;;
+        --kb-path)     body=$(jq --arg v "$2" '.kb_path=$v' <<<"$body"); shift 2 ;;
+        *) echo "pl: unknown flag $1" >&2; exit 2 ;;
+      esac
+    done
+    api PATCH /instance "$body"
+    printf '%s' "$RESP" | jq -r '"instance"
+      + (if (.working_dir // "") != "" then "  working_dir:" + .working_dir else "" end)
+      + (if (.kb_path // "") != "" then "  kb_path:" + .kb_path else "" end)' ;;
 
   counts)
     api GET /counts

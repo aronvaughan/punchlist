@@ -187,6 +187,32 @@ test('pl.sh project-create: creates a project, visible via projects/project; rej
   assert.match(noArgs.stderr, /usage: pl\.sh project-create/);
 });
 
+// instance-edit / instance: instance-level working_dir + kb_path mirror the
+// project/tag pickers (013/017) as the deployment-wide BASE context — read
+// FIRST via `pl.sh instance`, before project/tag (root -> project -> tag).
+test('pl.sh instance-edit: sets working_dir/kb_path (admin only); pl.sh instance reads them back', async () => {
+  const set = await pl(TOK_ARON, ['instance-edit', '--working-dir', '/srv/code', '--kb-path', '/srv/kb']);
+  assert.equal(set.status, 0, set.stderr);
+  assert.match(set.stdout, /working_dir:\/srv\/code/);
+  assert.match(set.stdout, /kb_path:\/srv\/kb/);
+
+  const read = (await pl(TOK_ARON, ['instance'])).stdout;
+  assert.match(read, /working_dir: \/srv\/code/);
+  assert.match(read, /kb_path: \/srv\/kb  \(read for background/);
+
+  // non-admin actor -> 403, surfaced as a non-zero exit
+  const denied = await pl(TOK_CLAUDE, ['instance-edit', '--working-dir', '/nope']);
+  assert.notEqual(denied.status, 0);
+
+  // missing flags -> usage error, no API call
+  const noArgs = await pl(TOK_ARON, ['instance-edit']);
+  assert.equal(noArgs.status, 2);
+  assert.match(noArgs.stderr, /usage: pl\.sh instance-edit/);
+
+  // clear both back to "" so later tests in this file see a clean instance
+  await pl(TOK_ARON, ['instance-edit', '--working-dir', '', '--kb-path', '']);
+});
+
 // project-edit / tag-edit: reopened-task regression — project-create could
 // set kb_path at creation time, but there was no CLI verb to set it (or
 // notes/template/working_dir) on a project/tag that already exists; the only
