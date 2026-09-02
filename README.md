@@ -349,7 +349,9 @@ as native tools in every MCP-speaking client — pick per agent, they coexist.
 
 Design records live in [`docs/`](docs/) — product analysis, PRD,
 architecture, module design (the API contract), the delegation design, the
-agent security design, and the image-attachments design.
+agent security design, and the image-attachments design. Maintainers: the
+[pre-push process](docs/2026-09-02-pre-push-process.md) (leak-scan → review →
+push) gates every push of this public repo.
 
 ## Theme gallery
 
