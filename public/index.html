@@ -116,6 +116,22 @@
       <label for="instance-kb-url">SilverBullet editor URL — the `tailscale serve` URL from <code>punchlist expose-kb</code></label>
       <input id="instance-kb-url" type="text" placeholder="https://&lt;magicdns-name&gt;/" spellcheck="false" autocapitalize="off">
     </div>
+    <div class="dialog-field">
+      <label for="instance-working-dir">Working directory — the base working directory every task gets by default (project/tag working_dir, if set, supplements this)</label>
+      <div class="workdir-row">
+        <input id="instance-working-dir" type="text" placeholder="/Users/you/code/default-repo" spellcheck="false" autocapitalize="off">
+        <button type="button" id="instance-working-dir-browse" class="workdir-browse">Browse…</button>
+      </div>
+      <div id="instance-working-dir-nav" class="dir-nav" hidden></div>
+    </div>
+    <div class="dialog-field">
+      <label for="instance-kb-path">KB folder — the base folder every task reads for background / writes notes to by default (project/tag kb_path, if set, supplements this)</label>
+      <div class="workdir-row">
+        <input id="instance-kb-path" type="text" placeholder="/Users/you/kb" spellcheck="false" autocapitalize="off">
+        <button type="button" id="instance-kb-path-browse" class="workdir-browse">Browse…</button>
+      </div>
+      <div id="instance-kb-path-nav" class="dir-nav" hidden></div>
+    </div>
     <div class="instance-kb-row">
       <button type="button" id="instance-kb" class="instance-kb-link">📓 Browse (read-only)</button>
       <button type="button" id="instance-kb-edit" class="instance-kb-link">✏️ Open editor →</button>

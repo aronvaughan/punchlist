@@ -290,6 +290,29 @@ test('kb editor link: instance-kb-url field + instance-kb-edit button, http(s)-o
   assert.match(app, /window\.open\(url, '_blank', 'noopener'\)/);
 });
 
+test('instance working_dir/kb_path: dialog fields mirror the project/tag path-picker, wired into GET/PATCH /instance', async () => {
+  const { get } = makeApp();
+  const html = await (await get('/')).text();
+  assert.match(html, /id="instance-working-dir"/);
+  assert.match(html, /id="instance-working-dir-browse"/);
+  assert.match(html, /id="instance-kb-path"/);
+  assert.match(html, /id="instance-kb-path-browse"/);
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /export function mountPathField/);   // exported so app.js (instance dialog) can reuse it
+  const app = await (await get('/app.js')).text();
+  assert.match(app, /mountPathField \} from '\/views\.js'/);
+  assert.match(app, /mountPathField\('instance-working-dir', inst, 'working_dir'\)/);
+  assert.match(app, /mountPathField\('instance-kb-path', inst, 'kb_path'\)/);
+  assert.match(app, /working_dir: wd\.value\.trim\(\)/);
+  assert.match(app, /kb_path: kb\.value\.trim\(\)/);
+  // Agent read: pl.sh surfaces instance working_dir/kb_path as the BASE
+  // context, read before project/tag (root -> project -> tag), and
+  // instance-edit sets them
+  const pl = readFileSync(join(REPO, 'skills/shared/pl.sh'), 'utf8');
+  assert.match(pl, /^\s*instance-edit\)/m);
+  assert.match(pl, /instance-edit \[--working-dir D\] \[--kb-path D\]/);
+});
+
 test('notifications are quiet: event poll updates a browser-tab count badge, not toasts', async () => {
   const { get } = makeApp();
   const app = await (await get('/app.js')).text();
@@ -759,4 +782,21 @@ test('review task opened from a compact row exposes Approve\\/Reopen (already th
   assert.match(actionsBlock, /task\.status === 'review'/);
   assert.match(actionsBlock, /complete\.textContent = 'Approve'/);
   assert.match(actionsBlock, /reopen\.textContent = 'Reopen'/);
+});
+
+// Regression: loadTemplates() (behind the template picker in detail.js) used to
+// cache an EMPTY list on fetch failure identically to a genuine empty response,
+// forever, for the life of the page — a transient error (server restarting,
+// brief network blip, or the punchlist-templates repo not yet present) would
+// permanently poison the picker to "no templates" for that browser tab, with no
+// way to recover short of a full page reload. Reported by the owner as "No
+// templates show in the project ui" while testing an unrelated fix in the same
+// session. Fix: only cache on SUCCESS; a failure returns [] for that call but
+// leaves the cache unset so the next time the picker opens it retries the fetch.
+test('template picker: loadTemplates() does not permanently cache a fetch failure', async () => {
+  const { get } = makeApp();
+  const detail = await (await get('/detail.js')).text();
+  const fn = detail.slice(detail.indexOf('async function loadTemplates'), detail.indexOf('async function loadTemplates') + 300);
+  assert.match(fn, /catch\s*\{\s*return \[\];\s*\}/); // failure path must NOT assign templatesCache
+  assert.doesNotMatch(fn, /catch\s*\{\s*templatesCache\s*=\s*\[\];?\s*\}/); // the old poisoning bug
 });

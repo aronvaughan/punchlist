@@ -6,7 +6,7 @@
 // Wordmark shows APP_NAME; CLI-ish surfaces (title, footer) use the lowercase.
 export const APP_NAME = 'Punchlist';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
-import { renderRail, renderMain, openNewTask, animateOnce } from '/views.js';
+import { renderRail, renderMain, openNewTask, animateOnce, mountPathField } from '/views.js';
 import { collapseInline, cancelCreate } from '/inline.js';
 
 setBasePath('/vendor/webawesome');
@@ -128,6 +128,11 @@ async function openInstanceDialog() {
   document.getElementById('instance-backup-mode').value = inst.backup_mode || 'snapshot';
   document.getElementById('instance-backup-repo').value = inst.backup_repo || '';
   document.getElementById('instance-kb-url').value = inst.kb_url || '';
+  // working_dir/kb_path: the same path-picker (text input + server-side dir
+  // browser) projects/tags use, mirrored here as the instance-wide BASE
+  // context — mountPathField just needs an object with the right prop names.
+  const wd = mountPathField('instance-working-dir', inst, 'working_dir');
+  const kb = mountPathField('instance-kb-path', inst, 'kb_path');
   document.getElementById('instance-save').onclick = async () => {
     try {
       const saved = await api('PATCH', '/instance', {
@@ -137,6 +142,8 @@ async function openInstanceDialog() {
         backup_mode: document.getElementById('instance-backup-mode').value,
         backup_repo: document.getElementById('instance-backup-repo').value,
         kb_url: document.getElementById('instance-kb-url').value.trim(),
+        working_dir: wd.value.trim(),
+        kb_path: kb.value.trim(),
       });
       state.instanceName = saved.name;
       inst = saved;

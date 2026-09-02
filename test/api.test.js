@@ -342,6 +342,41 @@ test('instance kb_url: GET defaults empty, PATCH sets/clears, rejects non-http(s
   assert.equal(tooLong.status, 400);
 });
 
+test('instance working_dir/kb_path: GET defaults empty, PATCH sets/clears independently, validation (mirrors project/tag fields as the instance-wide base)', async () => {
+  const { call } = makeApp();
+  const g0 = await call('GET', '/api/v1/instance');
+  assert.equal(g0.json.working_dir, '');
+  assert.equal(g0.json.kb_path, '');
+  // set both
+  const u = await call('PATCH', '/api/v1/instance', { body: { working_dir: '  /home/u/code  ', kb_path: '  /home/u/kb  ' } });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.working_dir, '/home/u/code'); // trimmed
+  assert.equal(u.json.kb_path, '/home/u/kb');
+  assert.equal((await call('GET', '/api/v1/instance')).json.working_dir, '/home/u/code');
+  // patch one, the other untouched
+  const u2 = await call('PATCH', '/api/v1/instance', { body: { kb_path: '/home/u/kb2' } });
+  assert.equal(u2.json.working_dir, '/home/u/code');
+  assert.equal(u2.json.kb_path, '/home/u/kb2');
+  // clear (settings are a k/v store, not nullable columns — "" is the cleared state)
+  const c0 = await call('PATCH', '/api/v1/instance', { body: { working_dir: '', kb_path: '' } });
+  assert.equal(c0.json.working_dir, '');
+  assert.equal(c0.json.kb_path, '');
+  // validation: non-string and over-long rejected
+  assert.equal((await call('PATCH', '/api/v1/instance', { body: { working_dir: 42 } })).status, 400);
+  assert.equal((await call('PATCH', '/api/v1/instance', { body: { kb_path: 'a'.repeat(1025) } })).status, 400);
+});
+
+test('instance working_dir/kb_path PATCH is admin-only (403 for a non-admin actor)', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const A = 'a'.repeat(32), C = 'c'.repeat(32);
+  const app = buildApp({ db, tokens: { alex: A, claude: C }, admin: 'alex', today: () => '2026-03-10' });
+  const asClaude = (m, p, body) => app.fetch(new Request(`http://x${p}`, {
+    method: m, headers: { Authorization: `Bearer ${C}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined }));
+  assert.equal((await asClaude('PATCH', '/api/v1/instance', { working_dir: '/tmp' })).status, 403);
+});
+
 test('instance kb_url PATCH is admin-only (403 for a non-admin actor)', async () => {
   const { db, migrate } = open(':memory:');
   migrate();
