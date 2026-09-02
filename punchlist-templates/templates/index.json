@@ -13,6 +13,19 @@
       "path": "templates/packs/core/coding-task.md"
     },
     {
+      "name": "pre-push-review",
+      "kind": "template",
+      "tags": [
+        "git",
+        "review",
+        "prepush",
+        "release"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/pre-push-review.md"
+    },
+    {
       "name": "purchase-decision",
       "kind": "template",
       "tags": [
@@ -23,6 +36,20 @@
       "domain": "general",
       "output": "markdown",
       "path": "templates/packs/core/purchase-decision.md"
+    },
+    {
+      "name": "repo-leak-scan",
+      "kind": "template",
+      "tags": [
+        "security",
+        "secrets",
+        "pii",
+        "prepush",
+        "privacy"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/repo-leak-scan.md"
     },
     {
       "name": "research-brief",
