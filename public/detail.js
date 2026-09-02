@@ -242,7 +242,19 @@ function buildSparkline(items, todayIso) {
   if (hi - lo < 6) { const mid = (hi + lo) / 2; lo = Math.floor(mid - 3); hi = Math.ceil(mid + 3); }
   const xOf = d => PADX + ((d - lo) / (hi - lo)) * PLOT;
 
-  svg.append(svgEl('line', { x1: PADX, y1: BASE, x2: W - PADX, y2: BASE, class: 'tl-axis' }));
+  // one dot per DAY (multiple events on a day collapse to a single dot with a
+  // small count above it) — computed up front so the axis can react to
+  // whether today has any activity.
+  const byDay = new Map();
+  for (const cm of items) {
+    const dn = dayNum(cm.created_at);
+    if (!Number.isNaN(dn)) byDay.set(dn, (byDay.get(dn) || 0) + 1);
+  }
+  const todayHasEvents = byDay.has(todayN);
+  svg.append(svgEl('line', {
+    x1: PADX, y1: BASE, x2: W - PADX, y2: BASE,
+    class: `tl-axis${todayHasEvents ? '' : ' tl-axis--empty-today'}`,
+  }));
 
   // month ticks + labels: each month-start day that falls in [lo,hi]
   const start = new Date(lo * 86400000);
@@ -269,13 +281,6 @@ function buildSparkline(items, todayIso) {
     t.textContent = String(new Date(dn * 86400000).getUTCDate());
     svg.append(t);
   };
-  // one dot per DAY (multiple events on a day collapse to a single dot with a
-  // small count above it)
-  const byDay = new Map();
-  for (const cm of items) {
-    const dn = dayNum(cm.created_at);
-    if (!Number.isNaN(dn)) byDay.set(dn, (byDay.get(dn) || 0) + 1);
-  }
   const countBadge = (dn, count) => {
     if (count <= 1) return;
     const t = svgEl('text', { x: xOf(dn), y: BASE - 9, class: 'tl-count', 'text-anchor': 'middle' });
@@ -288,9 +293,14 @@ function buildSparkline(items, todayIso) {
     countBadge(dn, count);
     ddLabel(dn);
   }
-  // today: thin ring + small solid dot (+ a count above if there were several)
+  // today: thin ring + small solid dot (+ a count above if there were several).
+  // If today has zero events, the ring (and the axis, above) renders dashed
+  // instead of solid, so an idle "today" reads visually distinct from a busy one.
   const tx = xOf(todayN);
-  svg.append(svgEl('circle', { cx: tx, cy: BASE, r: 6, class: 'tl-today-ring' }));
+  svg.append(svgEl('circle', {
+    cx: tx, cy: BASE, r: 6,
+    class: `tl-today-ring${todayHasEvents ? '' : ' tl-today-ring--empty'}`,
+  }));
   svg.append(svgEl('circle', { cx: tx, cy: BASE, r: 2.3, class: 'tl-today-dot' }));
   countBadge(todayN, byDay.get(todayN) || 0);
   ddLabel(todayN, ' tl-today-label');
