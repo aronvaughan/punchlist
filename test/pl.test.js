@@ -128,9 +128,10 @@ test("pl.sh tags/tag: lists with [context] marker; reads one tag's readme by nam
   const sre = list.items.find(t => t.name === 'sre');
   const patched = await fetch(`${url}/api/v1/tags/${sre.id}`, {
     method: 'PATCH', headers: { Authorization: `Bearer ${TOK_ARON}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ notes: '# sre\nrunbooks live here', template: 'incident-checklist' }),
+    body: JSON.stringify({ notes: '# sre\nrunbooks live here', template: 'incident-checklist', kb_path: '/kb/sre' }),
   });
   assert.equal(patched.status, 200);
+  assert.equal((await patched.json()).kb_path, '/kb/sre');
 
   const tagsAfter = (await pl(TOK_ARON, ['tags'])).stdout;
   const sreLine = tagsAfter.split('\n').find(l => l.includes('#sre'));
@@ -139,6 +140,7 @@ test("pl.sh tags/tag: lists with [context] marker; reads one tag's readme by nam
   const single = (await pl(TOK_ARON, ['tag', 'sre'])).stdout;
   assert.match(single, /# #sre/);
   assert.match(single, /\[template: incident-checklist\]/);
+  assert.match(single, /kb_path: \/kb\/sre/);
   assert.match(single, /runbooks live here/);
 
   // resolvable by id too
@@ -154,10 +156,11 @@ test("pl.sh tags/tag: lists with [context] marker; reads one tag's readme by nam
 // how `add` creates a task (POST /api/v1/projects already existed server-
 // side for the UI; this just exposes it on the CLI surface).
 test('pl.sh project-create: creates a project, visible via projects/project; rejects dup names', async () => {
-  const created = await pl(TOK_ARON, ['project-create', 'cli new project', '--notes', 'hello there', '--working-dir', '/tmp/proj']);
+  const created = await pl(TOK_ARON, ['project-create', 'cli new project', '--notes', 'hello there', '--working-dir', '/tmp/proj', '--kb-path', '/tmp/kb/proj']);
   assert.equal(created.status, 0, created.stderr);
   assert.match(created.stdout, /cli new project/);
   assert.match(created.stdout, /working_dir:\/tmp\/proj/);
+  assert.match(created.stdout, /kb_path:\/tmp\/kb\/proj/);
   const id = created.stdout.split(/\s+/, 1)[0];
 
   const list = (await pl(TOK_ARON, ['projects'])).stdout;
@@ -167,6 +170,7 @@ test('pl.sh project-create: creates a project, visible via projects/project; rej
   assert.match(single, /# cli new project/);
   assert.match(single, /hello there/);
   assert.match(single, /working_dir: \/tmp\/proj/);
+  assert.match(single, /kb_path: \/tmp\/kb\/proj/);
 
   // duplicate name -> server 409, surfaced as a non-zero exit with HTTP in stderr
   const dup = await pl(TOK_ARON, ['project-create', 'cli new project']);

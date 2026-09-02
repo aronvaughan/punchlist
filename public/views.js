@@ -1347,6 +1347,7 @@ function projectContextPanel(project) {
     saveId: 'project-context-save',
     cancelId: 'project-context-cancel',
     workdirId: 'project-context-workdir',   // working_dir edited in the same dialog
+    kbPathId: 'project-context-kbpath',     // kb_path: read background from / write notes to (migration 017)
     unsetLabel: 'Add project context',
     editLabel: 'Edit project context',
   });
@@ -1368,6 +1369,7 @@ function tagContextPanel(tag) {
     tplBtnId: 'tag-context-tpl-btn',
     saveId: 'tag-context-save',
     cancelId: 'tag-context-cancel',
+    kbPathId: 'tag-context-kbpath',   // kb_path: read background from / write notes to (migration 017)
     unsetLabel: 'Add tag context',
     editLabel: 'Edit tag context',
   });
@@ -1418,7 +1420,28 @@ async function mountDirPicker(nav, input) {
   await render();
 }
 
-function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId, saveId, cancelId, unsetLabel, editLabel, workdirId }) {
+// Mounts one path-picker field (working_dir or kb_path) inside a context
+// dialog: text input + Browse button + the shared mountDirPicker nav. Shared
+// by both fields since they're the same shape — an absolute local path,
+// server-side directory browser, PATCHed alongside notes. working_dir is
+// project-only (no field/id passed for tags); kb_path applies to both.
+// Returns the mounted input element, or null when fieldId is absent.
+function mountPathField(fieldId, subject, prop) {
+  const input = fieldId ? document.getElementById(fieldId) : null;
+  const field = input?.closest('.dialog-field');
+  if (!input) return null;
+  input.value = subject[prop] ?? '';
+  if (field) field.hidden = false;
+  const nav = document.getElementById(`${fieldId}-nav`);
+  const browse = document.getElementById(`${fieldId}-browse`);
+  if (browse && nav) {
+    if (nav.hasChildNodes()) nav.hidden = true; // reset on reopen
+    browse.onclick = () => (nav.hidden ? mountDirPicker(nav, input) : (nav.hidden = true));
+  }
+  return input;
+}
+
+function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId, saveId, cancelId, unsetLabel, editLabel, workdirId, kbPathId }) {
   const wrap = el('div', 'meta-field project-context');
   const btn = el('button', 'meta-icon-btn');
   btn.type = 'button';
@@ -1469,19 +1492,12 @@ function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId
     const tplBtn = document.getElementById(tplBtnId);
     ta.value = subject.notes ?? '';
     // working_dir lives in this same dialog for projects (owner asked to move it
-    // off the page into the dialog); the field is absent for tags.
-    const wd = workdirId ? document.getElementById(workdirId) : null;
-    const wdField = wd?.closest('.dialog-field');
-    if (wd) {
-      wd.value = subject.working_dir ?? '';
-      if (wdField) wdField.hidden = false;
-      const nav = document.getElementById(`${workdirId}-nav`);
-      const browse = document.getElementById(`${workdirId}-browse`);
-      if (browse && nav) {
-        if (nav.hasChildNodes()) nav.hidden = true; // reset on reopen
-        browse.onclick = () => (nav.hidden ? mountDirPicker(nav, wd) : (nav.hidden = true));
-      }
-    }
+    // off the page into the dialog); the field is absent for tags. kb_path
+    // (migration 017) lives alongside it for BOTH projects and tags — a
+    // separate folder to read background from / write notes to, distinct
+    // from working_dir (the code checkout).
+    const wd = mountPathField(workdirId, subject, 'working_dir');
+    const kb = mountPathField(kbPathId, subject, 'kb_path');
     const paintTpl = () => {
       tplBtn.replaceChildren(icon('file-text', { size: 13 }),
         el('span', 'pc-template-text', subject.template || 'No template'));
@@ -1493,11 +1509,17 @@ function contextNotepad({ subject, collection, patch, dialogId, textId, tplBtnId
       try {
         const body = { notes: ta.value };
         if (wd) body.working_dir = wd.value.trim() || null;
+        if (kb) body.kb_path = kb.value.trim() || null;
         const updated = await api('PATCH', `${patch}${subject.id}`, body);
         subject.notes = updated.notes;
         if (wd) subject.working_dir = updated.working_dir;
+        if (kb) subject.kb_path = updated.kb_path;
         const i = collection.findIndex(x => x.id === subject.id);
-        if (i >= 0) collection[i] = { ...collection[i], notes: updated.notes, ...(wd ? { working_dir: updated.working_dir } : {}) };
+        if (i >= 0) collection[i] = {
+          ...collection[i], notes: updated.notes,
+          ...(wd ? { working_dir: updated.working_dir } : {}),
+          ...(kb ? { kb_path: updated.kb_path } : {}),
+        };
         paint();
       } catch (e) { toast(`Save failed: ${e.message}`); }
       dlg.open = false;

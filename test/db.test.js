@@ -11,7 +11,7 @@ test('migrate applies each migration once, records versions, enables pragmas', (
   migrate(); // idempotent
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
   assert.deepEqual(versions.map(v => v.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events', '012-project-template', '013-project-working-dir', '014-settings', '015-tag-notes', '016-allow-push']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events', '012-project-template', '013-project-working-dir', '014-settings', '015-tag-notes', '016-allow-push', '017-kb-path']);
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   // schema present
   db.prepare('SELECT id FROM tasks').all();
@@ -118,7 +118,7 @@ test('002-delegation upgrades a lived-in 001 db: data, FKs, indexes and old cons
 
   migrate(); // real migrations dir — applies 002 (rebuild), 003 (vetting), 004 (rebuild), 005 (attachments)
   assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r => r.version),
-    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events', '012-project-template', '013-project-working-dir', '014-settings', '015-tag-notes', '016-allow-push']);
+    ['001-init', '002-delegation', '003-vetting', '004-needs-input', '005-attachments', '006-comments', '007-template', '008-view-ranks', '009-task-version', '010-doc-attachments', '011-task-events', '012-project-template', '013-project-working-dir', '014-settings', '015-tag-notes', '016-allow-push', '017-kb-path']);
   // data survived; existing rows got assignee='alex' and the new defaults
   const t1 = db.prepare('SELECT * FROM tasks WHERE id = ?').get('t1');
   assert.equal(t1.title, 'recurring');
