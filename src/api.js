@@ -1458,7 +1458,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   // roots live under dotdirs), except for a denylist of well-known
   // security-sensitive names that should never be offered as a cd target.
   const FS_DENY_DIR = new Set([
-    '.ssh', '.gnupg', '.aws', '.git', '.config', '.claude', '.docker', '.kube', '.npm', '.cache',
+    '.ssh', '.gnupg', '.aws', '.git', '.config', '.docker', '.kube', '.npm', '.cache',
   ]);
   app.get('/api/v1/fs/dirs', c => {
     if (c.get('actor') !== HUMAN) throw new ApiError(403, 'admin only');
