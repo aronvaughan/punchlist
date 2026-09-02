@@ -149,3 +149,36 @@ test("pl.sh tags/tag: lists with [context] marker; reads one tag's readme by nam
   const unknown = await pl(TOK_ARON, ['tag', 'no-such-tag']);
   assert.notEqual(unknown.status, 0);
 });
+
+// project-create: agents create their own projects via the CLI, mirroring
+// how `add` creates a task (POST /api/v1/projects already existed server-
+// side for the UI; this just exposes it on the CLI surface).
+test('pl.sh project-create: creates a project, visible via projects/project; rejects dup names', async () => {
+  const created = await pl(TOK_ARON, ['project-create', 'cli new project', '--notes', 'hello there', '--working-dir', '/tmp/proj']);
+  assert.equal(created.status, 0, created.stderr);
+  assert.match(created.stdout, /cli new project/);
+  assert.match(created.stdout, /working_dir:\/tmp\/proj/);
+  const id = created.stdout.split(/\s+/, 1)[0];
+
+  const list = (await pl(TOK_ARON, ['projects'])).stdout;
+  assert.match(list, /cli new project/);
+
+  const single = (await pl(TOK_ARON, ['project', id])).stdout;
+  assert.match(single, /# cli new project/);
+  assert.match(single, /hello there/);
+  assert.match(single, /working_dir: \/tmp\/proj/);
+
+  // duplicate name -> server 409, surfaced as a non-zero exit with HTTP in stderr
+  const dup = await pl(TOK_ARON, ['project-create', 'cli new project']);
+  assert.equal(dup.status, 1);
+  assert.match(dup.stderr, /HTTP 409/);
+
+  // a child project resolves --parent by name
+  const child = await pl(TOK_ARON, ['project-create', 'cli child project', '--parent', 'cli new project']);
+  assert.equal(child.status, 0, child.stderr);
+
+  // missing name -> usage error, no API call
+  const noArgs = await pl(TOK_ARON, ['project-create']);
+  assert.equal(noArgs.status, 2);
+  assert.match(noArgs.stderr, /usage: pl\.sh project-create/);
+});
