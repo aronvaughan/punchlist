@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  serviceSpec, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper,
+  serviceSpec, serviceRestartCmd, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper,
   silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath, SILVERBULLET_VERSION,
 } from '../src/service.js';
 
@@ -191,4 +191,12 @@ test('silverbulletBinPath/silverbulletBinDir: version-pinned managed install loc
   assert.equal(silverbulletBinPath('/home/u'), '/home/u/.local/share/punchlist/silverbullet/2.10.0/silverbullet');
   // a custom version flows through and lands in a distinct directory
   assert.equal(silverbulletBinPath('/home/u', '3.0.0'), '/home/u/.local/share/punchlist/silverbullet/3.0.0/silverbullet');
+});
+
+test('serviceRestartCmd: systemd on linux, launchd kickstart on darwin', () => {
+  assert.deepEqual(serviceRestartCmd('linux'), ['systemctl', ['--user', 'restart', 'punchlist.service']]);
+  assert.deepEqual(serviceRestartCmd('freebsd'), ['systemctl', ['--user', 'restart', 'punchlist.service']]);
+  const [c, a] = serviceRestartCmd('darwin', { uid: 501 });
+  assert.equal(c, 'launchctl');
+  assert.deepEqual(a, ['kickstart', '-k', 'gui/501/com.punchlist']);
 });
