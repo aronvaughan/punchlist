@@ -77,6 +77,9 @@ the owner can `vet`.
 - **Queue discipline**: check `queue`, claim a task before starting, work
   it, then `finish` with a SUBSTANTIVE report — what you did, where output
   lives, what the reviewer should check. "Done" alone is not a report.
+- **Keep `comment`/`finish` text brief and bulleted**: lead with outcomes
+  and what changed, not narrated process — the owner scans these fast.
+  Substantive still means bullets over prose, not more prose.
 - **Reprioritizing the backlog**: position IS priority — the top of your
   queue is what you take next. You MAY reorder/reprioritize your backlog
   (`reorder <id> --before <id> --reason "why"`, or `--after`), but you MUST
