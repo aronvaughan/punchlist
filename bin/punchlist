@@ -26,7 +26,7 @@ import { homedir, tmpdir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  serviceSpec, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
+  serviceSpec, serviceRestartCmd, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
   SILVERBULLET_VERSION,
 } from '../src/service.js';
 import { tailscaleServeSpec } from '../src/tailscale.js';
@@ -556,6 +556,53 @@ function backup(argv) {
   }
 }
 
+// ---- deferred / safe restart ----
+// A task (or agent) can REQUEST a restart; `safe-restart` applies it only when
+// no task is in_progress (agents idle), otherwise defers. Lets you queue a
+// server restart without interrupting work in flight.
+function restartDb(readOnly = false) {
+  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  return new DatabaseSync(join(dataDir, 'punchlist.db'), { readOnly });
+}
+const rsGet = (db, k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value ?? '';
+const rsSet = (db, k, v) => db.prepare(
+  'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+).run(k, String(v));
+const inProgress = db => db.prepare("SELECT count(*) AS c FROM tasks WHERE status = 'in_progress'").get().c;
+
+function requestRestart(argv) {
+  const reason = argv.filter(a => !a.startsWith('--')).join(' ').trim();
+  const db = restartDb(false);
+  rsSet(db, 'restart_pending', new Date().toISOString());
+  rsSet(db, 'restart_reason', reason);
+  console.log(`restart requested${reason ? ` — ${reason}` : ''}. Applies when no task is in progress (run \`punchlist safe-restart\`, or let the cron pick it up).`);
+}
+
+function restartStatus() {
+  const db = restartDb(true);
+  const pending = rsGet(db, 'restart_pending'), reason = rsGet(db, 'restart_reason'), n = inProgress(db);
+  console.log(`restart pending  : ${pending ? `yes (${pending})${reason ? ` — ${reason}` : ''}` : 'no'}`);
+  console.log(`in-progress tasks: ${n}`);
+  console.log(`would restart now: ${pending && n === 0 ? 'YES' : 'no'}`);
+}
+
+function safeRestart(argv) {
+  const force = argv.includes('--force'), dry = argv.includes('--dry-run');
+  const db = restartDb(false);
+  if (!rsGet(db, 'restart_pending') && !force) { console.log('safe-restart: no restart pending.'); return; }
+  const n = inProgress(db);
+  if (n > 0 && !force) { console.log(`safe-restart: deferred — ${n} task(s) in progress. Will apply once idle.`); return; }
+  const [c, a] = serviceRestartCmd(process.platform, { uid: process.getuid ? process.getuid() : 0 });
+  if (dry) { console.log(`safe-restart: would clear the flag and run: ${c} ${a.join(' ')}`); return; }
+  rsSet(db, 'restart_pending', ''); rsSet(db, 'restart_reason', '');
+  console.log(`safe-restart: idle — restarting (${c} ${a.join(' ')})`);
+  // `systemctl --user` from cron has no session bus unless XDG_RUNTIME_DIR is set.
+  const uid = process.getuid ? process.getuid() : 1000;
+  const env = { ...process.env, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${uid}` };
+  const r = spawnSync(c, a, { stdio: 'inherit', env });
+  process.exit(r.status ?? 0);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 switch (cmd) {
@@ -634,11 +681,24 @@ Now give each agent its token (this tool never edits your env files):
     break;
   }
 
+  case 'request-restart':
+    requestRestart(rest);
+    break;
+
+  case 'safe-restart':
+    safeRestart(rest);
+    break;
+
+  case 'restart-status':
+    restartStatus();
+    break;
+
   default:
     console.error('usage: punchlist serve | mcp | install -t claude|hermes|all [--print-config] | ' +
       'install-service [--print] [--no-start] | ' +
       'install-silverbullet [--print] [--no-start] [--version TAG] [--skip-binary] | ' +
       'expose-kb [--off] [--status] [--print] | ' +
+      'request-restart [reason] | safe-restart [--force] [--dry-run] | restart-status | ' +
       'gen-token <actor> | doctor | backup [--dry-run] | ' +
       'install-skills [--claude DIR] [--hermes DIR] | snapshot');
     process.exit(cmd ? 2 : 0);

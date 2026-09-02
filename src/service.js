@@ -12,6 +12,14 @@ import { join } from 'node:path';
 
 const LABEL = 'com.punchlist';
 
+// Restart command for the already-installed punchlist service, used by
+// `punchlist safe-restart`. Pure (returns argv) so it's testable without
+// actually restarting. systemd user unit on Linux; launchd kickstart on macOS.
+export function serviceRestartCmd(platform, { uid = 0, label = LABEL } = {}) {
+  if (platform === 'darwin') return ['launchctl', ['kickstart', '-k', `gui/${uid}/${label}`]];
+  return ['systemctl', ['--user', 'restart', 'punchlist.service']];
+}
+
 // systemd user unit — mirrors scripts/install/setup-service.sh exactly.
 export function systemdUnit({ node, serverJs, repo, dataDir }) {
   return `[Unit]
