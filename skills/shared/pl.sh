@@ -48,14 +48,23 @@
 #                    [--tags a,b] [--auto-close 0|1]
 #   pl.sh projects                     list projects ([context] = has a readme)
 #   pl.sh project <name|id>            print a project's context notepad (readme/
-#                                      overview) — read it before working its tasks
+#                                      overview), working_dir, and kb_path if set
+#                                      — read it before working its tasks. kb_path
+#                                      is a folder to read for extra background
+#                                      AND write notes to when a task asks for it
+#                                      (separate from working_dir, the code
+#                                      checkout). If a task references KB content
+#                                      you can't find, or asks you to file notes
+#                                      but no kb_path is set, block with a question.
 #   pl.sh project-create <name> [--notes N] [--parent P] [--domain D]
-#                                      [--template T] [--working-dir D]
+#                                      [--template T] [--working-dir D] [--kb-path D]
 #                                      create a new project (name must be unique)
 #   pl.sh tags                         list tags ([context] = has a readme)
-#   pl.sh tag <name|id>                print a tag's context notepad — read it
-#                                      AFTER instance + project context (root ->
-#                                      project -> tag is the injection order)
+#   pl.sh tag <name|id>                print a tag's context notepad and kb_path
+#                                      if set (same read/write-notes concept as a
+#                                      project's kb_path) — read it AFTER instance
+#                                      + project context (root -> project -> tag
+#                                      is the injection order)
 #   pl.sh instance                     this deployment's global context + data-
 #                                      isolation policy (applies to every agent)
 #   pl.sh counts                       nav counts (inbox/today/review/delegated...)
@@ -397,6 +406,11 @@ case "$cmd" in
   project)
     # Read ONE project's context notepad (its readme/overview). Read it for
     # background before working the project's tasks. name-or-id.
+    # kb_path (if set) is a folder to read for extra background AND a store
+    # to write new info to when a task asks for it — distinct from
+    # working_dir (the code checkout). If a task references KB content you
+    # can't find, or asks you to file notes but no kb_path is set, block the
+    # task with a question rather than guessing a location.
     [ $# -eq 1 ] || { echo "usage: pl.sh project <name|id>" >&2; exit 2; }
     pid=$(resolve_project "$1")
     api GET "/projects?limit=500"
@@ -404,12 +418,13 @@ case "$cmd" in
       .items[] | select(.id == $id)
       | "# " + .name + (if .archived == 1 then "  [archived]" else "" end)
         + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
-        + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end) + "\n\n"
+        + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end)
+        + (if (.kb_path // "") != "" then "\nkb_path: " + .kb_path + "  (read for background / write notes here when asked)" else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
   project-create)
     # Create a new project. name must be unique (server enforces 409 on dup).
-    [ $# -ge 1 ] || { echo "usage: pl.sh project-create <name> [--notes N] [--parent P] [--domain D] [--template T] [--working-dir D]" >&2; exit 2; }
+    [ $# -ge 1 ] || { echo "usage: pl.sh project-create <name> [--notes N] [--parent P] [--domain D] [--template T] [--working-dir D] [--kb-path D]" >&2; exit 2; }
     name="$1"; shift
     body=$(jq -n --arg n "$name" '{name: $n}')
     while [ $# -gt 0 ]; do
@@ -419,12 +434,14 @@ case "$cmd" in
         --domain)      body=$(jq --arg v "$2" '.domain=$v' <<<"$body"); shift 2 ;;
         --template)    body=$(jq --arg v "$2" '.template=$v' <<<"$body"); shift 2 ;;
         --working-dir) body=$(jq --arg v "$2" '.working_dir=$v' <<<"$body"); shift 2 ;;
+        --kb-path)     body=$(jq --arg v "$2" '.kb_path=$v' <<<"$body"); shift 2 ;;
         *) echo "pl: unknown flag $1" >&2; exit 2 ;;
       esac
     done
     api POST /projects "$body"
     printf '%s' "$RESP" | jq -r '.id + "  " + .name
-      + (if (.working_dir // "") != "" then "  working_dir:" + .working_dir else "" end)' ;;
+      + (if (.working_dir // "") != "" then "  working_dir:" + .working_dir else "" end)
+      + (if (.kb_path // "") != "" then "  kb_path:" + .kb_path else "" end)' ;;
 
   tags)
     api GET /tags
@@ -436,13 +453,16 @@ case "$cmd" in
     # Read ONE tag's context notepad (its readme/overview) — mirrors `project`.
     # Injected AFTER root (instance) + project context, per the tag-context
     # design: root -> project -> tag. name-or-id (leading # tolerated).
+    # kb_path (if set) is the same read/write-notes folder concept as a
+    # project's kb_path.
     [ $# -eq 1 ] || { echo "usage: pl.sh tag <name|id>" >&2; exit 2; }
     gid=$(resolve_tag "$1") || exit 1
     api GET /tags
     printf '%s' "$RESP" | jq -r --arg id "$gid" '
       .items[] | select(.id == $id)
       | "# #" + .name
-        + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end) + "\n\n"
+        + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
+        + (if (.kb_path // "") != "" then "\nkb_path: " + .kb_path + "  (read for background / write notes here when asked)" else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
 
   instance)

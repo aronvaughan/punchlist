@@ -1593,14 +1593,29 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     });
   });
 
+  // kb_path / working_dir: both an absolute local path (or null), validated
+  // only as a bounded string — existence isn't checked (the dir may be
+  // created later); operator-set, never derived from task content. Shared
+  // helper used by both projects (working_dir + kb_path) and tags (kb_path).
+  const validatePathField = (body, field) => {
+    if (body[field] === undefined || body[field] === null) return;
+    if (typeof body[field] !== 'string' || body[field].length > 1024) {
+      throw new ApiError(400, `${field} must be a string (<=1024 chars) or null`);
+    }
+  };
+  const validateWorkingDir = body => validatePathField(body, 'working_dir');
+  const validateKbPath = body => validatePathField(body, 'kb_path');
+
   // ---- tags ----
   // tags gain the same "context notepad" projects have (migration 015):
   // tags.notes (a readme agents read for background on everything that tag
   // touches) + tags.template (a free-string pointer to a punchlist-templates
   // template, mirroring projects.template / migration 012). No actor
   // restriction on writing notes/template — same as project PATCH — only
-  // DELETE stays admin-only.
-  const TAG_FIELDS = new Set(['notes', 'template']);
+  // DELETE stays admin-only. tags.kb_path (migration 017) mirrors the
+  // project field: an absolute local folder to read for background and write
+  // notes to, same validation as validateKbPath below.
+  const TAG_FIELDS = new Set(['notes', 'template', 'kb_path']);
   function validateTagTemplate(body) {
     if (body.template !== undefined && body.template !== null &&
         (typeof body.template !== 'string' || body.template.length > CAPS.template)) {
@@ -1619,7 +1634,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     // tag-filtered list view shows, delegated in-flight work included).
     // Small bounded set in practice — no pagination (unlike /tasks, /projects).
     const items = db.prepare(
-      `SELECT g.id, g.name, g.notes, g.template, COUNT(t.id) AS count
+      `SELECT g.id, g.name, g.notes, g.template, g.kb_path, COUNT(t.id) AS count
        FROM tags g
        LEFT JOIN task_tags tt ON tt.tag_id = g.id
        LEFT JOIN tasks t ON t.id = tt.task_id AND t.status IN ('active', 'in_progress', 'blocked', 'review')
@@ -1637,20 +1652,21 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     validateTagNotes(body);
     validateTagTemplate(body);
+    validateKbPath(body);
     const name = body.name.trim().replace(/^#/, '');
     if (!name) throw new ApiError(400, 'name required (<=500 chars)');
     if (db.prepare('SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE').get(name)) {
       throw new ApiError(409, 'tag already exists');
     }
     const id = ulid();
-    db.prepare('INSERT INTO tags (id, name, notes, template) VALUES (?, ?, ?, ?)')
-      .run(id, name, body.notes ?? '', body.template ?? null);
-    return c.json({ id, name, notes: body.notes ?? '', template: body.template ?? null, count: 0 }, 201);
+    db.prepare('INSERT INTO tags (id, name, notes, template, kb_path) VALUES (?, ?, ?, ?, ?)')
+      .run(id, name, body.notes ?? '', body.template ?? null, body.kb_path ?? null);
+    return c.json({ id, name, notes: body.notes ?? '', template: body.template ?? null, kb_path: body.kb_path ?? null, count: 0 }, 201);
   });
 
-  // Update a tag's context notepad / template pointer. Mirrors PATCH
-  // /projects/:id (no actor restriction beyond auth — any actor may write
-  // context, same as a project's notepad).
+  // Update a tag's context notepad / template pointer / kb_path. Mirrors
+  // PATCH /projects/:id (no actor restriction beyond auth — any actor may
+  // write context, same as a project's notepad).
   app.patch('/api/v1/tags/:id', async c => {
     const id = c.req.param('id');
     const tag = db.prepare('SELECT * FROM tags WHERE id = ?').get(id);
@@ -1659,14 +1675,15 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     for (const k of Object.keys(body)) if (!TAG_FIELDS.has(k)) throw new ApiError(400, `unknown field: ${k}`);
     validateTagNotes(body);
     validateTagTemplate(body);
+    validateKbPath(body);
     const merged = { ...tag, ...body };
-    db.prepare('UPDATE tags SET notes=?, template=? WHERE id=?')
-      .run(merged.notes ?? '', merged.template ?? null, id);
+    db.prepare('UPDATE tags SET notes=?, template=?, kb_path=? WHERE id=?')
+      .run(merged.notes ?? '', merged.template ?? null, merged.kb_path ?? null, id);
     const count = db.prepare(
       `SELECT COUNT(*) c FROM task_tags tt JOIN tasks t ON t.id = tt.task_id
        WHERE tt.tag_id = ? AND t.status IN ('active', 'in_progress', 'blocked', 'review')`
     ).get(id).c;
-    return c.json({ id, name: tag.name, notes: merged.notes ?? '', template: merged.template ?? null, count });
+    return c.json({ id, name: tag.name, notes: merged.notes ?? '', template: merged.template ?? null, kb_path: merged.kb_path ?? null, count });
   });
 
   // admin-only: delete a tag and its task_tags rows. Tasks are untouched —
@@ -1684,16 +1701,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   });
 
   // ---- projects ----
-  const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived', 'template', 'working_dir']);
-  // working_dir: an absolute local path (or null). Validated only as a bounded
-  // string — existence isn't checked (the dir may be created later); it is
-  // operator-set, never derived from task content.
-  const validateWorkingDir = body => {
-    if (body.working_dir === undefined || body.working_dir === null) return;
-    if (typeof body.working_dir !== 'string' || body.working_dir.length > 1024) {
-      throw new ApiError(400, 'working_dir must be a string (<=1024 chars) or null');
-    }
-  };
+  const PROJECT_FIELDS = new Set(['name', 'notes', 'parent_id', 'domain', 'archived', 'template', 'working_dir', 'kb_path']);
+  // working_dir is the CODE the agent cd's into; kb_path (migration 017) is a
+  // folder to read background material from and write notes/findings to when
+  // a task asks for it — both validated by validatePathField above.
 
   // template: a free string (a template NAME) or null — mirrors the task
   // field (migration 007); deliberately NOT validated against a known set,
@@ -1738,6 +1749,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     validateProjectTemplate(body);
     validateWorkingDir(body);
+    validateKbPath(body);
     if (body.parent_id != null && !getProject(body.parent_id)) throw new ApiError(400, 'parent project not found');
     if (db.prepare('SELECT 1 FROM projects WHERE name = ?').get(body.name.trim())) {
       throw new ApiError(409, 'project name already exists');
@@ -1746,10 +1758,10 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     const now = new Date().toISOString();
     const { m } = db.prepare('SELECT MAX(rank) m FROM projects').get();
     db.prepare(
-      `INSERT INTO projects (id, name, notes, parent_id, domain, rank, archived, created_at, updated_at, template, working_dir)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, notes, parent_id, domain, rank, archived, created_at, updated_at, template, working_dir, kb_path)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`
     ).run(id, body.name.trim(), body.notes ?? '', body.parent_id ?? null, body.domain ?? null,
-          (m ?? 0) + 1024, now, now, body.template ?? null, body.working_dir ?? null);
+          (m ?? 0) + 1024, now, now, body.template ?? null, body.working_dir ?? null, body.kb_path ?? null);
     return c.json(getProject(id), 201);
   });
 
@@ -1763,6 +1775,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     validateProjectTemplate(body);
     validateWorkingDir(body);
+    validateKbPath(body);
     if (body.name !== undefined &&
         db.prepare('SELECT 1 FROM projects WHERE name = ? AND id <> ?').get(body.name.trim(), project.id)) {
       throw new ApiError(409, 'project name already exists');
@@ -1780,9 +1793,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     const merged = { ...project, ...body, archived: body.archived === undefined ? project.archived : (body.archived ? 1 : 0) };
     db.prepare(
-      `UPDATE projects SET name=?, notes=?, parent_id=?, domain=?, archived=?, updated_at=?, template=?, working_dir=? WHERE id=?`
+      `UPDATE projects SET name=?, notes=?, parent_id=?, domain=?, archived=?, updated_at=?, template=?, working_dir=?, kb_path=? WHERE id=?`
     ).run(merged.name.trim(), merged.notes, merged.parent_id, merged.domain, merged.archived,
-          new Date().toISOString(), merged.template ?? null, merged.working_dir ?? null, project.id);
+          new Date().toISOString(), merged.template ?? null, merged.working_dir ?? null, merged.kb_path ?? null, project.id);
     return c.json(getProject(project.id));
   });
 

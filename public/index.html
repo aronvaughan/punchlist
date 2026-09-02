@@ -144,6 +144,14 @@
       <div id="project-context-workdir-nav" class="dir-nav" hidden></div>
     </div>
     <div class="dialog-field">
+      <label for="project-context-kbpath">KB folder — a folder agents read for background and write notes to when a task asks for it (separate from the working directory)</label>
+      <div class="workdir-row">
+        <input id="project-context-kbpath" type="text" placeholder="/Users/you/kb/the-project" spellcheck="false" autocapitalize="off">
+        <button type="button" id="project-context-kbpath-browse" class="workdir-browse">Browse…</button>
+      </div>
+      <div id="project-context-kbpath-nav" class="dir-nav" hidden></div>
+    </div>
+    <div class="dialog-field">
       <label for="project-context-text">A readme/overview agents read for project background (markdown)</label>
       <textarea id="project-context-text" rows="10" placeholder="What this project is, key decisions, links, conventions…"></textarea>
     </div>
@@ -154,6 +162,14 @@
   <wa-dialog id="tag-context-dialog" label="Tag context">
     <div class="dialog-field pc-dialog-tpl">
       <button type="button" id="tag-context-tpl-btn" class="pc-template"></button>
+    </div>
+    <div class="dialog-field">
+      <label for="tag-context-kbpath">KB folder — a folder agents read for background and write notes to when a task asks for it</label>
+      <div class="workdir-row">
+        <input id="tag-context-kbpath" type="text" placeholder="/Users/you/kb/the-tag" spellcheck="false" autocapitalize="off">
+        <button type="button" id="tag-context-kbpath-browse" class="workdir-browse">Browse…</button>
+      </div>
+      <div id="tag-context-kbpath-nav" class="dir-nav" hidden></div>
     </div>
     <div class="dialog-field">
       <label for="tag-context-text">A readme/overview agents read for tag background (markdown)</label>

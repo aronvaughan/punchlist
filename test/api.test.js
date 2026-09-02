@@ -267,6 +267,36 @@ test('project working_dir: set/PATCH/return + validation (agent cd target)', asy
   assert.equal((await call('POST', '/api/v1/projects', { body: { name: 'Bad', working_dir: 42 } })).status, 400);
 });
 
+test('project kb_path: set/PATCH/return + validation, independent of working_dir (agent read/write-notes target)', async () => {
+  const { call } = makeApp();
+  const p = await call('POST', '/api/v1/projects',
+    { body: { name: 'Repo', working_dir: '/home/u/code/repo', kb_path: '/home/u/kb/repo' } });
+  assert.equal(p.status, 201);
+  assert.equal(p.json.working_dir, '/home/u/code/repo');
+  assert.equal(p.json.kb_path, '/home/u/kb/repo');
+  const u = await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { kb_path: '/home/u/kb/other' } });
+  assert.equal(u.json.kb_path, '/home/u/kb/other');
+  // working_dir untouched by a kb_path-only PATCH
+  assert.equal(u.json.working_dir, '/home/u/code/repo');
+  // clear it
+  assert.equal((await call('PATCH', `/api/v1/projects/${p.json.id}`, { body: { kb_path: null } })).json.kb_path, null);
+  // validation: non-string rejected
+  assert.equal((await call('POST', '/api/v1/projects', { body: { name: 'Bad', kb_path: 42 } })).status, 400);
+});
+
+test('tag kb_path: set/PATCH/return + validation (mirrors project kb_path)', async () => {
+  const { call } = makeApp();
+  const created = await call('POST', '/api/v1/tags', { body: { name: 'ops', kb_path: '/home/u/kb/ops' } });
+  assert.equal(created.status, 201);
+  assert.equal(created.json.kb_path, '/home/u/kb/ops');
+  const patched = await call('PATCH', `/api/v1/tags/${created.json.id}`, { body: { kb_path: '/home/u/kb/other' } });
+  assert.equal(patched.json.kb_path, '/home/u/kb/other');
+  assert.equal((await call('PATCH', `/api/v1/tags/${created.json.id}`, { body: { kb_path: null } })).json.kb_path, null);
+  assert.equal((await call('POST', '/api/v1/tags', { body: { name: 'bad-tag', kb_path: 42 } })).status, 400);
+  const listed = await call('GET', '/api/v1/tags');
+  assert.equal(listed.json.items.find(t => t.name === 'ops').kb_path, null);
+});
+
 test('instance settings: GET defaults, PATCH (admin) name/context/isolation/backup, validation', async () => {
   const { call } = makeApp();
   const g0 = await call('GET', '/api/v1/instance');

@@ -343,8 +343,10 @@ const TOOLS = [
   {
     name: 'punchlist_projects',
     description: 'List projects (id, name, archived, context — a per-project readme/overview the ' +
-      'owner maintains; read it for project background before working its tasks — and template, ' +
-      'the punchlist-templates template name the notepad points to, if any). Pass name to create ' +
+      'owner maintains; read it for project background before working its tasks — template, ' +
+      'the punchlist-templates template name the notepad points to, if any — and kb_path, an ' +
+      'absolute local folder to read for extra background AND write new info to when a task asks ' +
+      'for it; distinct from working_dir, the code checkout). Pass name to create ' +
       'a new project instead (optional parent = existing project name or id).',
     inputSchema: {
       type: 'object',
@@ -364,6 +366,7 @@ const TOOLS = [
       return text({ items: items.map(p => ({ id: p.id, name: p.name,
         ...(p.archived ? { archived: true } : {}),
         ...(p.working_dir ? { working_dir: p.working_dir } : {}),
+        ...(p.kb_path ? { kb_path: p.kb_path } : {}),
         ...(p.notes ? { context: p.notes } : {}),
         ...(p.template ? { template: p.template } : {}) })) });
     },

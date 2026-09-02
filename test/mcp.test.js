@@ -341,7 +341,7 @@ test('punchlist_projects surfaces a project\'s context notepad and template poin
   const res = await fetch(`${url}/api/v1/projects/${proj.id}`, {
     method: 'PATCH',
     headers: { authorization: `Bearer ${TOK_ARON}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ notes: '# Rocketry\nOverview for agents.', template: 'research-brief' }),
+    body: JSON.stringify({ notes: '# Rocketry\nOverview for agents.', template: 'research-brief', kb_path: '/kb/rocketry' }),
   });
   assert.equal(res.status, 200);
 
@@ -349,10 +349,12 @@ test('punchlist_projects surfaces a project\'s context notepad and template poin
   const p = projects.items.find(x => x.id === proj.id);
   assert.equal(p.context, '# Rocketry\nOverview for agents.');
   assert.equal(p.template, 'research-brief');
+  assert.equal(p.kb_path, '/kb/rocketry');
 
-  // a fresh project with neither set carries no context/template keys at all
+  // a fresh project with none set carries no context/template/kb_path keys at all
   const bare = await admin.ok('punchlist_projects', { name: 'Bare' });
   const bareItem = (await admin.ok('punchlist_projects', {})).items.find(x => x.id === bare.id);
   assert.equal('context' in bareItem, false);
   assert.equal('template' in bareItem, false);
+  assert.equal('kb_path' in bareItem, false);
 });
