@@ -59,12 +59,22 @@
 #   pl.sh project-create <name> [--notes N] [--parent P] [--domain D]
 #                                      [--template T] [--working-dir D] [--kb-path D]
 #                                      create a new project (name must be unique)
+#   pl.sh project-edit <name|id> [--notes N] [--domain D] [--template T]
+#                                      [--working-dir D] [--kb-path D]
+#                                      edit an EXISTING project's context fields
+#                                      (at least one flag required); this is how
+#                                      you set/change kb_path or working_dir
+#                                      after creation — project-create only sets
+#                                      them at creation time
 #   pl.sh tags                         list tags ([context] = has a readme)
 #   pl.sh tag <name|id>                print a tag's context notepad and kb_path
 #                                      if set (same read/write-notes concept as a
 #                                      project's kb_path) — read it AFTER instance
 #                                      + project context (root -> project -> tag
 #                                      is the injection order)
+#   pl.sh tag-edit <name|id> [--notes N] [--template T] [--kb-path D]
+#                                      edit an EXISTING tag's context fields
+#                                      (at least one flag required)
 #   pl.sh instance                     this deployment's global context + data-
 #                                      isolation policy (applies to every agent)
 #   pl.sh counts                       nav counts (inbox/today/review/delegated...)
@@ -443,6 +453,31 @@ case "$cmd" in
       + (if (.working_dir // "") != "" then "  working_dir:" + .working_dir else "" end)
       + (if (.kb_path // "") != "" then "  kb_path:" + .kb_path else "" end)' ;;
 
+  project-edit)
+    # Edit an EXISTING project's context fields — the update counterpart to
+    # project-create. Added because project-create could only set kb_path (or
+    # working_dir/notes/template) at creation time; there was no CLI verb to
+    # change them afterward (only a raw PATCH to the HTTP API, same path the
+    # web UI's context dialog uses).
+    [ $# -ge 1 ] || { echo "usage: pl.sh project-edit <name|id> [--notes N] [--domain D] [--template T] [--working-dir D] [--kb-path D]" >&2; exit 2; }
+    pid=$(resolve_project "$1"); shift
+    [ $# -ge 1 ] || { echo "usage: pl.sh project-edit <name|id> [--notes N] [--domain D] [--template T] [--working-dir D] [--kb-path D]" >&2; exit 2; }
+    body='{}'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --notes)       body=$(jq --arg v "$2" '.notes=$v' <<<"$body"); shift 2 ;;
+        --domain)      body=$(jq --arg v "$2" '.domain=$v' <<<"$body"); shift 2 ;;
+        --template)    body=$(jq --arg v "$2" '.template=$v' <<<"$body"); shift 2 ;;
+        --working-dir) body=$(jq --arg v "$2" '.working_dir=$v' <<<"$body"); shift 2 ;;
+        --kb-path)     body=$(jq --arg v "$2" '.kb_path=$v' <<<"$body"); shift 2 ;;
+        *) echo "pl: unknown flag $1" >&2; exit 2 ;;
+      esac
+    done
+    api PATCH "/projects/$(uri "$pid")" "$body"
+    printf '%s' "$RESP" | jq -r '.id + "  " + .name
+      + (if (.working_dir // "") != "" then "  working_dir:" + .working_dir else "" end)
+      + (if (.kb_path // "") != "" then "  kb_path:" + .kb_path else "" end)' ;;
+
   tags)
     api GET /tags
     printf '%s' "$RESP" | jq -r '.items[] | .id + "  #" + .name
@@ -464,6 +499,27 @@ case "$cmd" in
         + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
         + (if (.kb_path // "") != "" then "\nkb_path: " + .kb_path + "  (read for background / write notes here when asked)" else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
+
+  tag-edit)
+    # Edit an EXISTING tag's context fields — the update counterpart to `tag`
+    # (which is read-only). There was previously no CLI verb to set a tag's
+    # kb_path/notes/template at all (only a raw PATCH to the HTTP API).
+    [ $# -ge 1 ] || { echo "usage: pl.sh tag-edit <name|id> [--notes N] [--template T] [--kb-path D]" >&2; exit 2; }
+    gid=$(resolve_tag "$1") || exit 1; shift
+    [ $# -ge 1 ] || { echo "usage: pl.sh tag-edit <name|id> [--notes N] [--template T] [--kb-path D]" >&2; exit 2; }
+    body='{}'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --notes)    body=$(jq --arg v "$2" '.notes=$v' <<<"$body"); shift 2 ;;
+        --template) body=$(jq --arg v "$2" '.template=$v' <<<"$body"); shift 2 ;;
+        --kb-path)  body=$(jq --arg v "$2" '.kb_path=$v' <<<"$body"); shift 2 ;;
+        *) echo "pl: unknown flag $1" >&2; exit 2 ;;
+      esac
+    done
+    api PATCH "/tags/$(uri "$gid")" "$body"
+    printf '%s' "$RESP" | jq -r '.id + "  #" + .name
+      + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
+      + (if (.kb_path // "") != "" then "  kb_path:" + .kb_path else "" end)' ;;
 
   instance)
     # This deployment's global context + data-governance policy. Read it before

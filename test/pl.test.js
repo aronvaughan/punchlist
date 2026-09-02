@@ -186,3 +186,62 @@ test('pl.sh project-create: creates a project, visible via projects/project; rej
   assert.equal(noArgs.status, 2);
   assert.match(noArgs.stderr, /usage: pl\.sh project-create/);
 });
+
+// project-edit / tag-edit: reopened-task regression — project-create could
+// set kb_path at creation time, but there was no CLI verb to set it (or
+// notes/template/working_dir) on a project/tag that already exists; the only
+// way was a raw PATCH to the HTTP API. An owner trying to "set kb folder" on
+// an existing project via the CLI had no command to do it with.
+test('pl.sh project-edit: sets kb_path (and other context fields) on an EXISTING project', async () => {
+  const created = await pl(TOK_ARON, ['project-create', 'editable project']);
+  assert.equal(created.status, 0, created.stderr);
+  const id = created.stdout.split(/\s+/, 1)[0];
+
+  // before: no kb_path
+  const before = (await pl(TOK_ARON, ['project', id])).stdout;
+  assert.doesNotMatch(before, /kb_path:/);
+
+  const edited = await pl(TOK_ARON, ['project-edit', id, '--kb-path', '/kb/editable', '--notes', 'edited notes']);
+  assert.equal(edited.status, 0, edited.stderr);
+  assert.match(edited.stdout, /kb_path:\/kb\/editable/);
+
+  const after = (await pl(TOK_ARON, ['project', id])).stdout;
+  assert.match(after, /kb_path: \/kb\/editable/);
+  assert.match(after, /edited notes/);
+
+  // resolvable by name too, and clears working_dir with an empty string
+  const edited2 = await pl(TOK_ARON, ['project-edit', 'editable project', '--working-dir', '/tmp/wd']);
+  assert.equal(edited2.status, 0, edited2.stderr);
+  assert.match(edited2.stdout, /working_dir:\/tmp\/wd/);
+
+  // unknown project -> exit 1, no server 400
+  const unknown = await pl(TOK_ARON, ['project-edit', 'no-such-project', '--kb-path', '/x']);
+  assert.equal(unknown.status, 1);
+
+  // no flags -> usage error, no API call
+  const noFlags = await pl(TOK_ARON, ['project-edit', id]);
+  assert.equal(noFlags.status, 2);
+  assert.match(noFlags.stderr, /usage: pl\.sh project-edit/);
+});
+
+test('pl.sh tag-edit: sets kb_path (and notes/template) on an EXISTING tag', async () => {
+  await pl(TOK_ARON, ['add', 'tag-edit fixture task', '--tags', 'editme']);
+
+  const before = (await pl(TOK_ARON, ['tag', 'editme'])).stdout;
+  assert.doesNotMatch(before, /kb_path:/);
+
+  const edited = await pl(TOK_ARON, ['tag-edit', 'editme', '--kb-path', '/kb/editme', '--template', 'incident-checklist']);
+  assert.equal(edited.status, 0, edited.stderr);
+  assert.match(edited.stdout, /kb_path:\/kb\/editme/);
+
+  const after = (await pl(TOK_ARON, ['tag', 'editme'])).stdout;
+  assert.match(after, /kb_path: \/kb\/editme/);
+  assert.match(after, /\[template: incident-checklist\]/);
+
+  const unknown = await pl(TOK_ARON, ['tag-edit', 'no-such-tag', '--kb-path', '/x']);
+  assert.equal(unknown.status, 1);
+
+  const noFlags = await pl(TOK_ARON, ['tag-edit', 'editme']);
+  assert.equal(noFlags.status, 2);
+  assert.match(noFlags.stderr, /usage: pl\.sh tag-edit/);
+});
