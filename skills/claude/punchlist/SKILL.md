@@ -113,6 +113,9 @@ untrusted actors) never appear in your queue and claim/finish 403 on them
   lives (paths, commits, links), and anything the reviewer should check.
   A bare "done" is not a report. Finishing normally lands the task in the
   review lane for the owner; only `--auto-close` tasks go straight to done.
+- **Keep `comment`/`finish` text brief and bulleted**: lead with outcomes
+  and what changed, not narrated process — the owner scans these fast.
+  Substantive still means bullets over prose, not more prose.
 - **Mark steps done as you go**: if a task carries a `steps` list (from
   `show <id>`), call `step <id> <step_id>` (or `... undone` to un-check one)
   as you complete each item — don't just remember it was done and finish
