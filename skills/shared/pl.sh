@@ -49,6 +49,9 @@
 #   pl.sh projects                     list projects ([context] = has a readme)
 #   pl.sh project <name|id>            print a project's context notepad (readme/
 #                                      overview) — read it before working its tasks
+#   pl.sh project-create <name> [--notes N] [--parent P] [--domain D]
+#                                      [--template T] [--working-dir D]
+#                                      create a new project (name must be unique)
 #   pl.sh tags                         list tags ([context] = has a readme)
 #   pl.sh tag <name|id>                print a tag's context notepad — read it
 #                                      AFTER instance + project context (root ->
@@ -403,6 +406,25 @@ case "$cmd" in
         + (if (.template // "") != "" then "  [template: " + .template + "]" else "" end)
         + (if (.working_dir // "") != "" then "\nworking_dir: " + .working_dir else "" end) + "\n\n"
         + (if (.notes // "") != "" then .notes else "(no context set)" end)' ;;
+
+  project-create)
+    # Create a new project. name must be unique (server enforces 409 on dup).
+    [ $# -ge 1 ] || { echo "usage: pl.sh project-create <name> [--notes N] [--parent P] [--domain D] [--template T] [--working-dir D]" >&2; exit 2; }
+    name="$1"; shift
+    body=$(jq -n --arg n "$name" '{name: $n}')
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --notes)       body=$(jq --arg v "$2" '.notes=$v' <<<"$body"); shift 2 ;;
+        --parent)      pid=$(resolve_project "$2"); body=$(jq --arg v "$pid" '.parent_id=$v' <<<"$body"); shift 2 ;;
+        --domain)      body=$(jq --arg v "$2" '.domain=$v' <<<"$body"); shift 2 ;;
+        --template)    body=$(jq --arg v "$2" '.template=$v' <<<"$body"); shift 2 ;;
+        --working-dir) body=$(jq --arg v "$2" '.working_dir=$v' <<<"$body"); shift 2 ;;
+        *) echo "pl: unknown flag $1" >&2; exit 2 ;;
+      esac
+    done
+    api POST /projects "$body"
+    printf '%s' "$RESP" | jq -r '.id + "  " + .name
+      + (if (.working_dir // "") != "" then "  working_dir:" + .working_dir else "" end)' ;;
 
   tags)
     api GET /tags
