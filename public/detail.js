@@ -120,11 +120,15 @@ export function openAssigneePicker(task, save, render) {
 // ---- template picker (Part B): a select from GET /templates + "(none)" ----
 // Stamps task.template (a free string — the templates repo is authoritative).
 // When a task carries a template, an agent `plt show`s it for driving context.
+// Cache only on SUCCESS: a transient fetch failure (server restarting, a brief
+// network blip, or the templates repo not yet present) must not permanently
+// poison the picker to "no templates" for the rest of the page's lifetime —
+// leave the cache unset on error so the next time the picker opens it retries.
 let templatesCache = null;
 async function loadTemplates() {
   if (templatesCache) return templatesCache;
   try { templatesCache = (await api('GET', '/templates')).items || []; }
-  catch { templatesCache = []; }
+  catch { return []; }
   return templatesCache;
 }
 
