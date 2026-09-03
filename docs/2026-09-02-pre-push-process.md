@@ -51,11 +51,22 @@ dist-tag: `1.0.1-rc.1` published `--tag next` never becomes `latest`. Promote
 later with `npm dist-tag add @aronvaughan/punchlist@1.0.1 latest`. If the push
 doesn't change the version, skip this step.
 
-## Step 3 — Push
+## Step 3 — Push & release
 
 Ask-gated. Only after a clean scan, an approved review, and (for a version
-bump) written release notes. Never force-push a shared branch. Publish a
-candidate under `--tag next` so `latest` is untouched.
+bump) written release notes. Push commits, then cut the release so the **git
+tag, the GitHub Release, and the npm version are all the same string**:
+
+```bash
+git tag v$(node -p "require('./package.json').version")   # e.g. v1.0.1-rc.1
+git push origin --tags
+gh release create v<version> -F docs/releases/v<version>.md \
+   --title "punchlist v<version>" [--prerelease]           # --prerelease for a candidate
+npm publish [--tag next]                                    # --tag next for a candidate; keeps latest on stable
+```
+
+A git tag alone is not a GitHub Release — `gh release create` is what
+publishes the notes to the Releases page. Never force-push a shared branch.
 
 ## Run it as a workflow
 
