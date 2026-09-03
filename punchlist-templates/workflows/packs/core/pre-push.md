@@ -26,7 +26,7 @@ steps:
     assignee: owner
     title: "Push (after clean scan + approved review + notes)"
     needs: [notes]
-    notes: "Ask-gated. Only after the scan is clean, the review is approved, and (for a version bump) the release notes are written. Never force-push shared branches. For a candidate, publish under --tag next so latest is untouched."
+    notes: "Ask-gated. Only after a clean scan, an approved review, and (for a version bump) written notes. Push commits, then cut the release: git tag v<version> MATCHING package.json (== the npm version), `gh release create v<version> -F docs/releases/v<version>.md` (add --prerelease for a candidate), and `npm publish` (--tag next for a candidate so latest is untouched). The git tag, GitHub Release, and npm version must all be the same string. Never force-push shared branches."
 
 The pre-push process for a public repo, as four gated steps: **scan** for
 leaked secrets/PII across the full history, **review** the exact diff a push
