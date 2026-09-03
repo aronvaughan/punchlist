@@ -82,8 +82,17 @@ SB is an **optional capability**, provisioned like KiCad is "declared but option
   the command is overridable via `SILVERBULLET_CMD`.
 - **Service unit:** reuse the existing `src/service.js` abstraction — systemd user
   unit on Linux, launchd LaunchAgent on macOS, auto-detected by `process.platform`.
-- **Space root:** `data/kb` — **not** all of `data/`, so the sqlite db, `media/`,
-  `backup/`, `govern/`, and `.env` stay out of SB's index.
+- **Space root:** `data/kb` by default — **not** all of `data/`, so the sqlite
+  db, `media/`, `backup/`, `govern/`, and `.env` stay out of SB's index.
+  Configurable via the instance `kb_path` setting (same field already used
+  for the "where's my kb" advisory context injected into agent tasks) — set
+  it to point SB's space at an existing vault elsewhere. `bin/punchlist`'s
+  `resolveKbSpaceDir()` (`src/service.js`) resolves the effective root:
+  `kb_path` if set, else `data/kb`. `install-silverbullet`, `expose-kb`, and
+  `doctor` all read it the same way, so the port/spec/backup never drift out
+  of sync with each other. Changing `kb_path` does not itself remount a
+  running SB service — re-run `punchlist install-silverbullet` (which
+  regenerates the wrapper/unit and reloads it) to pick up a new location.
 - **Bind:** `127.0.0.1:<sbport>`; `tailscale serve` config (or a documented
   command) for tailnet exposure; SB password from a gitignored secret.
 - **Security baseline:** a host port-baseline monitor (if present) flags SB's new
@@ -106,8 +115,25 @@ SB is an **optional capability**, provisioned like KiCad is "declared but option
 
 ## Backup
 
-Already covered — restic on `data/` picks up SB's files for free. SB is not
-git-aware; git-tracking of note edits (if ever wanted) is a separate manual step.
+With the default space root (`data/kb`), already covered — restic on `data/`
+picks up SB's files for free, and `punchlist backup`'s "repo" mode explicitly
+copies it (scrubbed) alongside `skills/templates/govern`. SB is not
+git-aware; git-tracking of note edits (if ever wanted) is a separate manual
+step.
+
+If `kb_path` is set to a directory **outside** `data/` (see "Space root"
+above), that free coverage no longer applies by construction:
+
+- `punchlist backup`'s "repo" mode still picks it up correctly — it now
+  resolves the kb source via the same `resolveKbSpaceDir()` used at install
+  time, not a hardcoded `data/kb`.
+- A "snapshot"-mode (restic-over-`data/`) setup does **not** automatically
+  cover a `kb_path` outside `data/`; `punchlist doctor` and
+  `install-silverbullet` both print a warning naming the configured path so
+  the operator can add it to whatever backs up that location (e.g. add the
+  path to `nightly-restic-backup.sh`'s argument list, or move/symlink the
+  vault under `data/`). punchlist does not assume or hardcode any specific
+  external backup script's location — it only flags the gap.
 
 ## Disposition of the native KB work
 
