@@ -103,7 +103,7 @@ test('auth: 401 without/with bad token; health is open', async () => {
   const h = await call('GET', '/api/v1/health', { token: null });
   assert.equal(h.status, 200);
   assert.equal(h.json.ok, true);
-  assert.match(h.json.version, /^\d+\.\d+\.\d+$/); // rail footer reads this
+  assert.match(h.json.version, /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/); // rail footer reads this; semver incl. prereleases (1.0.1-rc.1)
 });
 
 test('per-token created_by is server-set; client-supplied created_by rejected', async () => {

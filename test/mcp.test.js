@@ -116,7 +116,7 @@ test('initialize handshake reports the punchlist server', async () => {
     PUNCHLIST_ENV_FILE: '', HERMES_HOME: '' });
   const res = await extra.init();
   assert.equal(res.result.serverInfo.name, 'punchlist');
-  assert.match(res.result.serverInfo.version, /^\d+\.\d+\.\d+$/);
+  assert.match(res.result.serverInfo.version, /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/); // semver, incl. prereleases (e.g. 1.0.1-rc.1)
   assert.ok(res.result.capabilities.tools);
   await extra.close();
 });
