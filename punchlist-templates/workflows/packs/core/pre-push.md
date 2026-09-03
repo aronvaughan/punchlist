@@ -16,17 +16,24 @@ steps:
     title: "Generate + publish the pre-push review"
     needs: [scan]
     notes: "Run av-prepush-review: build the page from git, hand-write the summary + a worked example, publish, and post the link here."
+  - id: notes
+    assignee: owner
+    template: release-notes
+    title: "Release notes (if this push cuts a new version)"
+    needs: [review]
+    notes: "If the push bumps the version: draft docs/releases/vX.Y.Z.md with av-release-notes from the previous tag, fill highlights/breaking/known-issues, bump package.json to match, and link it in docs/releases/README.md. If no version change, mark this step done immediately."
   - id: push
     assignee: owner
-    title: "Push (after clean scan + approved review)"
-    needs: [review]
-    notes: "Ask-gated. Only after the scan is clean and the review is approved. Never force-push shared branches."
+    title: "Push (after clean scan + approved review + notes)"
+    needs: [notes]
+    notes: "Ask-gated. Only after the scan is clean, the review is approved, and (for a version bump) the release notes are written. Never force-push shared branches. For a candidate, publish under --tag next so latest is untouched."
 
-The pre-push process for a public repo, as three gated steps: **scan** for
+The pre-push process for a public repo, as four gated steps: **scan** for
 leaked secrets/PII across the full history, **review** the exact diff a push
-would send (published as a shareable page), then **push**. Each step needs
-the one before it; the push waits on an approved review, which waits on a
-clean scan. Launch with `plt launch pre-push --input repo=<name> base=<ref>`.
+would send (published as a shareable page), draft **release notes** if the
+push cuts a new version, then **push**. Each step needs the one before it; the
+push waits on notes, which wait on an approved review, which waits on a clean
+scan. Launch with `plt launch pre-push --input repo=<name> base=<ref>`.
 The diagram is generated — run `plt render pre-push` after editing steps;
 never edit it by hand.
 
@@ -35,8 +42,10 @@ never edit it by hand.
 flowchart TD
   scan["scan (owner)"]
   review["review (owner)"]
+  notes["notes (owner)"]
   push["push (owner)"]
   scan --> review
-  review --> push
+  review --> notes
+  notes --> push
 ```
 <!-- /plt:mermaid -->

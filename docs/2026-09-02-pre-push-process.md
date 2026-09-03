@@ -38,10 +38,24 @@ Builds one shareable page of everything the push would send (`git diff BASE`
 example, and the full per-file diff. Published as a private artifact; the
 link is the deliverable.
 
+## Step 2.5 — Release notes (only if the push cuts a version)
+
+Skill: **`av-release-notes`** (template: `release-notes`).
+
+If the push bumps the version, draft `docs/releases/vX.Y.Z.md` from the
+previous tag, fill the highlights / breaking-changes / known-issues slots,
+bump `package.json` to match, and link it in `docs/releases/README.md`.
+
+**npm versioning — no snapshots.** A *candidate* is a SemVer prerelease on a
+dist-tag: `1.0.1-rc.1` published `--tag next` never becomes `latest`. Promote
+later with `npm dist-tag add @aronvaughan/punchlist@1.0.1 latest`. If the push
+doesn't change the version, skip this step.
+
 ## Step 3 — Push
 
-Ask-gated. Only after a clean scan and an approved review. Never force-push a
-shared branch.
+Ask-gated. Only after a clean scan, an approved review, and (for a version
+bump) written release notes. Never force-push a shared branch. Publish a
+candidate under `--tag next` so `latest` is untouched.
 
 ## Run it as a workflow
 

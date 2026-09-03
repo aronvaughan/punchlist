@@ -38,6 +38,19 @@
       "path": "templates/packs/core/purchase-decision.md"
     },
     {
+      "name": "release-notes",
+      "kind": "template",
+      "tags": [
+        "release",
+        "changelog",
+        "docs",
+        "versioning"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/release-notes.md"
+    },
+    {
       "name": "repo-leak-scan",
       "kind": "template",
       "tags": [
