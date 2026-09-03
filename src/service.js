@@ -188,14 +188,26 @@ function silverbulletLaunchdPlist({ wrapperPath, logPath }) {
 `;
 }
 
+// Resolve SilverBullet's space root directory. Defaults to `<dataDir>/kb`
+// (the private plane, out of the sqlite db/media/backup/govern/.env
+// boundary — see docs/2026-08-31-kb-silverbullet.md), but is overridable via
+// the instance `kb_path` setting so an operator can point SB at a KB that
+// lives elsewhere (e.g. an existing vault outside this instance's data dir).
+// Pure — the caller is responsible for reading `kb_path` out of the db.
+export function resolveKbSpaceDir(dataDir, kbPathSetting) {
+  const trimmed = (kbPathSetting || '').trim();
+  return trimmed || join(dataDir, 'kb');
+}
+
 // Resolve the full install spec for the optional SilverBullet KB service:
 // where the wrapper + unit go, their contents, and the idempotent
 // reload/start commands the CLI should run. Same spec shape as
 // serviceSpec() plus `wrapperPath`/`wrapperContents` for the secret-free
-// unit's ExecStart target. `spaceDir` is expected to be `<dataDir>/kb` —
-// never the whole dataDir (keeps the sqlite db, media/, backup/, govern/,
-// and .env out of SB's index). `host` MUST stay loopback (127.0.0.1);
-// tailnet exposure is `tailscale serve`, a later increment.
+// unit's ExecStart target. `spaceDir` defaults to `<dataDir>/kb` (see
+// resolveKbSpaceDir) but may be any configured directory — never the whole
+// dataDir itself (keeps the sqlite db, media/, backup/, govern/, and .env
+// out of SB's index). `host` MUST stay loopback (127.0.0.1); tailnet
+// exposure is `tailscale serve`, a later increment.
 export function silverbulletSpec(platform, {
   repo, spaceDir, home, port = 3001, host = '127.0.0.1',
   cmd = process.env.SILVERBULLET_CMD || 'silverbullet',

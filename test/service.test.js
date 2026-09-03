@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   serviceSpec, serviceRestartCmd, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper,
-  silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath, SILVERBULLET_VERSION,
+  silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath, SILVERBULLET_VERSION, resolveKbSpaceDir,
 } from '../src/service.js';
 
 const base = { repo: '/home/u/app', dataDir: '/home/u/app/data', node: '/usr/bin/node', home: '/home/u' };
@@ -53,6 +53,19 @@ test('systemdUnit / launchdPlist are usable directly (both carry the data dir)',
   assert.match(systemdUnit({ node: 'N', serverJs: 'S', repo: 'R', dataDir: 'D' }), /Environment=PUNCHLIST_DATA=D/);
   assert.match(launchdPlist({ node: 'N', serverJs: 'S', repo: 'R', dataDir: 'D', logPath: 'L' }),
     /<key>PUNCHLIST_DATA<\/key><string>D<\/string>/);
+});
+
+// ---- resolveKbSpaceDir: configurable SB space root (kb_path setting) ----
+
+test('resolveKbSpaceDir: defaults to <dataDir>/kb when kb_path is unset/empty', () => {
+  assert.equal(resolveKbSpaceDir('/home/u/app/data', undefined), '/home/u/app/data/kb');
+  assert.equal(resolveKbSpaceDir('/home/u/app/data', ''), '/home/u/app/data/kb');
+  assert.equal(resolveKbSpaceDir('/home/u/app/data', '   '), '/home/u/app/data/kb');
+});
+
+test('resolveKbSpaceDir: honors a configured kb_path, trimmed', () => {
+  assert.equal(resolveKbSpaceDir('/home/u/app/data', '/mnt/vault/kb'), '/mnt/vault/kb');
+  assert.equal(resolveKbSpaceDir('/home/u/app/data', '  /mnt/vault/kb  '), '/mnt/vault/kb');
 });
 
 // ---- silverbulletSpec: the optional, second KB service ----

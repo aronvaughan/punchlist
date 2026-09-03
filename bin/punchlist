@@ -27,7 +27,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   serviceSpec, serviceRestartCmd, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
-  SILVERBULLET_VERSION,
+  SILVERBULLET_VERSION, resolveKbSpaceDir,
 } from '../src/service.js';
 import { tailscaleServeSpec } from '../src/tailscale.js';
 
@@ -37,6 +37,23 @@ function run(cmd, args) {
   const child = spawn(cmd, args, { stdio: 'inherit' });
   child.on('exit', (code, signal) => process.exit(signal ? 1 : code ?? 1));
   child.on('error', err => { console.error(`punchlist: ${err.message}`); process.exit(1); });
+}
+
+// Read a single instance setting straight out of the sqlite settings table,
+// bypassing the running server (these CLI commands may run before the
+// service is up, e.g. during install). Tolerant of a missing db (first
+// install, before `punchlist serve` has ever run) — returns ''.
+function readInstanceSetting(dataDir, key) {
+  const dbFile = join(dataDir, 'punchlist.db');
+  if (!existsSync(dbFile)) return '';
+  const d = new DatabaseSync(dbFile, { readOnly: true });
+  try {
+    return d.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? '';
+  } catch {
+    return ''; // e.g. settings table not migrated yet
+  } finally {
+    d.close();
+  }
 }
 
 function parseFlags(argv, allowed) {
@@ -276,7 +293,7 @@ async function installSilverbullet(argv) {
   }
   const home = homedir();
   const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
-  const spaceDir = join(dataDir, 'kb');
+  const spaceDir = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
   const resolved = resolveSilverbulletCmd(home, version);
   const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home, cmd: resolved.cmd });
 
@@ -321,12 +338,18 @@ async function installSilverbullet(argv) {
   if (readdirSync(spaceDir).length === 0) {
     writeFileSync(join(spaceDir, 'index.md'),
       `# Knowledge base\n\n` +
-      `This is the SilverBullet space for this punchlist instance. It lives in ` +
-      `\`data/kb\` (the private plane) and is served read-write here, read-only in ` +
-      `the app's Instance dialog.\n\n` +
+      `This is the SilverBullet space for this punchlist instance. It lives at ` +
+      `\`${spaceDir}\` and is served read-write here, read-only in the app's ` +
+      `Instance dialog.\n\n` +
       `Create a page with \`[[Some Page]]\` and click it. Everything you write ` +
-      `stays on this machine and is covered by the instance backup.\n`);
+      `stays on this machine and is covered by the instance backup ` +
+      `(\`punchlist backup\`) as long as this directory is included in it.\n`);
     console.log(`seeded starter -> ${join(spaceDir, 'index.md')}`);
+  }
+  if (spaceDir !== join(dataDir, 'kb')) {
+    console.log(`note: SB space root is configured via kb_path -> ${spaceDir} (outside the default data/kb). ` +
+      `Confirm this path is covered by your backup (punchlist backup only copies it in "repo" mode; ` +
+      `if you rely on restic over data/, make sure this path is also included).`);
   }
 
   if (!existsSync(spec.envFile)) {
@@ -366,7 +389,8 @@ async function installSilverbullet(argv) {
 // install-silverbullet actually wires up.
 function exposeKbSpec(platform = process.platform) {
   const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
-  const sb = silverbulletSpec(platform, { repo: ROOT, spaceDir: join(dataDir, 'kb'), home: homedir() });
+  const spaceDir = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
+  const sb = silverbulletSpec(platform, { repo: ROOT, spaceDir, home: homedir() });
   return tailscaleServeSpec({ port: sb.port });
 }
 
@@ -480,11 +504,15 @@ async function doctor() {
   if (process.env.SILVERBULLET_CMD) ok('SB binary (SILVERBULLET_CMD)', process.env.SILVERBULLET_CMD);
   else if (existsSync(sbPinnedPath)) ok(`SB binary pinned ${SILVERBULLET_VERSION}`, sbPinnedPath);
   else warn('SB binary not installed', 'run: punchlist install-silverbullet');
-  const sbSpec = silverbulletSpec(platform, { repo: ROOT, spaceDir: join(dataDir, 'kb'), home });
+  const kbSpaceDir = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
+  const sbSpec = silverbulletSpec(platform, { repo: ROOT, spaceDir: kbSpaceDir, home });
   existsSync(sbSpec.path)
     ? ok(`${sbSpec.kind} unit installed`, sbSpec.path)
     : warn(`${sbSpec.kind} unit not installed`, 'optional — run: punchlist install-silverbullet');
   warn('tailnet exposure', 'optional — run: punchlist expose-kb (wires `tailscale serve`)');
+  if (kbSpaceDir !== join(dataDir, 'kb')) {
+    warn('SB space root is a configured kb_path outside data/kb', `${kbSpaceDir} — confirm it's covered by your backup`);
+  }
 
   console.log('\nHealth:');
   try {
@@ -539,14 +567,19 @@ function backup(argv) {
   if (wantRepo) {
     if (!repo) { console.error('backup: mode includes "repo" but backup_repo is unset (set it in the Instance dialog)'); process.exit(1); }
     if (!existsSync(repo)) { console.error(`backup: backup_repo does not exist: ${repo}`); process.exit(1); }
-    console.log(`backup: repo → ${repo} (scrubbed: snapshot db + data/{skills,templates,kb,govern}; NO .env/media)`);
+    const kbSrc = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
+    console.log(`backup: repo → ${repo} (scrubbed: snapshot db + data/{skills,templates,govern} + kb ` +
+      `[${kbSrc}]; NO .env/media)`);
     if (dry) return;
     spawnSync('bash', [snapSh], { stdio: 'inherit', env }); // fresh WAL-safe snapshot
     copyFileSync(join(dataDir, 'backup', 'punchlist-snapshot.db'), join(repo, 'punchlist-snapshot.db'));
-    for (const d of ['skills', 'templates', 'kb', 'govern']) {
+    for (const d of ['skills', 'templates', 'govern']) {
       const src = join(dataDir, d);
       if (existsSync(src)) cpSync(src, join(repo, d), { recursive: true });
     }
+    // kb (SB's space root) is handled separately — it's configurable via the
+    // instance kb_path setting and may live outside dataDir entirely.
+    if (existsSync(kbSrc)) cpSync(kbSrc, join(repo, 'kb'), { recursive: true });
     const status = spawnSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).stdout || '';
     if (!status.trim()) { console.log('backup: repo already up to date — nothing to commit'); return; }
     sh('git', ['add', '-A'], repo);
