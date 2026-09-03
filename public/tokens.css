@@ -1793,6 +1793,28 @@ wa-button[variant="brand"]::part(base) {
 .notes-preview { border-top: 1px solid var(--line); padding-top: 8px; font-size: 14px; }
 .notes-preview a { color: var(--accent); }
 .notes-preview pre { background: var(--chip-bg); padding: 8px; border-radius: 8px; overflow-x: auto; }
+/* long report/question bodies (review-card, question-card): collapsed to a
+   fixed height with a fade-out + caret toggle to expand, same caret-rotate
+   convention as the Timeline section header (.tl-toggle/.tl-caret) so long
+   agent reports/questions don't force a wall of scrolling by default. */
+.content-collapsible.collapsed .report-body {
+  max-height: 160px;
+  overflow: hidden;
+  position: relative;
+}
+.content-collapsible.collapsed .report-body::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--chip-bg));
+}
+.content-toggle {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  border: none; background: none; color: var(--ink-soft);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 0;
+}
+.content-toggle:hover { color: var(--accent); }
+.content-caret { color: inherit; flex: none; transition: transform .15s ease; }
+.content-collapsible.collapsed .content-caret { transform: rotate(-90deg); } /* chevron points right when collapsed */
 .detail-actions { display: flex; gap: 10px; margin-top: 6px; }
 .recur-grid { display: flex; flex-direction: column; gap: 8px; }
 .weekday-row { display: flex; gap: 4px; flex-wrap: wrap; }

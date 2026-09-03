@@ -1197,11 +1197,39 @@ document.getElementById('review-reopen').addEventListener('click', () => {
   if (reviewTask) reopenTask(reviewTask.id);
 });
 
+// Long report/question bodies (review-card, question-card, and the same cards
+// reused in the Agents "Waiting on you" section) can run to a screenful of
+// scrolling. Short content renders as-is; content past LONG_CONTENT_CHARS
+// (measured on the rendered text, not markup, so it's layout-independent —
+// no need to wait for the element to be attached to the document) gets
+// wrapped collapsed with a caret toggle to expand/contract, mirroring the
+// Timeline section's caret convention (detail.js .tl-toggle/.tl-caret).
+const LONG_CONTENT_CHARS = 320;
+function collapsibleBody(html) {
+  const body = el('div', 'report-body notes-preview');
+  body.innerHTML = html; // caller has already escaped via mdToHtml
+  const text = (body.textContent || '').trim();
+  if (text.length <= LONG_CONTENT_CHARS) return body;
+  const wrap = el('div', 'content-collapsible collapsed');
+  const label = el('span', 'content-toggle-label', 'Show more');
+  const toggle = el('button', 'content-toggle');
+  toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.append(icon('caret-down', { size: 14, cls: 'content-caret' }), label);
+  toggle.addEventListener('click', () => {
+    wrap.classList.toggle('collapsed');
+    const open = !wrap.classList.contains('collapsed');
+    toggle.setAttribute('aria-expanded', String(open));
+    label.textContent = open ? 'Show less' : 'Show more';
+  });
+  wrap.append(body, toggle);
+  return wrap;
+}
+
 // report card under a review row: rendered report + Approve / Reopen
 function reviewCard(task) {
   const card = el('div', 'review-card');
-  const body = el('div', 'report-body notes-preview');
-  body.innerHTML = mdToHtml(task.report || '(no report)'); // escaped by md.js
+  const body = collapsibleBody(mdToHtml(task.report || '(no report)')); // escaped by md.js
   const actions = el('div', 'review-actions');
   const approve = document.createElement('wa-button');
   approve.setAttribute('variant', 'brand');
@@ -1228,8 +1256,7 @@ async function answerTask(id, answer) {
 // report cards) + an inline answer box. Used in Needs input and Agents views.
 function questionCard(task) {
   const card = el('div', 'question-card');
-  const body = el('div', 'report-body notes-preview');
-  body.innerHTML = mdToHtml(task.question || '(no question)'); // escaped by md.js
+  const body = collapsibleBody(mdToHtml(task.question || '(no question)')); // escaped by md.js
   card.append(body);
   const box = el('textarea', 'answer-input');
   box.placeholder = 'Answer…';
