@@ -13,6 +13,19 @@
       "path": "templates/packs/core/coding-task.md"
     },
     {
+      "name": "health-report",
+      "kind": "template",
+      "tags": [
+        "health",
+        "ops",
+        "monitoring",
+        "doctor"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/health-report.md"
+    },
+    {
       "name": "pre-push-review",
       "kind": "template",
       "tags": [
