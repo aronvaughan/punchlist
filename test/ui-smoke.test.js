@@ -800,3 +800,35 @@ test('template picker: loadTemplates() does not permanently cache a fetch failur
   assert.match(fn, /catch\s*\{\s*return \[\];\s*\}/); // failure path must NOT assign templatesCache
   assert.doesNotMatch(fn, /catch\s*\{\s*templatesCache\s*=\s*\[\];?\s*\}/); // the old poisoning bug
 });
+
+// Long report/question bodies force a lot of scrolling in Review, Human (needs-input)
+// and Agents ("Waiting on you") — owner asked for an expand/contract arrow. Both
+// review-card (Review view report + Agents view) and question-card (Human view +
+// Agents view) share one collapsibleBody helper, so fixing it once covers all three.
+test('review/question content: collapsible with a caret toggle for long bodies (Review, Human, Agents views)', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  assert.match(views, /const LONG_CONTENT_CHARS = 320/);
+  assert.match(views, /function collapsibleBody\(html\)/);
+  const fn = views.slice(views.indexOf('function collapsibleBody'), views.indexOf('function collapsibleBody') + 900);
+  // measured on rendered TEXT (layout-independent), not markup length
+  assert.match(fn, /body\.textContent/);
+  // short content returns the bare body — no toggle chrome for a one-liner
+  assert.match(fn, /if \(text\.length <= LONG_CONTENT_CHARS\) return body;/);
+  // default collapsed, caret icon toggles open/closed + aria-expanded + label text
+  assert.match(fn, /'content-collapsible collapsed'/);
+  assert.match(fn, /icon\('caret-down', \{ size: 14, cls: 'content-caret' \}\)/);
+  assert.match(fn, /toggle\.setAttribute\('aria-expanded', String\(open\)\)/);
+  assert.match(fn, /label\.textContent = open \? 'Show less' : 'Show more'/);
+  // both reviewCard (Review view + Agents "Waiting on you") and questionCard
+  // (Human view + Agents "Waiting on you") route through the shared helper
+  assert.match(views, /function reviewCard\(task\) \{\s*const card = el\('div', 'review-card'\);\s*const body = collapsibleBody\(/);
+  assert.match(views, /function questionCard\(task\) \{\s*const card = el\('div', 'question-card'\);\s*const body = collapsibleBody\(/);
+  // CSS: collapsed state clamps height with a fade-out; caret rotates like the
+  // Timeline section's existing caret convention (.tl-toggle/.tl-caret)
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.content-collapsible\.collapsed \.report-body\s*\{[^}]*max-height:\s*160px/);
+  assert.match(css, /\.content-collapsible\.collapsed \.report-body::after\s*\{/);
+  assert.match(css, /\.content-toggle\s*\{/);
+  assert.match(css, /\.content-collapsible\.collapsed \.content-caret\s*\{[^}]*rotate\(-90deg\)/);
+});
