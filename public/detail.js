@@ -815,6 +815,10 @@ export function stepsEditorFor(task, { onChange } = {}) {
   wrap.append(el('label', null, 'Steps'));
   const ul = el('ul', 'steps-list');
 
+  // step text is a textarea (not a single-line input) so long titles wrap
+  // instead of being clipped/scrolled off; this grows it to fit its content.
+  const autosize = ta => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight}px`; };
+
   const stepRow = step => {
     const li = el('li', 'step-row');
     li.dataset.sid = step.id;
@@ -831,18 +835,33 @@ export function stepsEditorFor(task, { onChange } = {}) {
         notify();
       } catch (e) { check.classList.toggle('checked'); toast(`Save failed: ${e.message}`); }
     });
-    const name = el('input');
-    name.type = 'text';
+    const name = el('textarea', 'step-name');
+    name.rows = 1;
     name.value = step.title;
-    name.addEventListener('change', async () => {
+    const save = async () => {
       if (!name.value.trim()) { name.value = step.title; return; }
       const title = name.value.trim();
+      if (title === step.title) return;
       try {
         await api('PATCH', `/tasks/${task.id}/steps/${step.id}`, { title });
         step.title = title;
         notify();
       } catch (e) { toast(`Save failed: ${e.message}`); }
+    };
+    name.addEventListener('input', () => autosize(name));
+    name.addEventListener('change', save);
+    // Enter commits the edit and opens a fresh step right after this one —
+    // smooth successive entry, same idea as the bottom "Add a step…" input but
+    // inserted in place instead of appended to the end. Shift+Enter still
+    // inserts a literal newline in the title.
+    name.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      save();
+      addStepAfter(li);
     });
+    queueMicrotask(() => autosize(name)); // needs layout, so runs once mounted
     const del = el('button', 'del');
     del.append(icon('x', { size: 14 }));
     del.setAttribute('aria-label', 'Delete step');
@@ -861,6 +880,65 @@ export function stepsEditorFor(task, { onChange } = {}) {
   for (const s of task.steps) ul.append(stepRow(s));
 
   const ranks = new Map(task.steps.map(s => [s.id, s.rank]));
+
+  // Inserts a blank, not-yet-persisted step row right after `afterLi` and
+  // focuses it. It's only POSTed once the user actually types something and
+  // commits (Enter or blur); an empty one is discarded. Committing with Enter
+  // chains into another fresh row, so a burst of steps can be typed in one go.
+  const addStepAfter = afterLi => {
+    const li = el('li', 'step-row pending');
+    const check = el('button', 'check');
+    check.disabled = true;
+    check.setAttribute('aria-label', 'Toggle step');
+    const name = el('textarea', 'step-name');
+    name.rows = 1;
+    const del = el('button', 'del');
+    del.append(icon('x', { size: 14 }));
+    del.setAttribute('aria-label', 'Delete step');
+    del.addEventListener('click', () => li.remove());
+    li.append(check, name, del);
+    afterLi.after(li);
+    name.focus();
+
+    let settled = false;
+    const commit = async chain => {
+      if (settled) return;
+      const title = name.value.trim();
+      if (!title) { settled = true; li.remove(); return; }
+      settled = true;
+      try {
+        const created = await api('POST', `/tasks/${task.id}/steps`, { title });
+        const prevId = afterLi.dataset.sid;
+        const nextLi = li.nextElementSibling;
+        const nextId = nextLi && !nextLi.classList.contains('pending') ? nextLi.dataset.sid : null;
+        const p = prevId ? ranks.get(prevId) : null;
+        const n = nextId ? ranks.get(nextId) : null;
+        const rank = p != null && n != null ? (p + n) / 2 : p != null ? p + 1024 : n != null ? n - 1024 : null;
+        const step = rank != null && rank !== created.rank
+          ? await api('PATCH', `/tasks/${task.id}/steps/${created.id}`, { rank })
+          : created;
+        ranks.set(step.id, step.rank);
+        const i = prevId ? task.steps.findIndex(s => s.id === prevId) : -1;
+        task.steps.splice(i + 1, 0, step); // write through to the live task
+        task.steps.sort((a, b) => a.rank - b.rank);
+        const realLi = stepRow(step);
+        li.replaceWith(realLi);
+        notify();
+        if (chain) addStepAfter(realLi);
+      } catch (e) {
+        toast(`Add failed: ${e.message}`);
+        li.remove();
+      }
+    };
+    name.addEventListener('input', () => autosize(name));
+    name.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      commit(true);
+    });
+    name.addEventListener('blur', () => commit(false));
+  };
   new Sortable(ul, {
     animation: 150,
     delay: 250,           // press-and-hold to reorder; a quick tap focuses the field

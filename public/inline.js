@@ -485,16 +485,32 @@ function draftStepsEditor(task) {
   const wrap = el('div');
   wrap.append(el('label', null, 'Steps'));
   const ul = el('ul', 'steps-list');
-  const render = () => {
+  const autosize = ta => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight}px`; };
+  // focusIndex lets a re-render (from Enter/delete) land focus back on the
+  // right row instead of losing it every time the list rebuilds.
+  const render = (focusIndex = -1) => {
     ul.replaceChildren();
     task.steps.forEach((title, i) => {
       const li = el('li', 'step-row');
-      const name = el('input');
-      name.type = 'text';
+      const name = el('textarea', 'step-name');
+      name.rows = 1;
       name.value = title;
+      name.addEventListener('input', () => autosize(name));
       name.addEventListener('change', () => {
         if (name.value.trim()) task.steps[i] = name.value.trim();
         else { task.steps.splice(i, 1); render(); }
+      });
+      // Enter commits this line and opens a fresh, blank step right after it —
+      // smooth successive entry, mirroring the persisted step editor.
+      name.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const title = name.value.trim();
+        if (title) task.steps[i] = title;
+        else { task.steps.splice(i, 1); render(); return; }
+        task.steps.splice(i + 1, 0, '');
+        render(i + 1);
       });
       const del = el('button', 'del');
       del.append(icon('x', { size: 14 }));
@@ -502,6 +518,8 @@ function draftStepsEditor(task) {
       del.addEventListener('click', () => { task.steps.splice(i, 1); render(); });
       li.append(name, del);
       ul.append(li);
+      queueMicrotask(() => autosize(name));
+      if (i === focusIndex) queueMicrotask(() => name.focus());
     });
   };
   render();
