@@ -51,6 +51,7 @@ export function createDispatcher({ db, spawn, now = () => Date.now() }) {
     if (executing(agent) >= max) return { spawned: false, reason: 'watermark' };
     if (claimable(agent) <= 0) return { spawned: false, reason: 'no-work' };
     const child = spawn(spec.cmd, agent);
+    if (!child) return { spawned: false, reason: 'spawn-failed' };  // e.g. cmd rejected by realSpawn — never wedge 'live'
     live.set(agent, { pid: child?.pid, startedAt: now() });
     if (child && typeof child.on === 'function') child.on('exit', () => live.delete(agent));
     return { spawned: true, pid: child?.pid, reason: 'spawned' };

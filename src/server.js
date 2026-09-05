@@ -3,11 +3,14 @@
 // stays the only runtime dependency.
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, mkdirSync, statSync, renameSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
+import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { open } from './db.js';
 import { buildApp } from './api.js';
+import { createDispatcher } from './dispatch.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
@@ -99,6 +102,25 @@ function toRequest(req) {
   return new Request(url, init);
 }
 
+// Dispatch spawn (Increment 3). The dispatcher decides WHEN; this decides HOW to
+// launch an agent's headless orchestrator. The command is operator config
+// (settings.dispatch_agents[agent].cmd) — it MUST be an absolute path to an
+// existing, reviewed script; never shell-interpolated, and the only task-derived
+// value is the agent name (argv + env). Returns null (→ dispatcher no-ops) on a
+// bad cmd, so a misconfig can never wedge or shell-inject.
+export function realSpawn(cmd, agent) {
+  if (!cmd || !isAbsolute(cmd) || !existsSync(cmd)) {
+    console.error(`punchlist dispatch: refusing to spawn "${agent}" — cmd must be an absolute path to an existing script (got: ${cmd})`);
+    return null;
+  }
+  const child = spawn(cmd, [agent], {
+    detached: true, stdio: 'ignore',
+    env: { ...process.env, PUNCHLIST_DISPATCH_AGENT: agent },
+  });
+  child.unref();
+  return child;
+}
+
 export function serve(app, { host, port }) {
   const server = createServer(async (req, res) => {
     try {
@@ -136,8 +158,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error(`punchlist: FATAL: ${err.name}: ${err.message}`);
     process.exit(1);
   }
+  const bus = new EventEmitter();
   const app = buildApp({ db, tokens, admin, mediaDir: MEDIA_DIR,
-    untrusted: parseUntrusted(process.env.PUNCHLIST_UNTRUSTED_ACTORS) });
+    untrusted: parseUntrusted(process.env.PUNCHLIST_UNTRUSTED_ACTORS), bus });
+  // Event-driven dispatch (docs/2026-09-03-event-dispatch.md). Gated by
+  // settings.dispatch_enabled — a NO-OP until switched on, so this changes
+  // nothing until Increment 4 flips the flag. onChange reacts to every task
+  // mutation; the reconcile timer is the crash/missed-event safety net.
+  const dispatcher = createDispatcher({ db, spawn: realSpawn });
+  bus.on('task.changed', e => { try { dispatcher.onChange(e.assignee); } catch (err) { console.error(`dispatch onChange: ${err.message}`); } });
+  const reconcileMs = Number(db.prepare("SELECT value FROM settings WHERE key='reconcile_interval_ms'").get()?.value) || 300000;
+  setInterval(() => { try { dispatcher.reconcile(); } catch (err) { console.error(`dispatch reconcile: ${err.message}`); } }, reconcileMs).unref();
   const server = serve(app, { host: HOST, port: PORT });
   server.on('error', err => {
     if (err.code === 'EADDRINUSE') {
