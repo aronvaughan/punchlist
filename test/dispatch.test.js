@@ -109,6 +109,16 @@ test('malformed dispatch_agents JSON → treated as empty, never throws', () => 
   assert.equal(spawns.length, 0);
 });
 
+test('a rejected spawn (null) does not wedge the agent as live', () => {
+  const { db, migrate } = open(':memory:'); migrate();
+  db.prepare("INSERT INTO tasks (id,title,status,created_at,updated_at,assignee,vetted) VALUES ('X','x','active','t','t','claude',1)").run();
+  db.prepare("INSERT INTO settings(key,value) VALUES('dispatch_enabled','1'),('dispatch_agents',?)")
+    .run(JSON.stringify({ claude: { cmd: '/bad/path', max: 1 } }));
+  const d = createDispatcher({ db, spawn: () => null });   // realSpawn rejects a bad cmd → null
+  assert.equal(d.tryDispatch('claude').reason, 'spawn-failed');
+  assert.equal(d.liveCount(), 0);                          // not wedged — retryable next change
+});
+
 test('onChange debounces a burst into one spawn', async () => {
   const { addTask, set, spawns, d } = setup();
   set({
