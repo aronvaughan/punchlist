@@ -6,6 +6,7 @@ import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync, rmSync, r
 import { join, normalize, extname, dirname, isAbsolute, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { makeRunner, parseAiReply, resolveTemplatePath, readTemplate, buildEditPrompt, templateScope } from './templates.js';
 import { ulid } from './db.js';
@@ -217,7 +218,7 @@ function sectionOf(task, today) {
 }
 
 export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
-    maxDoc, docRoots, templateEditing, instanceTemplatesDir, fsRoot }) {
+    maxDoc, docRoots, templateEditing, instanceTemplatesDir, fsRoot, bus }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
   // references the row. Cap is separate from (and far larger than) the JSON
@@ -240,6 +241,12 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   const DOC_ROOTS = resolveDocRoots(docRoots ?? process.env.PUNCHLIST_DOC_ROOTS);
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
+  // In-process event bus (dispatch design 2026-09-03). Every task mutation
+  // emits 'task.changed'; the dispatch listener (wired in server.js) reacts.
+  // Injectable so tests can subscribe; a no-op emitter otherwise. This is the
+  // only write path (see the file header), so emitting here can't miss a change.
+  const events = bus ?? new EventEmitter();
+  const changed = task => { if (task) events.emit('task.changed', { id: task.id, assignee: task.assignee, status: task.status }); };
   // AI-assisted template editing (admin-only, feature-gated). Available only
   // when a templates repo dir is configured AND the `claude` binary is present.
   // Tests inject { dir, available, run } directly; production computes them.
@@ -298,6 +305,7 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     db.prepare(
       'INSERT INTO task_events (id, task_id, event, payload, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(ulid(), task.id, event, payload, new Date().toISOString());
+    changed(task);  // wake the dispatch listener (covers answered/review/blocked/approved)
   }
 
   function setTags(taskId, names) {
@@ -437,7 +445,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       setTags(id, body.tags);
       const insStep = db.prepare('INSERT INTO steps (id, task_id, title, done, rank) VALUES (?, ?, ?, 0, ?)');
       body.steps.forEach((s, i) => insStep.run(ulid(), id, s.trim(), (i + 1) * 1024));
-      return { task: attach(getTask(id)), duplicate: false };
+      const created = getTask(id);
+      changed(created);  // new task (create-with-assignee is claimable-producing)
+      return { task: attach(created), duplicate: false };
     });
   }
 
@@ -658,7 +668,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       // drag it down). Applies to the review→active reopen regardless of
       // assignee (harmless for a human-assigned task — it isn't in that view).
       if (isReopen) viewRankToTop(task.id, 'agents');
-      return c.json(attach(getTask(task.id)));
+      const updated = getTask(task.id);
+      changed(updated);  // PATCH covers reassign + status changes (reassign-to-agent is claimable-producing)
+      return c.json(attach(updated));
     });
   });
 
@@ -929,7 +941,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
       db.prepare('UPDATE tasks SET vetted = 1, updated_at = ?, version = version + 1 WHERE id = ?')
         .run(new Date().toISOString(), id);
     }
-    return c.json({ task: attach(getTask(id)) });
+    const vetted = getTask(id);
+    changed(vetted);  // unvetted → vetted becomes claimable
+    return c.json({ task: attach(vetted) });
   });
 
   // per-task push authorization (migration 016). The ONLY way allow_push is set
