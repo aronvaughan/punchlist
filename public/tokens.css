@@ -1692,7 +1692,7 @@ body.drag-active .section-block.empty .task-list {
   font: inherit;
   font-size: 13px;
 }
-.task-row.expanded .steps-list input[type="text"] { min-height: 40px; }
+.task-row.expanded .steps-list textarea.step-name { min-height: 40px; }
 .task-row.expanded label {
   display: block;
   font-size: 11px;
@@ -1765,7 +1765,9 @@ wa-button[variant="brand"]::part(base) {
   color: var(--on-accent);
 }
 .steps-list { list-style: none; margin: 0; padding: 0; }
-.step-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.step-row { display: flex; align-items: flex-start; gap: 8px; min-height: 40px; }
+.step-row .check { margin-top: 8px; } /* keeps the toggle aligned to the first line when the title wraps */
+.step-row.pending { opacity: .7; }
 
 /* grip: the only drag handle — two solid, rounded parallel vertical bars (‖),
    drawn as pseudo-elements so the affordance reads cleanly at small size and
@@ -1796,8 +1798,24 @@ wa-button[variant="brand"]::part(base) {
 .grip::before { left: calc(50% - 4px); }
 .grip::after  { left: calc(50% + 2px); }
 .grip:active { cursor: grabbing; }
-.step-row input[type="text"] { border: none; background: transparent; flex: 1; min-height: 36px; }
-.step-row .del { display: inline-flex; align-items: center; justify-content: center; border: none; background: none; color: var(--ink-faint); cursor: pointer; padding: 6px; }
+.step-row textarea.step-name {
+  border: none;
+  background: transparent;
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 8px 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.step-row .del { display: inline-flex; align-items: center; justify-content: center; border: none; background: none; color: var(--ink-faint); cursor: pointer; padding: 6px; margin-top: 4px; }
 .notes-preview { border-top: 1px solid var(--line); padding-top: 8px; font-size: 14px; }
 .notes-preview a { color: var(--accent); }
 .notes-preview pre { background: var(--chip-bg); padding: 8px; border-radius: 8px; overflow-x: auto; }
