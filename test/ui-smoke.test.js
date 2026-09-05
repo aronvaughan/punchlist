@@ -244,6 +244,18 @@ test('instance identity: footer name link + Instance dialog + PATCH /instance', 
   assert.match(css, /\.foot-instance\s*\{/);
 });
 
+test('footer KB link: renders only when the global SilverBullet kb_url is configured', async () => {
+  const { get } = makeApp();
+  const app = await (await get('/app.js')).text();
+  assert.match(app, /state\.kbUrl = /);                          // instance fetch populates it
+  assert.match(app, /if \(state\.kbUrl\)/);                       // conditional render
+  assert.match(app, /class(Name)? = 'foot-kb'/);                  // dedicated footer link class
+  assert.match(app, /target = '_blank'/);
+  assert.match(app, /rel = 'noopener'/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.foot-kb\s*\{/);
+});
+
 test("template editor: create/edit/save/scope + New-template entry", async () => {
   const { get } = makeApp();
   const ed = await (await get("/tpleditor.js")).text();
