@@ -90,6 +90,7 @@ export const state = {
   dueSoon: [],
   version: '',
   instanceName: '',
+  kbUrl: '',
   nextCursor: null,
 };
 
@@ -113,6 +114,18 @@ function renderFoot() {
   if (state.version) tail.push(`v${state.version}`);
   if (state.counts?.actor) tail.push(`signed in as ${state.counts.actor}`);
   if (tail.length) foot.append(document.createTextNode(' · ' + tail.join(' · ')));
+  // Global SilverBullet KB link: only when the admin has configured an
+  // instance-wide kb_url (validated server-side as http(s) on save). Hidden
+  // entirely otherwise, so there's nothing to click when it's unset.
+  if (state.kbUrl) {
+    const kbLink = document.createElement('a');
+    kbLink.className = 'foot-kb';
+    kbLink.href = state.kbUrl;
+    kbLink.target = '_blank';
+    kbLink.rel = 'noopener';
+    kbLink.textContent = '📓 KB';
+    foot.append(document.createElement('br'), kbLink);
+  }
 }
 
 // Instance settings dialog: name + global context (agent directives) + the
@@ -146,6 +159,7 @@ async function openInstanceDialog() {
         kb_path: kb.value.trim(),
       });
       state.instanceName = saved.name;
+      state.kbUrl = saved.kb_url || '';
       inst = saved;
       renderFoot();
     } catch (e) { toast(`Save failed: ${e.message}`); }
@@ -185,8 +199,9 @@ function showReloadBanner() {
 fetch('/api/v1/health').then(r => r.json())
   .then(h => { state.version = h.version || ''; loadedBuild = h.build ?? null; renderFoot(); })
   .catch(() => {});
-// instance name for the footer (auth'd; silently skipped until a token is set)
-api('GET', '/instance').then(i => { state.instanceName = i.name || ''; renderFoot(); }).catch(() => {});
+// instance name + global KB link for the footer (auth'd; silently skipped
+// until a token is set)
+api('GET', '/instance').then(i => { state.instanceName = i.name || ''; state.kbUrl = i.kb_url || ''; renderFoot(); }).catch(() => {});
 setInterval(async () => {
   try {
     const h = await (await fetch('/api/v1/health', { cache: 'no-store' })).json();
