@@ -227,3 +227,82 @@ A task server that spawns processes is a real change and is treated as such:
    emission be broadened? (Audit `postComment`/event writes in `api.js`.)
 3. Exact "unclaimed & not-in-needs-input" predicate for the detection query
    against the current schema (`blocked` flag vs a status/lane check).
+
+---
+
+# Revision 2 — event-bus architecture + resolved questions (2026-09-05)
+
+Discussion refined the mechanism from "consume a durable event table / poll a
+free query" to a proper **in-process observer bus fed by a task write layer**.
+This supersedes the "dispatcher consumes `task_events.delivered_at`" and the
+"level-triggered free-query tick" framings above.
+
+## Architecture (revised)
+
+```
+route handler → taskStore (DAO): the SINGLE write interface for every
+                task create/update. It (1) persists to SQLite and (2) emits an
+                in-process event ('task.changed' with the new row) as part of
+                the write.
+             → in-process EventEmitter (the bus)
+             → listeners subscribe:
+                  • notifications listener  → writes task_events (the UI feed,
+                    exactly as today — now just one subscriber)
+                  • DISPATCH listener       → on a change, if the task is
+                    claimable by agent X and X is under its watermark and no
+                    orchestrator is live for X, debounce + spawn X's wake cmd
+                  • (future) webhook listener
+             → reconcile timer (rare, e.g. 5 min): re-derive from DB state to
+                catch anything lost to a crash mid-emit (an in-proc event is
+                not durable; the DB is).
+```
+
+**Why this over polling:** zero idle load (nothing runs when nothing changes),
+and it cannot miss a transition because every mutation goes through the one DAO
+that emits. The trade is an upfront **write-layer refactor** — today writes are
+inline in the route handlers (`createTask` + the claim/finish/answer/vet doors
+call `db…run` directly); they must funnel through `taskStore` so every change
+emits exactly once. That choke point is what makes the design correct.
+
+## Resolved questions
+
+**Q1 — config shape: HYBRID.** Flat `settings` keys for the global scalars
+(`dispatch_enabled`, `dispatch_interval_ms` [reconcile/debounce], …) — simple,
+greppable, matches existing settings; and ONE JSON key `dispatch_agents` =
+`{claude:{cmd,max}, hermes:{cmd,max}}` for the variable-shape per-agent map,
+validated with a safe default `{}`. `cmd` must be an absolute path to a
+reviewed script (operator config), never assembled from task data.
+
+**Q2 — emission: no `task_events` broadening.** Audit: `task_events` is written
+at exactly 4 sites (`review_requested`, `approved`, `blocked`, `answered`) — the
+human-attention set. Dispatch does NOT consume `task_events`; it's a listener on
+the in-proc bus fed by the DAO, so it sees *every* create/assign/answer/vet
+without adding rows. `task_events` stays the UI notification log; `delivered_at`
+reverts to its reserved purpose (a future outbound-webhook worker).
+
+**Q3 — claimable predicate.** No separate `claimed`/`needs_input` column;
+`blocked` is a status value, and the claim door requires `status='active'` +
+`vetted`. So:
+
+```
+claimable(agent)  =  status = 'active'  AND  assignee = :agent  AND  vetted = 1
+executing(agent)  =  status = 'in_progress'  AND  assignee = :agent   -- watermark count
+```
+
+`status='active'` already excludes blocked (needs-input), in_progress (claimed),
+review, done, archived. The dispatch listener applies `claimable()` to the
+changed task (and re-checks live state before spawning); the watermark counts
+`executing()`. **Reuse the exact `queue`-view filter** so dispatch and an
+agent's own `queue` can never disagree (incl. any scheduling/`when` nuance the
+view applies).
+
+## Net build shape
+
+1. `taskStore` DAO (funnel all writes; emit `task.changed`). ← the real work.
+2. In-proc `EventEmitter`; move the existing `task_events` write behind a
+   notifications listener.
+3. Dispatch listener: claimable check + watermark + debounce + spawn (config
+   `dispatch_agents`), gated by `dispatch_enabled`.
+4. Live-orchestrator registry (pid/assignee), reaped on exit.
+5. Reconcile timer (safety net).
+6. Rollout alongside the crons; retire them once trusted.
