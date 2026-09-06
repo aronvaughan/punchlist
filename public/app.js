@@ -8,6 +8,7 @@ export const APP_NAME = 'Punchlist';
 import { setBasePath } from '/vendor/webawesome/webawesome.loader.js';
 import { renderRail, renderMain, openNewTask, animateOnce, mountPathField } from '/views.js';
 import { collapseInline, cancelCreate } from '/inline.js';
+import { icon } from '/icons.js';
 
 setBasePath('/vendor/webawesome');
 
@@ -114,18 +115,22 @@ function renderFoot() {
   if (state.version) tail.push(`v${state.version}`);
   if (state.counts?.actor) tail.push(`signed in as ${state.counts.actor}`);
   if (tail.length) foot.append(document.createTextNode(' · ' + tail.join(' · ')));
-  // Global SilverBullet KB link: only when the admin has configured an
-  // instance-wide kb_url (validated server-side as http(s) on save). Hidden
-  // entirely otherwise, so there's nothing to click when it's unset.
-  if (state.kbUrl) {
-    const kbLink = document.createElement('a');
-    kbLink.className = 'foot-kb';
-    kbLink.href = state.kbUrl;
-    kbLink.target = '_blank';
-    kbLink.rel = 'noopener';
-    kbLink.textContent = '📓 KB';
-    foot.append(document.createElement('br'), kbLink);
-  }
+}
+
+// Global SilverBullet KB button, in #list-head next to "New task" so it stays
+// reachable on mobile (the rail is a drawer there). Shown only when the admin
+// has configured an instance-wide kb_url, validated server-side as http(s) on
+// save; re-checked here so a stray value can never produce a javascript: link.
+function renderKbBtn() {
+  const btn = document.getElementById('kb-btn');
+  if (!btn) return;
+  const url = (state.kbUrl || '').trim();
+  const ok = /^https?:\/\//i.test(url);
+  btn.hidden = !ok;
+  if (!ok) { btn.removeAttribute('href'); return; }
+  btn.href = url;
+  // same `book` glyph the rest of the UI uses, at #new-task-btn's 20px
+  if (!btn.firstChild) btn.replaceChildren(icon('book', { size: 20 }));
 }
 
 // Instance settings dialog: name + global context (agent directives) + the
@@ -161,7 +166,7 @@ async function openInstanceDialog() {
       state.instanceName = saved.name;
       state.kbUrl = saved.kb_url || '';
       inst = saved;
-      renderFoot();
+      renderFoot(); renderKbBtn();
     } catch (e) { toast(`Save failed: ${e.message}`); }
     dlg.open = false;
   };
@@ -199,9 +204,21 @@ function showReloadBanner() {
 fetch('/api/v1/health').then(r => r.json())
   .then(h => { state.version = h.version || ''; loadedBuild = h.build ?? null; renderFoot(); })
   .catch(() => {});
-// instance name + global KB link for the footer (auth'd; silently skipped
-// until a token is set)
-api('GET', '/instance').then(i => { state.instanceName = i.name || ''; state.kbUrl = i.kb_url || ''; renderFoot(); }).catch(() => {});
+// Instance name (footer) + kb_url (KB button). Auth'd, so at boot this races
+// the token dialog and is simply dropped when no token is stored yet — which
+// left the KB button hidden for the whole session on a fresh browser. reload()
+// therefore calls this again on the first authenticated load; `instanceLoaded`
+// keeps it to one request instead of one per route change, and resets on
+// failure so a later successful load still picks it up.
+let instanceLoaded = false;
+export function loadInstance() {
+  if (instanceLoaded) return Promise.resolve();
+  instanceLoaded = true;
+  return api('GET', '/instance')
+    .then(i => { state.instanceName = i.name || ''; state.kbUrl = i.kb_url || ''; renderFoot(); renderKbBtn(); })
+    .catch(() => { instanceLoaded = false; });
+}
+loadInstance();
 setInterval(async () => {
   try {
     const h = await (await fetch('/api/v1/health', { cache: 'no-store' })).json();
@@ -441,6 +458,7 @@ export async function reload() {
   renderRail();
   renderMain();
   renderFoot();
+  loadInstance();
 }
 
 export function setTagFilter(tag) {

@@ -598,13 +598,27 @@ html[data-theme="charcoal"] {
 }
 .foot-instance:hover { color: var(--ink); }
 /* footer link to the global SilverBullet KB (only rendered when kb_url is set) */
-.foot-kb {
-  display: inline-block;
-  margin-top: 4px;
-  color: inherit;
+/* KB button in #list-head, beside "New task". Same 44px tap target as that
+   button (iOS minimum) but quiet/secondary, so it reads as a shortcut rather
+   than a second primary action. [hidden] needs the !important because the
+   flex display below would otherwise win over the attribute. */
+.head-kb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  align-self: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
   text-decoration: none;
 }
-.foot-kb:hover { color: var(--ink); text-decoration: underline; }
+.head-kb[hidden] { display: none !important; }
+.head-kb:hover { background: var(--hover); }
+
 .dialog-check { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 12px; font-size: 13px; color: var(--ink-soft); line-height: 1.4; }
 .dialog-check input { margin-top: 2px; flex: none; }
 

@@ -51,6 +51,10 @@
       <div id="list-head">
         <h1 id="view-title">Today</h1>
         <button id="new-task-btn" aria-label="New task (Shift+N)" title="New task (Shift+N)"><svg class="icon" viewBox="0 0 256 256" fill="currentColor" width="20" height="20" aria-hidden="true"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></svg></button>
+        <!-- Global SilverBullet KB. Lives here rather than in the rail footer
+             because on mobile the rail is a slide-in drawer, which put the link
+             out of reach behind the hamburger. Hidden until kb_url is set. -->
+        <a id="kb-btn" class="head-kb" target="_blank" rel="noopener" hidden aria-label="Open the KB editor" title="Open the KB editor"></a>
         <div id="filter-chips"></div>
         <p id="view-sub"></p>
       </div>
