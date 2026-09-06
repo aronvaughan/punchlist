@@ -152,3 +152,43 @@ test('unsupported platform is reported, not thrown', () => {
   assert.equal(r.remounted, false);
   assert.deepEqual(calls, []);
 });
+
+// SilverBullet keeps auth state per space. Without carrying it across, a
+// kb_path change silently invalidates the operator's existing password.
+test('carries .silverbullet.auth.json into the new space dir', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kbspaces-'));
+  const oldDir = join(root, 'old-kb');
+  const newDir = join(root, 'new-kb');
+  mkdirSync(oldDir, { recursive: true });
+  mkdirSync(newDir, { recursive: true });
+  writeFileSync(join(oldDir, '.silverbullet.auth.json'), '{"secret":"keep-me"}');
+
+  const { home, cleanup } = install(oldDir);
+  const { run } = recorder();
+
+  const r = remountSilverbullet({ dataDir: '/unused', kbPath: newDir, home, platform: 'linux', run });
+
+  assert.equal(r.remounted, true);
+  assert.equal(readFileSync(join(newDir, '.silverbullet.auth.json'), 'utf8'), '{"secret":"keep-me"}');
+  cleanup();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('does not clobber auth state the new space dir already has', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kbspaces-'));
+  const oldDir = join(root, 'old-kb');
+  const newDir = join(root, 'new-kb');
+  mkdirSync(oldDir, { recursive: true });
+  mkdirSync(newDir, { recursive: true });
+  writeFileSync(join(oldDir, '.silverbullet.auth.json'), '{"secret":"old"}');
+  writeFileSync(join(newDir, '.silverbullet.auth.json'), '{"secret":"already-here"}');
+
+  const { home, cleanup } = install(oldDir);
+  const { run } = recorder();
+
+  remountSilverbullet({ dataDir: '/unused', kbPath: newDir, home, platform: 'linux', run });
+
+  assert.equal(readFileSync(join(newDir, '.silverbullet.auth.json'), 'utf8'), '{"secret":"already-here"}');
+  cleanup();
+  rmSync(root, { recursive: true, force: true });
+});

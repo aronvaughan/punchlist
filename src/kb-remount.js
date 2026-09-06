@@ -10,9 +10,10 @@
 // holds a resolved absolute binary path (and possibly a non-default port or
 // SILVERBULLET_CMD) that the server has no way to re-derive, and clobbering
 // it with the 'silverbullet' PATH default would break the service.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { silverbulletSpec, resolveKbSpaceDir } from './service.js';
 
 // The wrapper's final line, as written by silverbulletWrapper():
@@ -77,6 +78,23 @@ export function remountSilverbullet({
   if (spaceDir.includes('"')) {
     log('kb remount: refusing a kb_path containing a double quote');
     return { remounted: false, reason: 'unsafe-path', spaceDir };
+  }
+
+  // SilverBullet keeps its auth state per space, in `.silverbullet.auth.json`
+  // inside the space dir. Remounting to a folder that has none makes SB derive
+  // fresh state, which is why the operator's existing password stopped working
+  // after a kb_path change. Carry the old space's file across so one credential
+  // survives every remount. Best-effort: a copy failure must not block the
+  // remount, it just means SB re-derives as before.
+  const AUTH_FILE = '.silverbullet.auth.json';
+  const oldAuth = join(m[2], AUTH_FILE);
+  const newAuth = join(spaceDir, AUTH_FILE);
+  if (existsSync(oldAuth) && !existsSync(newAuth)) {
+    try {
+      copyFileSync(oldAuth, newAuth);
+    } catch (err) {
+      log(`kb remount: could not carry ${AUTH_FILE} forward: ${err.message}`);
+    }
   }
 
   try {
