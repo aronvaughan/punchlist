@@ -244,16 +244,25 @@ test('instance identity: footer name link + Instance dialog + PATCH /instance', 
   assert.match(css, /\.foot-instance\s*\{/);
 });
 
-test('footer KB link: renders only when the global SilverBullet kb_url is configured', async () => {
+// Lives in #list-head, NOT the rail footer: on mobile the rail is a slide-in
+// drawer, which put the old footer link out of reach behind the hamburger.
+test('KB link: in the list head, shown only when the global SilverBullet kb_url is configured', async () => {
   const { get } = makeApp();
+  const html = await (await get('/')).text();
+  assert.match(html, /id="kb-btn"[^>]*class="head-kb"/);          // in the always-visible head
+  assert.match(html, /id="kb-btn"[^>]*hidden/);                   // hidden until kb_url is set
+  assert.match(html, /id="kb-btn"[^>]*rel="noopener"/);
   const app = await (await get('/app.js')).text();
-  assert.match(app, /state\.kbUrl = /);                          // instance fetch populates it
-  assert.match(app, /if \(state\.kbUrl\)/);                       // conditional render
-  assert.match(app, /class(Name)? = 'foot-kb'/);                  // dedicated footer link class
-  assert.match(app, /target = '_blank'/);
-  assert.match(app, /rel = 'noopener'/);
+  assert.match(app, /state\.kbUrl = /);                           // instance fetch populates it
+  assert.match(app, /function renderKbBtn\(\)/);
+  assert.match(app, /btn\.hidden = !ok/);                         // conditional render
+  assert.match(app, /\^https\?:/);                                // http(s)-only re-check
+  assert.match(app, /renderKbBtn\(\)/);                           // wired into the update path
+  assert.match(app, /icon\('book', \{ size: 20 \}\)/);             // shared icons.js glyph, not an emoji
+  assert.match(app, /loadInstance\(\)/);                          // refetched on the first authed load
   const css = await (await get('/tokens.css')).text();
-  assert.match(css, /\.foot-kb\s*\{/);
+  assert.match(css, /\.head-kb\s*\{/);
+  assert.match(css, /\.head-kb\[hidden\]/);                       // flex display must not beat [hidden]
 });
 
 test("template editor: create/edit/save/scope + New-template entry", async () => {

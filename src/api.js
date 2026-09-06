@@ -16,6 +16,7 @@ import { taskWhere, taskCount, encodeCursor, decodeCursor } from './views.js';
 import { between, renormalize } from './rank.js';
 import { nextDue, spawn } from './recur.js';
 import { parse as quickParse } from './quickadd.js';
+import { remountSilverbullet } from './kb-remount.js';
 
 const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = join(ROOT_DIR, 'public');
@@ -1594,7 +1595,21 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     }
     if (body.kb_path !== undefined) {
       if (typeof body.kb_path !== 'string' || body.kb_path.length > 1024) throw new ApiError(400, 'kb_path must be a string (<=1024 chars)');
-      setSetting('kb_path', body.kb_path.trim());
+      const before = getSetting('kb_path');
+      const after = body.kb_path.trim();
+      setSetting('kb_path', after);
+      // Keep SilverBullet's mounted vault in step with kb_path. Without this
+      // the editor keeps serving whatever folder it was installed against,
+      // so "Browse (read-only)" and "Open editor" drift onto different KBs.
+      // Best-effort: a remount failure must not fail the settings save.
+      if (after !== before) {
+        try {
+          const r = remountSilverbullet({ dataDir: DATA_ROOT, kbPath: after });
+          if (!r.remounted && r.reason !== 'not-installed' && r.reason !== 'unchanged') {
+            console.error(`kb remount after kb_path change: ${r.reason}`);
+          }
+        } catch (err) { console.error(`kb remount after kb_path change: ${err.message}`); }
+      }
     }
     return c.json({
       name: getSetting('instance_name'), context: getSetting('instance_context'),
