@@ -1338,9 +1338,20 @@ function unvetCard(task) {
 // (visual affordance) — the order is global, not grouped into per-agent
 // sections. Work waiting on the human (blocked / in review / unvetted) drops
 // below into a non-draggable "Waiting on you" area with its action cards.
+//
+// Someday split (2026-09-07, mirrors the human Someday view/section split):
+// claimable tasks parked when_type='someday' get their own "Someday" section
+// below Backlog instead of being mixed in — an agent shouldn't see parked
+// work at the top of its queue. Each section keeps its own reorderable list
+// (both still persist to the same shared view_ranks('agents') order); cross-
+// section drag is intentionally NOT wired (no `section` option) so dragging a
+// row into Someday does not silently change its when_type — someday agent
+// tasks reuse the muted .someday row style (taskRow) plus the project view's
+// .section-someday convention.
 function renderAgents(listEl, tasks) {
   const claimable = t => t.vetted !== 0 && (t.status === 'active' || t.status === 'in_progress');
-  const backlog = tasks.filter(claimable);
+  const backlog = tasks.filter(claimable).filter(t => t.when_type !== 'someday');
+  const someday = tasks.filter(claimable).filter(t => t.when_type === 'someday');
   const waiting = tasks.filter(t => !claimable(t)); // blocked / review / unvetted
 
   if (backlog.length) {
@@ -1348,6 +1359,14 @@ function renderAgents(listEl, tasks) {
     const ul = taskList(backlog, { showProject: true, showClaimed: true, sortable: true });
     listEl.append(ul);
     sortableList(ul, { list: 'agents' }); // reorder persists to view_ranks('agents')
+  }
+
+  if (someday.length) {
+    listEl.append(el('div', 'section-head', 'Someday'));
+    const ul = taskList(someday, { showProject: true, showClaimed: true, sortable: true });
+    ul.classList.add('section-someday');
+    listEl.append(ul);
+    sortableList(ul, { list: 'agents' }); // same shared rank space as Backlog
   }
 
   if (waiting.length) {
