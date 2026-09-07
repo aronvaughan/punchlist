@@ -10,10 +10,11 @@
 // holds a resolved absolute binary path (and possibly a non-default port or
 // SILVERBULLET_CMD) that the server has no way to re-derive, and clobbering
 // it with the 'silverbullet' PATH default would break the service.
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, accessSync, constants } from 'node:fs';
+const { W_OK } = constants;
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { silverbulletSpec, resolveKbSpaceDir } from './service.js';
 
 // The wrapper's final line, as written by silverbulletWrapper():
@@ -78,6 +79,19 @@ export function remountSilverbullet({
   if (spaceDir.includes('"')) {
     log('kb remount: refusing a kb_path containing a double quote');
     return { remounted: false, reason: 'unsafe-path', spaceDir };
+  }
+
+  // SilverBullet creates the space folder on boot and exits 1 if it cannot —
+  // a kb_path like /srv/kb takes the service DOWN and systemd rate-limits the
+  // restarts, so the operator loses the editor entirely over a typo. Check the
+  // directory is usable BEFORE touching the wrapper: an existing dir must be
+  // writable, and a missing one must have a writable parent.
+  const probe = existsSync(spaceDir) ? spaceDir : dirname(spaceDir);
+  try {
+    accessSync(probe, W_OK);
+  } catch {
+    log(`kb remount: ${spaceDir} is not writable (checked ${probe}); leaving the mount alone`);
+    return { remounted: false, reason: 'unwritable-space', spaceDir };
   }
 
   // SilverBullet keeps its auth state per space, in `.silverbullet.auth.json`
