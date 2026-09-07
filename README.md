@@ -297,6 +297,10 @@ scanner files its own findings and an agent triages them — list it in
 there must have a token, so a typo stops the server rather than silently
 granting nobody.
 
+`PUNCHLIST_ANSWERERS` works the same way for the answer door. Blocking is how
+an agent says it needs the human, so an answerer can lift its own stop — opt an
+agent in only where a relayed answer is genuinely wanted.
+
 Other commands: `./bin/punchlist serve` (foreground server),
 `./bin/punchlist snapshot` (WAL-safe backup to `data/backup/`).
 `npm test` runs the suite with an 80% coverage floor.

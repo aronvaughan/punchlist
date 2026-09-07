@@ -177,6 +177,59 @@ test('resolveAdmin: defaults to the FIRST actor; explicit must have a token (fai
 // Approval is the human gate on agent work, so an agent gets it only when an
 // operator opts in - and a typo in that opt-in must fail at boot, not quietly
 // grant nothing.
+// Blocking is how an agent says it needs the human, so answering is gated the
+// same way approving is: admin-only until an operator names an agent.
+test('answerers: an opted-in agent can answer a blocked task, others cannot', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const app = buildApp({
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    answerers: ['claude'], today: () => TODAY });
+  const call = async (method, path, { body, token = TOK_ARON } = {}) => {
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    let json = null; try { json = await res.json(); } catch { /* static */ }
+    return { status: res.status, json };
+  };
+
+  const mk = async () => {
+    const t = (await call('POST', '/api/v1/tasks', { body: { title: 'x', assignee: 'claude' } })).json;
+    await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+    await call('POST', `/api/v1/tasks/${t.id}/block`, { body: { question: 'which one?' }, token: TOK_CLAUDE });
+    return t;
+  };
+
+  const a = await mk();
+  const ok = await call('POST', `/api/v1/tasks/${a.id}/answer`, { body: { answer: 'the first' }, token: TOK_CLAUDE });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.task.status, 'active');
+
+  const b = await mk();
+  const denied = await call('POST', `/api/v1/tasks/${b.id}/answer`, { body: { answer: 'nope' }, token: TOK_HERMES });
+  assert.equal(denied.status, 403);
+  assert.match(denied.json.error, /not permitted to answer/);
+});
+
+test('answerers: the admin alone answers by default', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'x', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/block`, { body: { question: 'which one?' }, token: TOK_CLAUDE });
+  const denied = await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: 'x' }, token: TOK_CLAUDE });
+  assert.equal(denied.status, 403);
+});
+
+test('answerers: an answerer without a token refuses to boot', () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  assert.throws(() => buildApp({
+    db, tokens: { alex: TOK_ARON }, answerers: ['ghost'], today: () => TODAY }),
+    /answerer "ghost" has no token/);
+});
+
 test('approvers: an opted-in agent can approve, others still cannot', async () => {
   const { db, migrate } = open(':memory:');
   migrate();
@@ -1880,7 +1933,7 @@ test('answer guards: admin only; non-blocked 409; required + caps; unknown field
   await call('POST', `/api/v1/tasks/${t.id}/block`, { token: TOK_CLAUDE, body: { question: 'q?' } });
   const agent = await call('POST', `/api/v1/tasks/${t.id}/answer`, { token: TOK_CLAUDE, body: { answer: 'a' } });
   assert.equal(agent.status, 403, 'the assignee cannot answer its own question');
-  assert.match(agent.json.error, /only the admin/);
+  assert.match(agent.json.error, /not permitted to answer/);
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { token: TOK_HERMES, body: { answer: 'a' } })).status, 403);
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: {} })).status, 400);
   assert.equal((await call('POST', `/api/v1/tasks/${t.id}/answer`, { body: { answer: '  ' } })).status, 400);

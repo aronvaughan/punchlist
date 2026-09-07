@@ -84,6 +84,20 @@ export function parseApprovers(tokens, raw) {
   return extra;
 }
 
+// PUNCHLIST_ANSWERERS = comma list of EXTRA actors allowed to answer a blocked
+// task. Blocking is how an agent says it needs the human, so an answerer can
+// lift its own stop: opt an agent in only where a relayed answer is wanted.
+// Same fail-closed rule - every named actor must have a token.
+export function parseAnswerers(tokens, raw) {
+  const extra = (raw ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const a of extra) {
+    if (!tokens[a]) {
+      throw new Error(`PUNCHLIST_ANSWERERS names "${a}", which has no token in PUNCHLIST_TOKENS — refusing to start`);
+    }
+  }
+  return extra;
+}
+
 // PUNCHLIST_UNTRUSTED_ACTORS = comma list of actors whose task creations are
 // born vetted=0 (agent-security layer 1). Unset -> default "email"; set but
 // empty -> nobody is untrusted (explicit opt-out).
@@ -174,7 +188,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   const bus = new EventEmitter();
   const approvers = parseApprovers(tokens, process.env.PUNCHLIST_APPROVERS);
-  const app = buildApp({ db, tokens, admin, approvers, mediaDir: MEDIA_DIR,
+  const answerers = parseAnswerers(tokens, process.env.PUNCHLIST_ANSWERERS);
+  const app = buildApp({ db, tokens, admin, approvers, answerers, mediaDir: MEDIA_DIR,
     untrusted: parseUntrusted(process.env.PUNCHLIST_UNTRUSTED_ACTORS), bus });
   // Event-driven dispatch (docs/2026-09-03-event-dispatch.md). Gated by
   // settings.dispatch_enabled — a NO-OP until switched on, so this changes
