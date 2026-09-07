@@ -239,7 +239,7 @@ test('needs-input over MCP: block with a question → needs_input lane → admin
   // the agent cannot answer its own question
   const denied = await agent.call('punchlist_answer', { id, answer: 'USB-C' });
   assert.equal(denied.isError, true);
-  assert.match(denied.text, /only the admin/);
+  assert.match(denied.text, /not permitted to answer/);
   // admin answers → active again, exchange attached in the slim shape
   const answered = await admin.ok('punchlist_answer', { id, answer: 'USB-C, we have spare cables' });
   assert.equal(answered.task.status, 'active');
