@@ -218,7 +218,7 @@ function sectionOf(task, today) {
   return 3;
 }
 
-export function buildApp({ db, tokens, admin, approvers, untrusted, today: todayFn, mediaDir, maxUpload,
+export function buildApp({ db, tokens, admin, approvers, answerers, untrusted, today: todayFn, mediaDir, maxUpload,
     maxDoc, docRoots, templateEditing, instanceTemplatesDir, fsRoot, bus }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
@@ -249,6 +249,13 @@ export function buildApp({ db, tokens, admin, approvers, untrusted, today: today
   const APPROVERS = new Set([HUMAN, ...(approvers ?? [])]);
   for (const a of APPROVERS) {
     if (!tokens[a]) throw new Error(`approver "${a}" has no token in tokens`);
+  }
+  // Who may answer a blocked task. Blocking is how an agent says it needs the
+  // human, so an answerer can lift its OWN stop - opt agents in only when a
+  // relayed answer is genuinely wanted. Admin-only by default, same as above.
+  const ANSWERERS = new Set([HUMAN, ...(answerers ?? [])]);
+  for (const a of ANSWERERS) {
+    if (!tokens[a]) throw new Error(`answerer "${a}" has no token in tokens`);
   }
   // In-process event bus (dispatch design 2026-09-03). Every task mutation
   // emits 'task.changed'; the dispatch listener (wired in server.js) reacts.
@@ -918,7 +925,8 @@ export function buildApp({ db, tokens, admin, approvers, untrusted, today: today
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
-      if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can answer`);
+      // Generic on purpose: naming the answerers would leak actor names.
+      if (!ANSWERERS.has(c.get('actor'))) throw new ApiError(403, 'not permitted to answer');
       checkVersion(task, want);
       if (task.status !== 'blocked') throw new ApiError(409, `cannot answer a ${task.status} task`);
       const now = new Date().toISOString();
