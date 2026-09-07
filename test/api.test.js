@@ -174,6 +174,61 @@ test('resolveAdmin: defaults to the FIRST actor; explicit must have a token (fai
   assert.throws(() => resolveAdmin(tokens, 'alex'), /PUNCHLIST_ADMIN.*no token/);
 });
 
+// Approval is the human gate on agent work, so an agent gets it only when an
+// operator opts in - and a typo in that opt-in must fail at boot, not quietly
+// grant nothing.
+test('approvers: an opted-in agent can approve, others still cannot', async () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  const app = buildApp({
+    db, tokens: { alex: TOK_ARON, claude: TOK_CLAUDE, hermes: TOK_HERMES, email: TOK_EMAIL },
+    approvers: ['claude'], today: () => TODAY });
+  const call = async (method, path, { body, token = TOK_ARON } = {}) => {
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await app.fetch(new Request(`http://x${path}`, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
+    let json = null; try { json = await res.json(); } catch { /* static */ }
+    return { status: res.status, json };
+  };
+
+  const mk = async () => {
+    const t = (await call('POST', '/api/v1/tasks', { body: { title: 'x', assignee: 'claude' } })).json;
+    await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+    await call('POST', `/api/v1/tasks/${t.id}/finish`, { body: { report: 'done it' }, token: TOK_CLAUDE });
+    return t;
+  };
+
+  const a = await mk();
+  const ok = await call('POST', `/api/v1/tasks/${a.id}/approve`, { token: TOK_CLAUDE });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.task.status, 'done');
+
+  // hermes was not opted in and is still refused.
+  const b = await mk();
+  const denied = await call('POST', `/api/v1/tasks/${b.id}/approve`, { token: TOK_HERMES });
+  assert.equal(denied.status, 403);
+  assert.match(denied.json.error, /not permitted to approve/);
+
+});
+
+test('approvers: the admin alone approves by default', async () => {
+  const { call } = makeApp();
+  const t = (await call('POST', '/api/v1/tasks', { body: { title: 'x', assignee: 'claude' } })).json;
+  await call('POST', `/api/v1/tasks/${t.id}/claim`, { token: TOK_CLAUDE });
+  await call('POST', `/api/v1/tasks/${t.id}/finish`, { body: { report: 'done it' }, token: TOK_CLAUDE });
+  assert.equal((await call('POST', `/api/v1/tasks/${t.id}/approve`, { token: TOK_CLAUDE })).status, 403);
+});
+
+test('approvers: an approver without a token refuses to boot', () => {
+  const { db, migrate } = open(':memory:');
+  migrate();
+  assert.throws(() => buildApp({
+    db, tokens: { alex: TOK_ARON }, approvers: ['ghost'], today: () => TODAY }),
+    /approver "ghost" has no token/);
+});
+
 test('admin parameterization: approve gate, lanes, and default assignee follow the admin actor', async () => {
   const { db, migrate } = open(':memory:');
   migrate();
@@ -202,7 +257,7 @@ test('admin parameterization: approve gate, lanes, and default assignee follow t
   await call('POST', `/api/v1/tasks/${d.id}/finish`, { token: TOK_CLAUDE, body: { report: 'did it' } });
   const denied = await call('POST', `/api/v1/tasks/${d.id}/approve`, { token: TOK_CLAUDE });
   assert.equal(denied.status, 403);
-  assert.match(denied.json.error, /admin \(pat\)/);
+  assert.match(denied.json.error, /not permitted to approve/);
   assert.equal((await call('POST', `/api/v1/tasks/${d.id}/approve`)).status, 200);
   // counts run through taskCount(admin) without error
   const counts = (await call('GET', '/api/v1/counts')).json;

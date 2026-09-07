@@ -70,6 +70,20 @@ export function resolveAdmin(tokens, raw) {
   return admin;
 }
 
+// PUNCHLIST_APPROVERS = comma list of EXTRA actors allowed to approve a task
+// out of the review lane, beyond the admin. Approval is the human gate on
+// agent work, so this is empty by default: an operator has to opt an agent in
+// deliberately, and every named actor must have a token (fail closed).
+export function parseApprovers(tokens, raw) {
+  const extra = (raw ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const a of extra) {
+    if (!tokens[a]) {
+      throw new Error(`PUNCHLIST_APPROVERS names "${a}", which has no token in PUNCHLIST_TOKENS — refusing to start`);
+    }
+  }
+  return extra;
+}
+
 // PUNCHLIST_UNTRUSTED_ACTORS = comma list of actors whose task creations are
 // born vetted=0 (agent-security layer 1). Unset -> default "email"; set but
 // empty -> nobody is untrusted (explicit opt-out).
@@ -159,7 +173,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   const bus = new EventEmitter();
-  const app = buildApp({ db, tokens, admin, mediaDir: MEDIA_DIR,
+  const approvers = parseApprovers(tokens, process.env.PUNCHLIST_APPROVERS);
+  const app = buildApp({ db, tokens, admin, approvers, mediaDir: MEDIA_DIR,
     untrusted: parseUntrusted(process.env.PUNCHLIST_UNTRUSTED_ACTORS), bus });
   // Event-driven dispatch (docs/2026-09-03-event-dispatch.md). Gated by
   // settings.dispatch_enabled — a NO-OP until switched on, so this changes

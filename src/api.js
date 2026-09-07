@@ -218,7 +218,7 @@ function sectionOf(task, today) {
   return 3;
 }
 
-export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDir, maxUpload,
+export function buildApp({ db, tokens, admin, approvers, untrusted, today: todayFn, mediaDir, maxUpload,
     maxDoc, docRoots, templateEditing, instanceTemplatesDir, fsRoot, bus }) {
   const today = todayFn || (() => new Date().toLocaleDateString('en-CA'));
   // attachments: bytes live as their own files in the media dir; the task
@@ -242,6 +242,14 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
   const DOC_ROOTS = resolveDocRoots(docRoots ?? process.env.PUNCHLIST_DOC_ROOTS);
   const HUMAN = admin || Object.keys(tokens)[0];
   if (!tokens[HUMAN]) throw new Error(`admin actor "${HUMAN}" has no token in tokens`);
+  // Who may approve a task out of the review lane. Approval is the human gate
+  // on agent work, so the default is the admin ALONE and an operator has to
+  // opt an agent in deliberately (PUNCHLIST_APPROVERS). Named actors must have
+  // tokens, so a typo fails at boot rather than silently granting nobody.
+  const APPROVERS = new Set([HUMAN, ...(approvers ?? [])]);
+  for (const a of APPROVERS) {
+    if (!tokens[a]) throw new Error(`approver "${a}" has no token in tokens`);
+  }
   // In-process event bus (dispatch design 2026-09-03). Every task mutation
   // emits 'task.changed'; the dispatch listener (wired in server.js) reacts.
   // Injectable so tests can subscribe; a no-op emitter otherwise. This is the
@@ -838,7 +846,9 @@ export function buildApp({ db, tokens, admin, untrusted, today: todayFn, mediaDi
     return tx(db, () => {
       const task = getTask(id);
       if (!task) throw new ApiError(404, 'task not found');
-      if (c.get('actor') !== HUMAN) throw new ApiError(403, `only the admin (${HUMAN}) can approve`);
+      // Deliberately generic: naming the approvers here would leak actor
+      // names to a caller who is not one of them.
+      if (!APPROVERS.has(c.get('actor'))) throw new ApiError(403, 'not permitted to approve');
       checkVersion(task, want);
       if (task.status === 'done') return c.json({ task: attach(task) }); // idempotent
       if (task.status !== 'review') throw new ApiError(409, `cannot approve a ${task.status} task`);
