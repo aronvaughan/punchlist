@@ -1084,6 +1084,16 @@ html[data-theme="charcoal"] {
   border-left-color: var(--accent);
   background: var(--hover);
 }
+/* SortableJS's own drop target IS the <ul> element's box — a <ul> with no
+   padding ends exactly at its last <li>'s bottom edge, so a drag aimed at
+   "after the last row" (the natural gesture for reordering something to the
+   end of a short list) overshoots into whatever sits below in the DOM (here,
+   the "New project" form / plain .manage-body background) and the browser
+   refuses the drop there, silently cancelling it — no reorder API call, no
+   persisted change. Pad the bottom of each list while a drag is live only
+   (no permanent layout shift) so the hittable area extends past the last row. */
+.manage-body.dragging .manage-tree { padding-bottom: 24px; }
+.manage-body.dragging .manage-children:not(:empty) { padding-bottom: 12px; }
 /* dialog toolbar: right-aligned icon toggles (icons over text) */
 .manage-toolbar { display: flex; justify-content: flex-end; gap: 4px; margin-bottom: 6px; }
 .manage-icon-toggle {

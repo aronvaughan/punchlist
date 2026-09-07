@@ -468,6 +468,21 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.match(css, /\.rail-gear\s*\{/);
 });
 
+test('manage dialog: reorder drop zone has a hittable buffer past the last row', async () => {
+  // regression for the "dragging to the last project — no landing space" bug:
+  // #manage-tree (a <ul>) rendered flush with its own content ends exactly at
+  // the last <li>'s bottom edge with zero padding, and the "New project" form
+  // sits directly below it — so a drag aimed at "after the last project"
+  // overshoots the Sortable-managed list into that form/background, the
+  // browser refuses the drop there, and the reorder silently never fires
+  // (no API call, no persisted change). Pad the list while a drag is live so
+  // the hittable area extends past the last row.
+  const { get } = makeApp();
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.manage-body\.dragging \.manage-tree\s*\{[^}]*padding-bottom:/);
+  assert.match(css, /\.manage-body\.dragging \.manage-children:not\(:empty\)\s*\{[^}]*padding-bottom:/);
+});
+
 test('project quick nav: eye icon on the title line opens Manage; tree rows jump to that project', async () => {
   const { get } = makeApp();
   const views = await (await get('/views.js')).text();
