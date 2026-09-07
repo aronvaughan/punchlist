@@ -290,6 +290,13 @@ the **first** actor is the admin: the human who approves reviews and owns the
 Today/Inbox lanes (`PUNCHLIST_ADMIN`). Tokens live in `data/.env` (chmod 600,
 never in git); re-running install keeps them.
 
+Approving a task out of the review lane is the human gate on agent work, so
+only the admin can do it. To let an agent approve as well — useful when a
+scanner files its own findings and an agent triages them — list it in
+`PUNCHLIST_APPROVERS` (comma-separated, empty by default). Every actor named
+there must have a token, so a typo stops the server rather than silently
+granting nobody.
+
 Other commands: `./bin/punchlist serve` (foreground server),
 `./bin/punchlist snapshot` (WAL-safe backup to `data/backup/`).
 `npm test` runs the suite with an 80% coverage floor.
