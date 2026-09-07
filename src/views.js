@@ -39,6 +39,7 @@ const INBOX_RANK = viewRank('inbox');
 const AGENTS_RANK = viewRank('agents');
 const HUMAN_RANK = viewRank('human');
 const ANYTIME_RANK = viewRank('anytime');
+const SOMEDAY_RANK = viewRank('someday');
 
 const VIEWS = {
   inbox: {
@@ -60,14 +61,20 @@ const VIEWS = {
     keys: ['when_date', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   // Things-style "Anytime": the admin's active work NOT scheduled to a concrete
-  // day, so someday/no-when tasks never vanish. someday OR no-when, EXCLUDING
-  // pure-inbox rows (no project AND no when — those already live in Inbox).
-  // Net effect: all someday tasks (with or without a project) + no-when tasks
-  // that DO have a project. drag-reorderable: manual view_ranks('anytime') first.
+  // day and NOT parked for someday — no-when tasks that DO have a project.
+  // Pure-inbox rows (no project AND no when) stay out (they live in Inbox);
+  // someday tasks live in their own Someday view below (split 2026-09-07,
+  // owner design (a)). drag-reorderable: manual view_ranks('anytime') first.
   anytime: {
-    where: `${LIVE} AND ${MINE} AND (when_type = 'someday' OR when_type IS NULL)
-            AND NOT (project_id IS NULL AND when_type IS NULL)`,
+    where: `${LIVE} AND ${MINE} AND when_type IS NULL AND project_id IS NOT NULL`,
     keys: [ANYTIME_RANK, `COALESCE(rank, ${BIG})`], dir: 'ASC',
+  },
+  // Someday: split out of Anytime (2026-09-07, owner design (a)) as its own
+  // nav item/view — when_type='someday' ONLY, with or without a project.
+  // drag-reorderable: manual view_ranks('someday') first, same pattern as anytime.
+  someday: {
+    where: `${LIVE} AND ${MINE} AND when_type = 'someday'`,
+    keys: [SOMEDAY_RANK, `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
   overdue: {
     where: `${LIVE} AND due_date < :today`, // strictly before (C6)
