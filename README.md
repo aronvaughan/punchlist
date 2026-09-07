@@ -299,7 +299,9 @@ granting nobody.
 
 `PUNCHLIST_ANSWERERS` works the same way for the answer door. Blocking is how
 an agent says it needs the human, so an answerer can lift its own stop — opt an
-agent in only where a relayed answer is genuinely wanted.
+agent in only where a relayed answer is genuinely wanted — typically a CLI
+agent working alongside you, recording the direction you just gave it. The
+timeline records which actor answered, so a relayed answer stays auditable.
 
 Other commands: `./bin/punchlist serve` (foreground server),
 `./bin/punchlist snapshot` (WAL-safe backup to `data/backup/`).
