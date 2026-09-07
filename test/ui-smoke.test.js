@@ -878,3 +878,24 @@ test('review/question content: collapsible with a caret toggle for long bodies (
   assert.match(css, /\.content-toggle\s*\{/);
   assert.match(css, /\.content-collapsible\.collapsed \.content-caret\s*\{[^}]*rotate\(-90deg\)/);
 });
+
+// Someday split on the Agents (agent todo) view (2026-09-07): mirrors the
+// human-side Someday split (own nav view + per-project Someday section) —
+// claimable agent work parked when_type='someday' gets its own "Someday"
+// section below Backlog instead of being mixed into the top of the queue.
+test('agents view: someday-parked claimable work gets its own section, not mixed into Backlog', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  const start = views.indexOf('function renderAgents');
+  assert.notEqual(start, -1);
+  const fn = views.slice(start, views.indexOf('\n}', start) + 2);
+  // backlog excludes someday, a distinct someday bucket is filtered out
+  assert.match(fn, /\.filter\(t => t\.when_type !== 'someday'\)/);
+  assert.match(fn, /\.filter\(t => t\.when_type === 'someday'\)/);
+  // its own section head + reorderable list, same shared agents rank space
+  assert.match(fn, /el\('div', 'section-head', 'Someday'\)/);
+  assert.match(fn, /ul\.classList\.add\('section-someday'\)/);
+  // both Backlog and Someday persist to the same view_ranks('agents') list
+  const listAgents = [...fn.matchAll(/sortableList\(ul, \{ list: 'agents' \}\)/g)];
+  assert.equal(listAgents.length, 2, 'Backlog and Someday each get their own sortable list');
+});
