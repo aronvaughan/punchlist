@@ -10,7 +10,9 @@ import { remountSilverbullet } from '../src/kb-remount.js';
 import { silverbulletSpec, silverbulletWrapper } from '../src/service.js';
 
 const OLD = '/home/u/punchlist/data/kb';
-const NEW = '/home/u/vault/kb';
+// A real, writable path: remountSilverbullet refuses a space dir it cannot
+// create, so a fictional target would be rejected before the wrapper is touched.
+const NEW = join(mkdtempSync(join(tmpdir(), 'kbnew-')), 'kb');
 // A realistic wrapper: the env-file source line carries SilverBullet's
 // credentials, and the exec line names a RESOLVED absolute binary — both
 // things a naive "regenerate from spec" would destroy.
@@ -58,9 +60,10 @@ test('kb_path change: rewrites only the space dir and restarts the service', () 
 test('empty kb_path falls back to <dataDir>/kb', () => {
   const { home, spec, cleanup } = install();
   const { run } = recorder();
-  const r = remountSilverbullet({ dataDir: '/srv/pl/data', kbPath: '  ', home, platform: 'linux', run });
-  assert.equal(r.spaceDir, '/srv/pl/data/kb');
-  assert.match(readFileSync(spec.wrapperPath, 'utf8'), /"\/srv\/pl\/data\/kb"\s*$/);
+  const dataDir = mkdtempSync(join(tmpdir(), 'kbdata-'));
+  const r = remountSilverbullet({ dataDir, kbPath: '  ', home, platform: 'linux', run });
+  assert.equal(r.spaceDir, join(dataDir, 'kb'));
+  assert.match(readFileSync(spec.wrapperPath, 'utf8'), new RegExp(`"${join(dataDir, 'kb')}"\\s*$`));
   cleanup();
 });
 
@@ -191,4 +194,39 @@ test('does not clobber auth state the new space dir already has', () => {
   assert.equal(readFileSync(join(newDir, '.silverbullet.auth.json'), 'utf8'), '{"secret":"already-here"}');
   cleanup();
   rmSync(root, { recursive: true, force: true });
+});
+
+// A kb_path SilverBullet cannot create takes the service down and systemd
+// rate-limits the restarts — the operator loses the editor over a typo.
+test('refuses a space dir that is not writable, leaving the mount alone', () => {
+  const { home, spec, cleanup } = install();
+  const { calls, run } = recorder();
+  const logs = [];
+  const before = readFileSync(spec.wrapperPath, 'utf8');
+
+  const r = remountSilverbullet({
+    dataDir: '/unused', kbPath: '/proc/nope/kb', home, platform: 'linux',
+    run, log: m => logs.push(m),
+  });
+
+  assert.equal(r.remounted, false);
+  assert.equal(r.reason, 'unwritable-space');
+  assert.equal(readFileSync(spec.wrapperPath, 'utf8'), before);   // wrapper untouched
+  assert.deepEqual(calls, []);                                     // never restarted
+  assert.match(logs[0], /not writable/);
+  cleanup();
+});
+
+test('accepts a space dir that does not exist yet but has a writable parent', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kbspaces-'));
+  const target = join(root, 'not-yet-created');
+  const { home, cleanup } = install();
+  const { calls, run } = recorder();
+
+  const r = remountSilverbullet({ dataDir: '/unused', kbPath: target, home, platform: 'linux', run });
+
+  assert.equal(r.remounted, true);
+  assert.equal(calls.length, 1);
+  rmSync(root, { recursive: true, force: true });
+  cleanup();
 });
