@@ -128,8 +128,8 @@ test('project context notepad: compact icon/pill control + dialog + agent read p
   const views = await (await get('/views.js')).text();
   assert.match(views, /function projectContextPanel/);
   assert.match(views, /function contextNotepad/);        // shared icon->pill->dialog primitive
-  assert.match(views, /titleEl\.after\(projectContextPanel\(project\)\)/);   // on the title line
-  assert.match(views, /querySelectorAll\('#list-head \.project-context'\)\.forEach\(n => n\.remove\(\)\)/); // no dup on re-render
+  assert.match(views, /titleEl\.after\(projectContextPanel\(project\), projectQuickNavButton\(\)\)/);   // on the title line
+  assert.match(views, /querySelectorAll\('#list-head \.project-context, #list-head \.project-quicknav'\)\.forEach\(n => n\.remove\(\)\)/); // no dup on re-render
   assert.match(views, /const btn = el\('button', 'meta-icon-btn'\)/);
   assert.match(views, /const pill = el\('button', 'meta-pill'\)/);
   assert.match(views, /pill\.replaceChildren\(icon\('file-text', \{ size: 13 \}\)/); // set state: distinct icon + readout
@@ -144,7 +144,7 @@ test('project context notepad: compact icon/pill control + dialog + agent read p
   assert.match(css, /\.meta-icon-btn\s*\{/);
   assert.match(css, /\.meta-pill\s*\{/);
   // context control sits on the title line, not a separate body row
-  assert.match(views, /titleEl\.after\(projectContextPanel\(project\)\)/);
+  assert.match(views, /titleEl\.after\(projectContextPanel\(project\), projectQuickNavButton\(\)\)/);
   assert.match(css, /#list-head \.project-context\s*\{/);
   // working_dir now lives INSIDE the project context dialog (not a standalone line)
   assert.match(html, /id="project-context-workdir"/);
@@ -439,9 +439,17 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.doesNotMatch(html, /id="rail-new-project"/);   // bottom row removed
   assert.match(views, /rail-head-action/);              // pencil on the header line
   assert.match(views, /manageBtn\.addEventListener\('click', \(\) => openManageDialog\('new'\)\)/);
-  // archived projects can't gain sub-projects — the add-child "+" is live-only
-  assert.match(views, /can't gain sub-projects/);
-  assert.match(views, /if \(!p\.archived\) \{/);
+  // the per-row add-child "+" inside the rendered tree is retired (it
+  // duplicated the bottom "New project" row and wasn't reliable) — each row
+  // now carries an eye icon that jumps to that project's task view instead
+  assert.doesNotMatch(views, /add\.title = `Add a sub-project under/);
+  assert.match(views, /const view = el\('button', 'manage-btn manage-view'\)/);
+  assert.match(views, /icon\('eye', \{ size: 17 \}\)/);
+  assert.match(views, /location\.hash = `#\/project\/\$\{encodeURIComponent\(p\.id\)\}`;\s*\n\s*mdialog\(\)\.open = false;/);
+  // the rail's per-parent hover "+" still opens Manage focused on add-child —
+  // only the tree's own row plus was retired
+  assert.match(views, /openManageDialog\(\{ addChild: p\.id \}\)/);
+  assert.match(views, /function openChildInput\(parentId\)/);
   // the reparent drag handle reuses the step-row ⋮⋮ grip (.grip), not a
   // bespoke .manage-grip
   assert.match(views, /el\('span', 'grip'\)/);
@@ -458,6 +466,23 @@ test('manage-projects dialog: shared tree renderer + dialog markup + tokens', as
   assert.match(css, /\.manage-row\.archived\s*\{[^}]*opacity/);
   assert.match(css, /\.manage-children\s*\{[^}]*var\(--line\)/);
   assert.match(css, /\.rail-gear\s*\{/);
+});
+
+test('project quick nav: eye icon on the title line opens Manage; tree rows jump to that project', async () => {
+  const { get } = makeApp();
+  const views = await (await get('/views.js')).text();
+  // title-line trigger: sits next to the project context (book) control,
+  // reuses the shared Manage dialog rather than a bespoke picker
+  assert.match(views, /function projectQuickNavButton/);
+  assert.match(views, /btn\.append\(icon\('eye', \{ size: 15 \}\)\)/);
+  assert.match(views, /btn\.addEventListener\('click', \(\) => openManageDialog\(\)\)/);
+  assert.match(views, /aria-label', 'Jump to another project'/);
+  // each row in the rendered tree carries its own eye icon that applies that
+  // project as the current view and closes the dialog (no dedicated route/API
+  // call — it's the same location.hash the rail rows already use)
+  assert.match(views, /view\.addEventListener\('click', \(\) => \{\s*\n\s*location\.hash = `#\/project\/\$\{encodeURIComponent\(p\.id\)\}`;/);
+  const css = await (await get('/tokens.css')).text();
+  assert.match(css, /\.meta-icon-btn\s*\{/); // the title-line button reuses this, no bespoke class
 });
 
 test('motion: subtle entrance + press feedback, all gated on reduced-motion', async () => {

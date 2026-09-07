@@ -505,16 +505,20 @@ function manageRow(p) {
       await reloadManage();
     } catch (e) { toast(`Save failed: ${e.message}`); }
   });
-  // archived projects can't gain sub-projects — you can't nest under a dead
-  // project — so the add-child "+" only appears on live rows
-  if (!p.archived) {
-    const add = el('button', 'manage-btn');
-    add.append(icon('plus', { size: 17 }));
-    add.title = `Add a sub-project under ${p.name}`;
-    add.setAttribute('aria-label', `Add a sub-project under ${p.name}`);
-    add.addEventListener('click', () => openChildInput(p.id));
-    actions.append(add);
-  }
+  // eye icon: jump straight to this project's task view and close the dialog.
+  // Replaces the old per-row add-child "+" — it duplicated the bottom "New
+  // project" row (which already takes a parent) and, per owner feedback,
+  // wasn't a reliable add affordance anyway. Sub-projects are still created
+  // via the bottom row or the rail's per-parent hover "+".
+  const view = el('button', 'manage-btn manage-view');
+  view.append(icon('eye', { size: 17 }));
+  view.title = `View ${p.name}`;
+  view.setAttribute('aria-label', `View ${p.name}`);
+  view.addEventListener('click', () => {
+    location.hash = `#/project/${encodeURIComponent(p.id)}`;
+    mdialog().open = false;
+  });
+  actions.append(view);
   actions.append(arch);
   row.append(actions);
   return row;
@@ -1034,10 +1038,11 @@ export function renderMain() {
   const subEl = document.getElementById('view-sub');
   listEl.replaceChildren();
   chipsEl.replaceChildren();
-  // the project context control is injected into #list-head (not the list body),
-  // so it isn't cleared by listEl.replaceChildren() — remove any prior copy here
-  // or every re-render (expand/collapse → reload) would stack another one.
-  document.querySelectorAll('#list-head .project-context').forEach(n => n.remove());
+  // the project context control (+ the quick-nav eye) is injected into
+  // #list-head (not the list body), so it isn't cleared by
+  // listEl.replaceChildren() — remove any prior copy here or every re-render
+  // (expand/collapse → reload) would stack another one.
+  document.querySelectorAll('#list-head .project-context, #list-head .project-quicknav').forEach(n => n.remove());
   subEl.textContent = state.route.view === 'today'
     ? new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
     : state.route.view === 'agents' && (state.counts?.unvetted ?? 0) > 0
@@ -1059,7 +1064,10 @@ export function renderMain() {
     titleEl.textContent = project ? project.name : 'Project';
     // context (book icon → pill → dialog, which now also holds working_dir) sits
     // inline on the title line, not on its own line below (owner request).
-    if (project) titleEl.after(projectContextPanel(project));
+    // The eye icon next to it is a quick-nav shortcut: it opens the Manage
+    // dialog (the shared project-edit tree) so you can jump to another
+    // project's tasks without going back to the rail.
+    if (project) titleEl.after(projectContextPanel(project), projectQuickNavButton());
     renderProject(listEl, tasks);
   } else if (r.view === 'today') {
     titleEl.textContent = 'Today';
@@ -1378,6 +1386,21 @@ function projectContextPanel(project) {
     unsetLabel: 'Add project context',
     editLabel: 'Edit project context',
   });
+}
+
+// Quick-nav: an eye icon next to the project context control, shown only
+// while viewing a project's tasks. Opens the shared Manage-projects dialog
+// (the project-edit tree) so the eye button on each row can jump straight to
+// that project's task view — a faster path than the rail when the rail is
+// scrolled/collapsed or hidden behind the mobile drawer.
+function projectQuickNavButton() {
+  const btn = el('button', 'meta-icon-btn project-quicknav');
+  btn.type = 'button';
+  btn.append(icon('eye', { size: 15 }));
+  btn.setAttribute('aria-label', 'Jump to another project');
+  btn.title = 'Jump to another project';
+  btn.addEventListener('click', () => openManageDialog());
+  return btn;
 }
 
 // Tag "Context" notepad: same primitive as projectContextPanel, mirrored
