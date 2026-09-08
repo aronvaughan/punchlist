@@ -505,13 +505,15 @@ function manageRow(p) {
       await reloadManage();
     } catch (e) { toast(`Save failed: ${e.message}`); }
   });
-  // eye icon: jump straight to this project's task view and close the dialog.
-  // Replaces the old per-row add-child "+" — it duplicated the bottom "New
-  // project" row (which already takes a parent) and, per owner feedback,
-  // wasn't a reliable add affordance anyway. Sub-projects are still created
-  // via the bottom row or the rail's per-parent hover "+".
+  // arrow-square-out icon: jump straight to this project's task view and
+  // close the dialog. Replaces the old per-row add-child "+" — it duplicated
+  // the bottom "New project" row (which already takes a parent) and, per
+  // owner feedback, wasn't a reliable add affordance anyway. Sub-projects are
+  // still created via the bottom row or the rail's per-parent hover "+".
+  // (Was an eye icon; swapped for something that reads as "go to" rather
+  // than "preview" — per owner feedback.)
   const view = el('button', 'manage-btn manage-view');
-  view.append(icon('eye', { size: 17 }));
+  view.append(icon('arrow-square-out', { size: 17 }));
   view.title = `View ${p.name}`;
   view.setAttribute('aria-label', `View ${p.name}`);
   view.addEventListener('click', () => {
@@ -1064,9 +1066,9 @@ export function renderMain() {
     titleEl.textContent = project ? project.name : 'Project';
     // context (book icon → pill → dialog, which now also holds working_dir) sits
     // inline on the title line, not on its own line below (owner request).
-    // The eye icon next to it is a quick-nav shortcut: it opens the Manage
-    // dialog (the shared project-edit tree) so you can jump to another
-    // project's tasks without going back to the rail.
+    // The arrow-square-out icon next to it is a quick-nav shortcut: it opens
+    // the Manage dialog (the shared project-edit tree) so you can jump to
+    // another project's tasks without going back to the rail.
     if (project) titleEl.after(projectContextPanel(project), projectQuickNavButton());
     renderProject(listEl, tasks);
   } else if (r.view === 'today') {
@@ -1411,15 +1413,17 @@ function projectContextPanel(project) {
   });
 }
 
-// Quick-nav: an eye icon next to the project context control, shown only
-// while viewing a project's tasks. Opens the shared Manage-projects dialog
-// (the project-edit tree) so the eye button on each row can jump straight to
-// that project's task view — a faster path than the rail when the rail is
-// scrolled/collapsed or hidden behind the mobile drawer.
+// Quick-nav: an arrow-square-out icon next to the project context control,
+// shown only while viewing a project's tasks. Opens the shared
+// Manage-projects dialog (the project-edit tree) so the matching button on
+// each row can jump straight to that project's task view — a faster path
+// than the rail when the rail is scrolled/collapsed or hidden behind the
+// mobile drawer. (Was an eye icon — "peek at" read wrong for "go to"; per
+// owner feedback.)
 function projectQuickNavButton() {
   const btn = el('button', 'meta-icon-btn project-quicknav');
   btn.type = 'button';
-  btn.append(icon('eye', { size: 15 }));
+  btn.append(icon('arrow-square-out', { size: 15 }));
   btn.setAttribute('aria-label', 'Jump to another project');
   btn.title = 'Jump to another project';
   btn.addEventListener('click', () => openManageDialog());
