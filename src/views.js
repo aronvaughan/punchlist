@@ -146,6 +146,14 @@ const VIEWS = {
     where: `assignee <> :admin AND vetted = 0 AND ${OPEN}`,
     keys: ['assignee', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
+  // dispatch.js's Q3 predicate (see docs/2026-09-03-event-dispatch.md): the
+  // active/claimable leg of the `queue` view's WHERE, scoped by caller-supplied
+  // assignee via taskCount's `assignee` param — kept here (not hand-rolled SQL
+  // in dispatch.js) so it can never silently drift from `queue`.
+  dispatch_claimable: { where: `status = 'active' AND vetted = 1`, keys: ['id'], dir: 'ASC' },
+  // dispatch.js's watermark leg: how many of an assignee's tasks are already
+  // claimed/executing.
+  dispatch_executing: { where: `status = 'in_progress'`, keys: ['id'], dir: 'ASC' },
   // no view: open tasks; when scoped to a project, section-ordered
   _default: {
     where: OPEN,
@@ -155,15 +163,18 @@ const VIEWS = {
 
 // COUNT(*) over a view's WHERE (no pagination cap) — single source for the
 // nav-count endpoint. Project/tag/q filters don't apply here.
-export function taskCount(view, { today, soon, admin } = {}) {
+export function taskCount(view, { today, soon, admin, assignee } = {}) {
   const def = VIEWS[view];
   if (!def) throw new Error(`unknown view: ${view}`);
   const args = [];
-  const sql = `SELECT COUNT(*) c FROM tasks WHERE ${def.where}`
+  let where = def.where;
+  if (assignee) where += ' AND assignee = ?';
+  const sql = `SELECT COUNT(*) c FROM tasks WHERE ${where}`
     .replace(/:today|:soon|:admin/g, m => {
       args.push(m === ':today' ? today : m === ':soon' ? soon : admin);
       return '?';
     });
+  if (assignee) args.push(assignee);
   return { sql, args };
 }
 
