@@ -286,6 +286,16 @@
     <wa-button slot="footer" id="manage-close" appearance="plain">Done</wa-button>
   </wa-dialog>
 
+  <!-- view quick-nav: the same "jump to a sibling without the drawer" affordance
+       as the project quick-nav, but for the two rail groups that have more than
+       one member — the date-based lists (Today/Upcoming/Anytime/Someday/Logbook)
+       and the agent-facing group (Agents/Human/Review). Rows use the same
+       generic picker-row-choose component as the template/assignee pickers. -->
+  <wa-dialog id="view-quicknav-dialog" label="Jump to view">
+    <div id="view-quicknav-mount" class="dialog-mount"></div>
+    <wa-button slot="footer" id="view-quicknav-done" appearance="plain">Close</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="when-dialog" label="Schedule for…">
     <input id="when-date-input" type="date" aria-label="When date">
     <wa-button slot="footer" id="when-cancel" appearance="plain">Cancel</wa-button>

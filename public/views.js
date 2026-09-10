@@ -1046,6 +1046,7 @@ export function renderMain() {
   // listEl.replaceChildren() — remove any prior copy here or every re-render
   // (expand/collapse → reload) would stack another one.
   document.querySelectorAll('#list-head .project-context, #list-head .project-quicknav').forEach(n => n.remove());
+  document.querySelectorAll('#list-head .view-quicknav').forEach(n => n.remove());
   subEl.textContent = state.route.view === 'today'
     ? new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
     : state.route.view === 'agents' && (state.counts?.unvetted ?? 0) > 0
@@ -1130,6 +1131,9 @@ export function renderMain() {
     listEl.append(ul);
     sortableList(ul, { list: 'inbox' }); // manual order persists to view_ranks('inbox')
   }
+  // non-project quick-nav: only views that belong to a QUICKNAV_GROUPS group
+  // get the icon (project/tag/inbox have no defined sibling set)
+  if (quicknavGroupFor(r.view)) titleEl.after(viewQuickNavButton());
   if (tasks.length === 0) listEl.append(el('div', 'empty-note', emptyNote(r.view)));
   // one-shot: rows slide in only on a view/route change or a new task (flag),
   // not on every in-place reload
@@ -1437,6 +1441,62 @@ function projectQuickNavButton() {
   btn.addEventListener('click', () => openManageDialog());
   return btn;
 }
+
+// Quick-nav for the two rail groups that aren't projects but still have more
+// than one sibling: the date-based lists (Today/Upcoming/Anytime/Someday/
+// Logbook) and the agent-facing group (Agents/Human/Review) — each already a
+// flat set of top-level rail entries (index.html #rail .rail-views), not a
+// tree, but on mobile the rail is a drawer: reaching a sibling still means
+// open drawer -> scroll -> tap, which is exactly what this shortcuts (owner
+// request: "esp when going back and forth and comparing" views on a phone).
+// A single project-context-style entry has no non-project equivalent, so this
+// reuses the arrow-square-out icon + a lightweight picker (the same
+// picker-row-choose component the template/assignee dialogs use) rather than
+// the full Manage-projects tree, which is project-specific (rename/archive/
+// reparent) and would be the wrong dialog to open here.
+const QUICKNAV_GROUPS = [
+  ['today', 'upcoming', 'anytime', 'someday', 'logbook'],
+  ['agents', 'needs-input', 'review'],
+];
+function quicknavGroupFor(view) {
+  return QUICKNAV_GROUPS.find(g => g.includes(view)) ?? null;
+}
+// label source of truth: the rail's own link text (index.html), so this picker
+// never drifts from what the drawer itself says
+function railLabel(view) {
+  return document.querySelector(`.rail-views a[data-view="${view}"]`)?.textContent ?? view;
+}
+function viewQuickNavButton() {
+  const btn = el('button', 'meta-icon-btn view-quicknav');
+  btn.type = 'button';
+  btn.append(icon('arrow-square-out', { size: 15 }));
+  btn.setAttribute('aria-label', 'Jump to another view');
+  btn.title = 'Jump to another view';
+  btn.addEventListener('click', () => openViewQuickNav());
+  return btn;
+}
+function openViewQuickNav() {
+  const group = quicknavGroupFor(state.route.view);
+  if (!group) return;
+  const dlg = document.getElementById('view-quicknav-dialog');
+  const mount = document.getElementById('view-quicknav-mount');
+  mount.replaceChildren();
+  for (const view of group) {
+    const rowEl = el('div', 'picker-row-wrap' + (view === state.route.view ? ' sel' : ''));
+    const choose = el('button', 'picker-row-choose', railLabel(view));
+    choose.type = 'button';
+    // same navigation the rail link performs: set the hash and let the
+    // existing hashchange handler (onRoute in app.js) do the rest — no
+    // duplicated routing logic here.
+    choose.addEventListener('click', () => { dlg.open = false; location.hash = `#/${view}`; });
+    rowEl.append(choose);
+    mount.append(rowEl);
+  }
+  dlg.open = true;
+}
+document.getElementById('view-quicknav-done').addEventListener('click', () => {
+  document.getElementById('view-quicknav-dialog').open = false;
+});
 
 // Tag "Context" notepad: same primitive as projectContextPanel, mirrored
 // 1:1 for tags (tag.notes, migration 015). A readme agents read for
