@@ -327,11 +327,16 @@ export function timelineSection(task) {
   let items = [];
 
   const applyState = () => {
+    const hasActivity = items.length > 0;
+    // No activity yet: hide the toggle header and the "No activity yet."
+    // placeholder (nothing to show/toggle), but keep the composer reachable
+    // — it can't be gated behind a hidden header's collapse state.
+    header.hidden = !hasActivity;
     header.classList.toggle('collapsed', collapsed);
     header.setAttribute('aria-expanded', String(!collapsed));
     spark.hidden = !collapsed || !items.length;
-    listEl.hidden = collapsed;
-    composer.hidden = collapsed;
+    listEl.hidden = !hasActivity || collapsed;
+    composer.hidden = hasActivity && collapsed;
   };
   header.addEventListener('click', () => {
     collapsed = !collapsed;
