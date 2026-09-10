@@ -1,7 +1,8 @@
 // views.js — list rendering + drag & drop. All user content goes through
 // textContent (titles/tags/names) — never innerHTML.
 import Sortable from '/vendor/sortable.core.esm.js';
-import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor } from '/app.js';
+import { api, state, reload, rollback, toast, todayISO, setTagFilter, pickWhen, dueWindow, currentActor,
+  loadMoreLogbook, loadingMoreLogbook } from '/app.js';
 import { dueCountdown, dueShort } from '/dates.js';
 import { expandRow, createInline } from '/inline.js';
 import { openTemplatePicker } from '/detail.js';
@@ -1107,6 +1108,13 @@ export function renderMain() {
     titleEl.textContent = 'Logbook';
     renderGrouped(listEl, tasks, t => (t.completed_at || '').slice(0, 10) || 'Earlier',
       { showProject: true, logbook: true });
+    if (state.nextCursor) {
+      const more = el('button', 'link-btn logbook-load-more',
+        loadingMoreLogbook ? 'Loading…' : 'Load more');
+      more.disabled = loadingMoreLogbook;
+      more.addEventListener('click', loadMoreLogbook);
+      listEl.append(more);
+    }
   } else if (r.view === 'review') {
     titleEl.textContent = 'Review';
     renderReview(listEl, tasks);
