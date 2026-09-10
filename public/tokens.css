@@ -1537,6 +1537,12 @@ body.drag-active .section-block.empty .task-list {
   padding: 6px 0;
 }
 .link-btn:hover { color: var(--accent); }
+.logbook-load-more {
+  display: block;
+  margin: 12px auto 24px;
+  text-align: center;
+}
+.logbook-load-more:disabled { opacity: .6; cursor: default; }
 .report-line {
   margin: 0 8px 6px 42px;
   font-size: 13px;

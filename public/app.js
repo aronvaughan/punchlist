@@ -269,8 +269,31 @@ function promptToken() {
   return tokenPrompt;
 }
 
+// ---- perf: lightweight timing for every backend call, gated by a
+// localStorage flag so it costs nothing by default. Turn on with
+// `localStorage.setItem('av-tasks-perf', '1')` in devtools, then watch the
+// console (or read window.__avPerfLog for the last N entries) while
+// reproducing a slow interaction. Kept dependency-free on purpose (task:
+// "Add timing calls to all web calls to punchlist backend"). ----
+const PERF_KEY = 'av-tasks-perf';
+const PERF_LOG_MAX = 200;
+export const perfLog = [];
+function perfEnabled() {
+  try { return localStorage.getItem(PERF_KEY) === '1'; } catch { return false; }
+}
+function recordTiming(method, path, ms, status) {
+  if (!perfEnabled()) return;
+  const entry = { method, path, ms: Math.round(ms * 10) / 10, status, at: Date.now() };
+  perfLog.push(entry);
+  if (perfLog.length > PERF_LOG_MAX) perfLog.shift();
+  // eslint-disable-next-line no-console
+  console.log(`[perf] ${method} ${path} ${entry.ms}ms (${status})`);
+}
+if (typeof window !== 'undefined') window.__avPerfLog = perfLog;
+
 // ---- fetch wrapper: bearer token, 401 -> prompt + retry ----
 export async function api(method, path, body) {
+  const t0 = performance.now();
   for (let attempt = 0; ; attempt++) {
     const headers = {};
     const tok = localStorage.getItem(TOKEN_KEY);
@@ -282,11 +305,13 @@ export async function api(method, path, body) {
     if (res.status === 401 && attempt === 0) { await promptToken(); continue; }
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
+      recordTiming(method, path, performance.now() - t0, res.status);
       const err = new Error(json.error || `HTTP ${res.status}`);
       err.status = res.status;
       err.body = json;
       throw err;
     }
+    recordTiming(method, path, performance.now() - t0, res.status);
     return json;
   }
 }
@@ -435,7 +460,13 @@ export async function reload() {
   else params.set('view', r.view);
   if (state.tag && r.view !== 'tag') params.set('tag', state.tag);
   if (state.q) params.set('q', state.q);
-  params.set('limit', '500');
+  // Logbook only grows over time and the admin rarely needs more than the
+  // recent tail — investigation (perf task, step 2) showed reload() was
+  // pulling up to 500 rows for it on every visit even though the view only
+  // ever renders what's on screen. Page it instead (LOGBOOK_PAGE) and let
+  // the UI ask for more via loadMoreLogbook() below (step 3).
+  params.set('limit', r.view === 'logbook' ? String(LOGBOOK_PAGE) : '500');
+  const t0 = performance.now();
   try {
     const w = dueWindow();
     const [tasksRes, projRes, tagsRes, countsRes, dueSoonRes] = await Promise.all([
@@ -455,10 +486,36 @@ export async function reload() {
     toast(`Load failed: ${e.message}`);
     return;
   }
+  recordTiming('RELOAD', `#/${r.view}`, performance.now() - t0, 'ok');
   renderRail();
   renderMain();
   renderFoot();
   loadInstance();
+}
+
+// Logbook pagination (perf task step 3): fetch a bounded page + "load more"
+// instead of the full done-tasks history. Uses the same keyset-cursor
+// contract as every other paginated /tasks view (views.js taskWhere) — no
+// ad hoc SQL, just the existing next_cursor round-trip.
+const LOGBOOK_PAGE = 50;
+export let loadingMoreLogbook = false;
+export async function loadMoreLogbook() {
+  if (loadingMoreLogbook || !state.nextCursor || state.route.view !== 'logbook') return;
+  loadingMoreLogbook = true;
+  renderMain(); // show the button's loading state
+  const params = new URLSearchParams({ view: 'logbook', limit: String(LOGBOOK_PAGE), cursor: state.nextCursor });
+  if (state.tag) params.set('tag', state.tag);
+  if (state.q) params.set('q', state.q);
+  try {
+    const res = await api('GET', `/tasks?${params}`);
+    state.tasks = state.tasks.concat(res.items);
+    state.nextCursor = res.next_cursor || null;
+  } catch (e) {
+    toast(`Load failed: ${e.message}`);
+  } finally {
+    loadingMoreLogbook = false;
+    renderMain();
+  }
 }
 
 export function setTagFilter(tag) {
