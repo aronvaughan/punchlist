@@ -13,6 +13,12 @@
 //   dispatch_enabled     '0'|'1'
 //   dispatch_debounce_ms  coalesce an event burst into one wake (default 2000)
 //   dispatch_agents       JSON {agent: {cmd, max}} (malformed → {}, never throws)
+//
+// Task reads: claimable()/executing() go through views.js's taskCount() —
+// the same query-builder module the HTTP read routes (api.js) use — instead
+// of hand-rolled SQL, so this predicate can never silently drift from the
+// `queue` view it's meant to mirror (single source of task-read semantics).
+import { taskCount } from './views.js';
 
 export function createDispatcher({ db, spawn, now = () => Date.now() }) {
   const getSetting = (k, d = '') =>
@@ -32,10 +38,12 @@ export function createDispatcher({ db, spawn, now = () => Date.now() }) {
   // Q3 predicate — reuse the exact `queue`-view filter so dispatch and an
   // agent's own queue can never disagree. `status='active'` already excludes
   // blocked (needs-input), in_progress (claimed), review, done, archived.
-  const claimable = a =>
-    db.prepare("SELECT COUNT(*) n FROM tasks WHERE status='active' AND assignee=? AND vetted=1").get(a).n;
-  const executing = a =>
-    db.prepare("SELECT COUNT(*) n FROM tasks WHERE status='in_progress' AND assignee=?").get(a).n;
+  const count = (view, assignee) => {
+    const { sql, args } = taskCount(view, { assignee });
+    return db.prepare(sql).get(...args).c;
+  };
+  const claimable = a => count('dispatch_claimable', a);
+  const executing = a => count('dispatch_executing', a);
 
   const live = new Map();   // agent -> { pid, startedAt } — orchestrators in flight
   const timers = new Map(); // agent -> debounce timer
