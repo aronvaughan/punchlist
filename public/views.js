@@ -1088,7 +1088,13 @@ export function renderMain() {
       listEl.append(block);
       listEl.append(el('div', 'section-head', 'Today'));
     }
-    const ul = taskList(tasks, { showProject: true, sortable: true });
+    // a task can land in BOTH queries (e.g. scheduled for today via when_date
+    // AND separately due within the due-soon window via due_date): don't
+    // repeat it in the main list once it's already shown in the pinned
+    // Due soon block above (C-dedupe).
+    const dueSoonIds = new Set(state.dueSoon.map(t => t.id));
+    const todayTasks = dueSoonIds.size ? tasks.filter(t => !dueSoonIds.has(t.id)) : tasks;
+    const ul = taskList(todayTasks, { showProject: true, sortable: true });
     listEl.append(ul);
     sortableList(ul, { list: 'today' });
   } else if (r.view === 'tag') {
