@@ -1,0 +1,21 @@
+{
+  "view": {
+    "number": 46,
+    "url": "https://github.com/example-org/greenhouse/pull/46",
+    "state": "OPEN",
+    "isDraft": false,
+    "headRefOid": "eeee5555",
+    "reviewDecision": "REVIEW_REQUIRED",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "reviews": [
+      { "id": "REV_10", "author": { "login": "reviewer1" }, "state": "COMMENTED", "submittedAt": "2026-09-17T08:00:00Z" }
+    ],
+    "comments": [
+      { "id": "IC_10", "author": { "login": "author1" }, "createdAt": "2026-09-17T08:05:00Z" }
+    ]
+  },
+  "threads": {
+    "data": { "repository": { "pullRequest": { "reviewThreads": { "nodes": [] } } } }
+  }
+}

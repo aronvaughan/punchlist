@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Seatbelt: only scripts/publish.sh pushes to the public remote.
+# Install once (worktrees share it): ln -sf ../../scripts/pre-push .git/hooks/pre-push
+remote="$1"
+if [ "$remote" = "public" ] && [ -z "${PLT_PUBLISH:-}" ]; then
+  echo "refused: pushes to the public remote go through scripts/publish.sh" >&2
+  exit 1
+fi

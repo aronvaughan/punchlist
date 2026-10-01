@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   serviceSpec, serviceRestartCmd, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper,
   silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath, SILVERBULLET_VERSION, resolveKbSpaceDir,
+  stableNodePath,
 } from '../src/service.js';
 
 const base = { repo: '/home/u/app', dataDir: '/home/u/app/data', node: '/usr/bin/node', home: '/home/u' };
@@ -212,4 +213,39 @@ test('serviceRestartCmd: systemd on linux, launchd kickstart on darwin', () => {
   const [c, a] = serviceRestartCmd('darwin', { uid: 501 });
   assert.equal(c, 'launchctl');
   assert.deepEqual(a, ['kickstart', '-k', 'gui/501/com.punchlist']);
+});
+
+test('stableNodePath prefers a stable symlink over a version-pinned execPath', () => {
+  const pinned = '/opt/homebrew/Cellar/node/26.8.1/bin/node';
+  // both the Cellar path and the brew symlink resolve to the same real binary
+  const realpath = (p) =>
+    (p === pinned || p === '/opt/homebrew/bin/node') ? pinned : (() => { throw new Error('ENOENT'); })();
+  assert.equal(stableNodePath(pinned, realpath), '/opt/homebrew/bin/node');
+});
+
+test('stableNodePath falls back to execPath when no stable alias matches', () => {
+  const nvm = '/home/u/.nvm/versions/node/v26.8.1/bin/node';
+  const realpath = (p) => (p === nvm ? nvm : (() => { throw new Error('ENOENT'); })());
+  assert.equal(stableNodePath(nvm, realpath), nvm);
+});
+
+test('stableNodePath never picks a stable path pointing at a DIFFERENT node', () => {
+  const brewNode = '/opt/homebrew/Cellar/node/26.8.1/bin/node';
+  const systemNode = '/usr/bin/node';   // an unrelated, older install
+  const realpath = (p) => (p === '/usr/bin/node' ? systemNode : brewNode);
+  // /opt/homebrew/bin/node resolves to brewNode, so it wins; /usr/bin/node must not
+  assert.equal(stableNodePath(brewNode, realpath), '/opt/homebrew/bin/node');
+});
+
+test('darwin start both loads and kickstarts (load alone leaves it registered but stopped)', () => {
+  const s = serviceSpec('darwin', { ...base, home: '/Users/u', uid: 501 });
+  assert.equal(s.start.length, 2);
+  assert.deepEqual(s.start[0], ['launchctl', ['load', '-w', s.path]]);
+  assert.deepEqual(s.start[1], ['launchctl', ['kickstart', '-k', 'gui/501/com.punchlist']]);
+});
+
+test('darwin silverbullet start also kickstarts', () => {
+  const s = silverbulletSpec('darwin', { repo: '/r', spaceDir: '/r/data/kb', home: '/Users/u', uid: 501 });
+  assert.equal(s.start.length, 2);
+  assert.deepEqual(s.start[1], ['launchctl', ['kickstart', '-k', 'gui/501/com.punchlist.silverbullet']]);
 });

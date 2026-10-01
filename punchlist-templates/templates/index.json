@@ -13,6 +13,51 @@
       "path": "templates/packs/core/coding-task.md"
     },
     {
+      "name": "digest",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "digest",
+        "writing"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/digest.md"
+    },
+    {
+      "name": "dispatch-brief",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "dispatch"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/dispatch-brief.md"
+    },
+    {
+      "name": "fix-summary",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "gate"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/fix-summary.md"
+    },
+    {
+      "name": "handoff",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "handoff"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/handoff.md"
+    },
+    {
       "name": "health-report",
       "kind": "template",
       "tags": [
@@ -24,6 +69,17 @@
       "domain": "engineering",
       "output": "markdown",
       "path": "templates/packs/core/health-report.md"
+    },
+    {
+      "name": "pre-pr-summary",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "gate"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/pre-pr-summary.md"
     },
     {
       "name": "pre-push-review",
@@ -87,6 +143,53 @@
       "domain": "general",
       "output": "markdown",
       "path": "templates/packs/core/research-brief.md"
+    },
+    {
+      "name": "review-followup",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "review",
+        "writing"
+      ],
+      "domain": "engineering",
+      "output": "html",
+      "path": "templates/packs/core/review-followup.md"
+    },
+    {
+      "name": "review-outbound",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "review",
+        "writing"
+      ],
+      "domain": "engineering",
+      "output": "html",
+      "path": "templates/packs/core/review-outbound.md"
+    },
+    {
+      "name": "review-response",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "gate"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/review-response.md"
+    },
+    {
+      "name": "spike-note",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "research",
+        "writing"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/spike-note.md"
     },
     {
       "name": "weekly-review",

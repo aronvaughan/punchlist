@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://punchlist.example/schemas/state.schema.json",
+  "title": "plt run state",
+  "description": "A run's state.yaml. plt is the only writer, so an unknown top-level key is a defect, not a feature. Every key here is one lib/spine.js writes: launchRun writes run/cycle/status/formula_version/repo_dir/owner/created/estimate/pin/current_step/steps, stepStart claims owner_window, pollRun writes poll, closeRun writes closed/closed_as, gateCheck writes facts and discardRun writes exit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run", "cycle", "status", "steps"],
+  "properties": {
+    "run": { "type": "string" },
+    "cycle": { "type": "string" },
+    "status": { "enum": ["open", "closed"] },
+    "closed_as": { "enum": ["done", "discarded"] },
+    "formula_version": { "type": ["string", "number", "null"] },
+    "created": { "type": "string", "format": "date-time" },
+    "closed": { "type": "string", "format": "date-time" },
+    "current_step": { "type": ["string", "null"] },
+    "owner": { "type": ["string", "null"] },
+    "owner_window": { "type": ["string", "null"] },
+    "repo_dir": { "type": ["string", "null"] },
+    "pin": { "type": ["object", "null"] },
+    "facts": { "type": ["object", "null"] },
+    "exit": { "type": ["string", "null"] },
+    "poll": {
+      "description": "The last facts `plt run poll` saw, and when. A snapshot of GitHub's truth, not a status the spine owns.",
+      "type": ["object", "null"],
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "facts": { "type": ["object", "null"] }
+      }
+    },
+    "estimate": {
+      "description": "What launchRun wrote: the estimate and the unit it is counted in (config.estimation.unit, default ideal_days). An estimate is never re-pointed, so this is written once.",
+      "type": ["object", "null"],
+      "required": ["unit", "value"],
+      "properties": {
+        "unit": { "type": "string" },
+        "value": { "type": "number" }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "enum": ["pending", "ready", "claimed", "in_progress", "in_review", "blocked", "done", "skipped"] },
+          "receipts_required": {
+            "description": "What compileRequirements derived from the step. The kinds are the ledger's event kinds PLUS `overlap` and `effort` — those two are evaluated live at gateCheck (from the run's inputs and its effort file) and are never satisfied by a receipt, so they exist here and nowhere in the ledger.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["kind", "name"],
+              "properties": {
+                "kind": {
+                  "enum": ["skill", "agent", "tool", "gate", "jira", "artifact", "gh", "extrapolation", "time", "suggestion", "reprompt", "file", "touches", "review-activity", "decision", "overlap", "effort"]
+                },
+                "name": { "type": "string" },
+                "mode": { "enum": ["hard", "banner"] }
+              }
+            }
+          },
+          "outcome": { "type": ["string", "null"] },
+          "started": { "type": ["string", "null"] },
+          "finished": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

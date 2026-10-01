@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://punchlist.example/schemas/inputs.schema.json",
+  "title": "plt run inputs",
+  "description": "A run's inputs.yaml — what the launcher declared. Closed: the file is hand-authored, so a key nobody reads is a typo. Nothing is required: a card run is keyed by `card`, a review run by `pr`, and the run id itself names the run either way.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "card": { "type": "string" },
+    "card_url": { "type": "string" },
+    "title": { "type": "string" },
+    "epic": { "type": "string" },
+    "effort": { "type": "string" },
+    "branch": { "type": "string" },
+    "repo_dir": { "type": "string" },
+    "pr": {
+      "description": "The PR number, or its URL. Both forms are live and every reader takes either: facts.prNumber, digest and render each match `pull/<n>` before falling back to a bare number, and render links the run by this URL when it is one.",
+      "type": ["integer", "string"]
+    },
+    "pr_number": { "type": ["integer", "string"] },
+    "repo": {
+      "description": "The run's PR repo as owner/name. facts.findPrRepo reads it first, before the owner/name in a `pr` URL and the config default (links.pr_repo), so a run in a second repo never reads another repo's PR of the same number.",
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$"
+    },
+    "author": { "type": "string" },
+    "base": { "type": "string" },
+    "head": { "type": "string" },
+    "cycle": { "type": "string" },
+    "estimate": { "type": "number" },
+    "merge": { "enum": ["auto", "human"] },
+    "comparable": { "type": "string" },
+    "stacked_on": { "type": ["string", "array"] },
+    "follow_on": { "type": ["string", "array"] },
+    "after": { "type": ["string", "array"] },
+    "question": { "type": "string" },
+    "decision_id": { "type": "string" },
+    "review_note": { "type": "string" },
+    "arch_note": { "type": "string" },
+    "verify": { "type": ["string", "array"] },
+    "refuse": { "type": ["string", "array"] },
+    "window": {
+      "type": "object",
+      "properties": {
+        "tab_id": { "type": "string" },
+        "pane_id": { "type": "string" },
+        "label": { "type": "string" }
+      }
+    },
+    "vars": { "type": "object" },
+    "touches": { "type": "array", "items": { "type": "string" } }
+  }
+}

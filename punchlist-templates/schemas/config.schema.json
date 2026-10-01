@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://punchlist.example/schemas/config.schema.json",
+  "title": "plt merged config",
+  "description": "The merged spine config. Lenient by intent \u2014 an org adds keys plt never reads. Required here are only the keys the code reads without a default; the rest are typed when present.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "models",
+    "gates"
+  ],
+  "properties": {
+    "models": {
+      "type": "object",
+      "required": [
+        "default_model"
+      ],
+      "properties": {
+        "default_model": {
+          "type": "string"
+        }
+      }
+    },
+    "actors": {
+      "description": "Who the org is. `humans` is the list of people who may pass a human gate; it is OPTIONAL \u2014 assertHuman returns early on an empty or absent list, and a public default can carry no names.",
+      "type": "object",
+      "properties": {
+        "humans": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "github_logins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "required": [
+        "human_signals"
+      ],
+      "properties": {
+        "human_signals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "links": {
+      "type": "object",
+      "properties": {
+        "pr_repo": {
+          "type": "string",
+          "pattern": "^[\\w.-]+/[\\w.-]+$"
+        }
+      }
+    },
+    "timers": {
+      "type": "object",
+      "properties": {
+        "watch": {
+          "type": "object",
+          "properties": {
+            "every": {
+              "type": "string",
+              "pattern": "^\\d+\\s*[smh]?$"
+            }
+          }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "panel_mode": {
+          "enum": [
+            "hard",
+            "banner"
+          ]
+        },
+        "writing_mode": {
+          "enum": [
+            "hard",
+            "banner"
+          ]
+        }
+      }
+    },
+    "denylist_file": {
+      "type": "string"
+    }
+  }
+}

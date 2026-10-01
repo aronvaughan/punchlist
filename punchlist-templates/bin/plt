@@ -14,12 +14,21 @@
 //
 // Frontmatter is a documented SIMPLE SUBSET of YAML (see README
 // "Format reference"): scalar `key: value`, inline lists `key: [a, b]`,
-// inline maps `key: { a: 1, b: 2 }`, and one level of block lists of maps:
+// inline maps `key: { a: 1, b: 2 }`, one level of block lists of maps:
 //   inputs:
 //     - name: foo
 //       exemplar: "..."
-// Nothing else is supported, by design. Workflow files carry a `steps:`
-// block in the BODY (after the frontmatter), same subset.
+// and nested block maps (a key with an empty value, followed by
+// deeper-indented `key: value` lines, to any depth) — used by the `menu:`
+// block (`words` / `commands` / `by_mode`). Nothing else is supported, by
+// design. Workflow files carry a `steps:`
+// block in the BODY (after the frontmatter), same subset, plus: a step key
+// with an empty value followed by deeper-indented `key: value` lines becomes
+// a nested block map, one level deep (e.g. `gate:` / `jira:` / `verify:`).
+// Workflow steps may also carry the process-spine keys `model reasoning
+// skills agents tools artifact gate jira verify`; `gate`, `jira` and
+// `verify` are block maps (a key with an empty value followed by indented
+// `key: value` lines). An adversarial `gate` carries `mode: hard|banner`.
 
 const fs = require('fs');
 const path = require('path');
@@ -83,9 +92,24 @@ function parseScalar(raw) {
   return stripQuotes(v);
 }
 
+// A key's value is "empty" (opens a block) once any trailing `# comment` is
+// stripped from an unquoted value — mirrors parseScalar's own comment rule.
+function isEmptyBlockVal(v) {
+  const t = v.trim();
+  if (t.startsWith('"') || t.startsWith("'")) return false;
+  return t.replace(/\s+#.*$/, '').trim() === '';
+}
+
 // Parse the frontmatter block of `text`. Returns:
 //   { fm, fmStart, fmEnd, bodyStart, body, errors: [{line, msg}] }
 // fm is null when no frontmatter block exists at all.
+//
+// Block scoping is indentation-based via a stack of open containers
+// ({ indent, ref, isList }), root = fm at indent -1. A key with an empty
+// value is ambiguous until the next substantive line is peeked: a `- `
+// item opens a block list; a bare `key: value` line opens a nested block
+// map (to any depth) — this is what lets `menu:` carry `words` / `commands`
+// / `by_mode` as maps of maps.
 function parseFrontmatter(text) {
   const lines = text.split(/\r?\n/);
   const errors = [];
@@ -101,41 +125,66 @@ function parseFrontmatter(text) {
   }
 
   const fm = {};
-  const fmLines = {}; // key -> line number (1-based) where it was defined
-  let listKey = null;   // key of the block list being filled
-  let listItems = null;
-  let current = null;   // current map item within the block list
+  const fmLines = {}; // key -> line number (1-based) where it was defined, root keys only
+  const root = { indent: -1, ref: fm, isList: false };
+  const stack = [root];
+
+  // Look past blank/comment lines after index i for the next substantive line;
+  // returns { indent, trimmed } or null when none remains before `close`.
+  const peek = (i) => {
+    for (let j = i + 1; j < close; j++) {
+      const t = lines[j].trim();
+      if (!t || t.startsWith('#')) continue;
+      return { indent: lines[j].match(/^\s*/)[0].length, trimmed: t };
+    }
+    return null;
+  };
+
   for (let i = 1; i < close; i++) {
     const raw = lines[i];
     const ln = i + 1;
-    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const indent = raw.match(/^\s*/)[0].length;
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
+    const top = stack[stack.length - 1];
     let m;
-    if ((m = raw.match(/^([A-Za-z_][\w-]*):\s*(.*)$/))) {
+    if (top.isList && (m = trimmed.match(/^-\s+([\w-]+):\s*(.*)$/))) {
+      const item = { [m[1]]: parseScalar(m[2]), __line: ln };
+      top.ref.push(item);
+      stack.push({ indent, ref: item, isList: false });
+    } else if (top.isList && (m = trimmed.match(/^-\s+(.+)$/))) {
+      top.ref.push(parseScalar(m[1]));
+    } else if (!top.isList && (m = trimmed.match(/^([A-Za-z_][\w-]*):\s*(.*)$/))) {
       const key = m[1];
-      const val = m[2].replace(/\s+#.*$/, '');
-      if (val.trim() === '') {
-        listItems = [];
-        fm[key] = listItems;
-        fmLines[key] = ln;
-        listKey = key;
-        current = null;
+      const val = m[2];
+      if (isEmptyBlockVal(val)) {
+        const next = peek(i);
+        const isNestedMap = next && next.indent > indent && !/^-(\s|$)/.test(next.trimmed) && /^([A-Za-z_][\w-]*):/.test(next.trimmed);
+        const ref = isNestedMap ? {} : [];
+        top.ref[key] = ref;
+        if (top === root) fmLines[key] = ln;
+        if (next && next.indent > indent) stack.push({ indent, ref, isList: !isNestedMap });
       } else {
-        fm[key] = parseScalar(val);
-        fmLines[key] = ln;
-        listKey = null;
-        current = null;
+        let full = val;
+        // An inline map `{ ... }` may wrap onto continuation lines (no `key:` of
+        // its own) before the closing brace — join them before handing to parseScalar.
+        if (/^\{/.test(full.trim()) && !/\}\s*(#.*)?$/.test(full.trim())) {
+          let j = i;
+          while (j < close - 1 && !/\}\s*(#.*)?$/.test(full.trim())) { j++; full += ' ' + lines[j].trim(); }
+          if (!/\}\s*(#.*)?$/.test(full.trim())) {
+            // Never found the closing brace before the end of the frontmatter block — do not
+            // silently swallow every following line into this value; report and move on.
+            errors.push({ line: ln, msg: `unterminated inline map: ${key}: ${val}` });
+            continue;
+          }
+          i = j;
+        }
+        top.ref[key] = parseScalar(full);
+        if (top === root) fmLines[key] = ln;
       }
-    } else if (listKey && (m = raw.match(/^\s+-\s+([\w-]+):\s*(.*)$/))) {
-      current = { [m[1]]: parseScalar(m[2]) };
-      current.__line = ln;
-      listItems.push(current);
-    } else if (listKey && (m = raw.match(/^\s+-\s+(.+)$/))) {
-      listItems.push(parseScalar(m[1]));
-      current = null;
-    } else if (current && (m = raw.match(/^\s+([\w-]+):\s*(.*)$/))) {
-      current[m[1]] = parseScalar(m[2]);
     } else {
-      errors.push({ line: ln, msg: `unparseable frontmatter line: ${raw.trim()}` });
+      errors.push({ line: ln, msg: `unparseable frontmatter line: ${trimmed}` });
     }
   }
   return {
@@ -164,6 +213,7 @@ function parseSteps(bodyLines, bodyStart) {
   let fenced = false;
   let inBlock = false;
   let current = null;
+  let block = null;
   for (let i = 0; i < bodyLines.length; i++) {
     const raw = bodyLines[i];
     const ln = bodyStart + i;
@@ -178,14 +228,23 @@ function parseSteps(bodyLines, bodyStart) {
     }
     if (!raw.trim() || raw.trim().startsWith('#')) continue;
     let m;
+    const indentOf = (s) => s.match(/^\s*/)[0].length;
     if ((m = raw.match(/^\s+-\s+([\w-]+):\s*(.*)$/))) {
-      current = { [m[1]]: parseScalar(m[2]), __line: ln };
+      current = { [m[1]]: parseScalar(m[2]), __line: ln, __indent: indentOf(raw) + 2 };
+      block = null;
       steps.push(current);
+    } else if (current && block && indentOf(raw) > block.indent && (m = raw.match(/^\s+([\w-]+):\s*(.*)$/))) {
+      current[block.key][m[1]] = parseScalar(m[2]);          // inside an open block map
     } else if (current && (m = raw.match(/^\s+([\w-]+):\s*(.*)$/))) {
-      current[m[1]] = parseScalar(m[2]);
+      if (m[2].trim() === '' || /^#/.test(m[2].trim())) {
+        current[m[1]] = {};                                    // empty value opens a block map
+        block = { key: m[1], indent: indentOf(raw) };
+      } else {
+        current[m[1]] = parseScalar(m[2]);
+        block = null;
+      }
     } else if (/^\S/.test(raw)) {
-      inBlock = false; // block ended (heading, markers, prose)
-      current = null;
+      inBlock = false; current = null; block = null;
     } else {
       errors.push({ line: ln, msg: `unparseable step line: ${raw.trim()}` });
     }
@@ -277,6 +336,9 @@ function findSection(bodyLines, bodyStart, heading, { toEnd = false } = {}) {
 const MIN_EXEMPLAR_CHARS = 200;
 
 // Interpolation placeholders used in a string: {input_name}
+// The run vars `renderBanners` substitutes into a `banner` (lib/spine.js, `const vars = …`).
+const BANNER_VARS = ['run', 'card', 'pr_url', 'card_url'];
+
 function placeholders(s) {
   const out = [];
   for (const m of String(s).matchAll(/\{([A-Za-z_][\w-]*)\}/g)) out.push(m[1]);
@@ -322,8 +384,11 @@ function findDependencyCycle(steps) {
 }
 
 // Validate a workflow file's parsed form. `templates` is a Set of known
-// template names. Returns [{line, msg}].
-function validateWorkflow(parsed, file, templates) {
+// template names. `opts` (all optional) = { config, skillsOnDisk: Set,
+// agentsOnDisk: Set } — when absent, the corresponding checks are skipped.
+// Returns [{line, msg}].
+function validateWorkflow(parsed, file, templates, opts = {}) {
+  const { POLL_FACTS } = require('../lib/spine');
   const errors = [...parsed.errors];
   const { fm, fmLines, steps } = parsed;
   const at = (key) => (fmLines && fmLines[key]) || 1;
@@ -333,6 +398,12 @@ function validateWorkflow(parsed, file, templates) {
   else if (fm.name !== expectedName) {
     errors.push({ line: at('name'), msg: `name \`${fm.name}\` does not match filename \`${expectedName}.md\`` });
   }
+  // `index`/`run`/`all` are reserved for `plt render`'s board-page targets — a workflow named one
+  // of these would be permanently unreachable through `plt render <name>` (shadowed by the board
+  // page every time), so it is refused here rather than left as a silent trap.
+  if (fm.name && ['index', 'run', 'all'].includes(fm.name)) {
+    errors.push({ line: at('name'), msg: `name \`${fm.name}\` is reserved by \`plt render\` (index|run|all are board-page targets) — pick another name` });
+  }
 
   if (!Array.isArray(fm.actors) || fm.actors.length === 0) {
     errors.push({ line: at('actors'), msg: 'workflow must declare `actors: [..]`' });
@@ -340,6 +411,13 @@ function validateWorkflow(parsed, file, templates) {
   if (fm.inputs !== undefined &&
       (!Array.isArray(fm.inputs) || fm.inputs.some((i) => typeof i !== 'string' || !i.trim()))) {
     errors.push({ line: at('inputs'), msg: '`inputs` must be an inline list of names, e.g. `inputs: [item, budget]`' });
+  }
+  // `cards: external` means the run tracks work we do not own, so jira requirements never apply
+  // (lib/spine.js#externalCards). Nothing else is a value: `externalCards` swallows its own errors,
+  // so an unvalidated typo (`extenal`) would silently restore the jira requirements a formula
+  // meant to drop, with no message anywhere.
+  if (fm.cards !== undefined && fm.cards !== 'external') {
+    errors.push({ line: at('cards'), msg: `\`cards: ${fm.cards}\` must be \`external\` (the only value) or absent` });
   }
   const inputs = new Set(Array.isArray(fm.inputs) ? fm.inputs : []);
   const actors = new Set(Array.isArray(fm.actors) ? fm.actors : []);
@@ -456,14 +534,181 @@ function validateWorkflow(parsed, file, templates) {
       }
     }
 
-    for (const field of ['title', 'notes']) {
+    // ---- process-spine keys (all optional; validated when present) ----
+    const cfg = opts.config || {};
+    const listOfNames = (v) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && x.trim());
+    if (s.model !== undefined) {
+      const allowed = (cfg.models && cfg.models.allowed) || null;
+      if (typeof s.model !== 'string' || (allowed && !allowed.includes(s.model) && !/^\{\{.*\}\}$/.test(s.model))) {
+        errors.push({ line, msg: `step \`${s.id}\`: model \`${s.model}\` is not in config.models.allowed` });
+      }
+    }
+    if (s.reasoning !== undefined) {
+      const levels = (cfg.models && cfg.models.reasoning_levels) || ['low', 'medium', 'high', 'max'];
+      if (!levels.includes(s.reasoning)) errors.push({ line, msg: `step \`${s.id}\`: reasoning \`${s.reasoning}\` is not one of ${levels.join('|')}` });
+    }
+    for (const key of ['skills', 'agents', 'tools']) {
+      if (s[key] === undefined) continue;
+      if (typeof s[key] === 'string' && /^\{\{.*\}\}$/.test(s[key])) continue;   // resolved from config at launch
+      if (!listOfNames(s[key])) { errors.push({ line, msg: `step \`${s.id}\`: \`${key}\` must be an inline list of names` }); continue; }
+      const onDisk = key === 'skills' ? opts.skillsOnDisk : key === 'agents' ? opts.agentsOnDisk : null;
+      if (onDisk) for (const n of s[key]) if (!onDisk.has(n)) errors.push({ line, msg: `step \`${s.id}\`: ${key.slice(0, -1)} \`${n}\` is not on disk` });
+    }
+    if (s.artifact !== undefined && (typeof s.artifact !== 'string' || (templates.size > 0 && !templates.has(s.artifact)))) {
+      errors.push({ line, msg: `step \`${s.id}\`: artifact \`${s.artifact}\` is not a known template` });
+    }
+    // `files` — receipts the step's own command records directly (`plt receipt --kind file`),
+    // for CLI work with no skill/tool/agent name of its own (see lib/spine.js#compileRequirements).
+    if (s.files !== undefined && !listOfNames(s.files)) {
+      errors.push({ line, msg: `step \`${s.id}\`: \`files\` must be an inline list of names` });
+    }
+    // `arm_on`/`land_on` name a live PR fact the poll produces. An unknown name is not a
+    // no-op with a warning — it reads `undefined` on every poll, never equals anything, and the
+    // step waits forever in silence. So the name is checked against the collector's own list
+    // (`lib/spine.js#POLL_FACTS`), which is the only place the two can agree.
+    for (const key of ['arm_on', 'land_on']) {
+      const a = s[key];
+      if (a === undefined) continue;
+      if (typeof a !== 'object' || Array.isArray(a) || !a.gh) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`${key}\` must be a block map with \`gh\` and \`equals\`` });
+        continue;
+      }
+      if (a.equals === undefined) errors.push({ line, msg: `step \`${s.id}\`: \`${key}\` needs \`equals\`` });
+      if (key === 'land_on' && a.outcome !== undefined && !outcomesOf(s.id).includes(a.outcome)) {
+        errors.push({ line, msg: `step \`${s.id}\`: land_on.outcome \`${a.outcome}\` is not one of the step's outcomes (${outcomesOf(s.id).join(', ')})` });
+      }
+      if (!POLL_FACTS.includes(a.gh)) {
+        errors.push({ line, msg: `step \`${s.id}\`: ${key}.gh \`${a.gh}\` is not a fact the poll produces (${POLL_FACTS.join(', ')})` });
+      }
+    }
+    if (s.gate !== undefined) {
+      const g = s.gate;
+      if (typeof g !== 'object' || Array.isArray(g)) errors.push({ line, msg: `step \`${s.id}\`: \`gate\` must be a block map` });
+      else {
+        if (!['adversarial', 'human', 'external'].includes(g.kind)) errors.push({ line, msg: `step \`${s.id}\`: gate.kind \`${g.kind}\` must be adversarial|human|external` });
+        if (g.kind === 'human') {
+          const signals = (cfg.gates && cfg.gates.human_signals) || null;
+          if (!g.signal) errors.push({ line, msg: `step \`${s.id}\`: human gate needs \`signal\`` });
+          else if (signals && !signals.includes(g.signal)) errors.push({ line, msg: `step \`${s.id}\`: gate.signal \`${g.signal}\` is not in config.gates.human_signals` });
+        }
+        if (g.kind === 'adversarial' && g.agents === undefined) errors.push({ line, msg: `step \`${s.id}\`: adversarial gate needs \`agents\`` });
+        // `mode` says what a failing reviewer does: `hard` holds the step (a missing receipt);
+        // `banner` records the fail and prime shows it as a warning. Required, so a formula
+        // never blocks or waves through by accident. A ref must be `{{config.<key>}}` — a bare
+        // `{{...}}` (a typo'd prefix like `{{cfg....}}`) is not a config reference and must not
+        // pass. Whether the key RESOLVES is deliberately not checked: `compileRequirements` defaults
+        // any unresolved mode ref in code (lib/spine.js#gateModeFallback — `banner` for a writing/prose
+        // knob, `hard` for every other), so config is an override, never a requirement — and there is
+        // no key list here to drift out of sync.
+        if (g.kind === 'adversarial') {
+          if (g.mode === undefined) {
+            errors.push({ line, msg: `step \`${s.id}\`: adversarial gate needs \`mode: hard|banner\`` });
+          } else if (!['hard', 'banner'].includes(g.mode)) {
+            const m = String(g.mode).match(/^\{\{\s*config\.([\w.]+)\s*\}\}$/);
+            if (!m) {
+              errors.push({ line, msg: `step \`${s.id}\`: gate.mode \`${g.mode}\` must be hard|banner` });
+            }
+          }
+        }
+        if (g.quorum !== undefined && !['all', 'majority', 'any'].includes(g.quorum)) errors.push({ line, msg: `step \`${s.id}\`: gate.quorum \`${g.quorum}\` must be all|majority|any` });
+        if (g.timeout !== undefined && !/^\d+[smh]$/.test(String(g.timeout)) && !/^\{\{.*\}\}$/.test(String(g.timeout))) errors.push({ line, msg: `step \`${s.id}\`: gate.timeout \`${g.timeout}\` must look like 30m` });
+      }
+    }
+    if (s.jira !== undefined) {
+      const statuses = (cfg.jira && cfg.jira.statuses) || null;
+      for (const k of ['on_start', 'on_done']) {
+        if (s.jira[k] !== undefined && !/^\{\{.*\}\}$/.test(String(s.jira[k])) && statuses && !statuses.includes(s.jira[k])) {
+          errors.push({ line, msg: `step \`${s.id}\`: jira.${k} \`${s.jira[k]}\` is not in config.jira.statuses` });
+        }
+      }
+    }
+    // Parallel-lane keys: `overlap` names the effort whose in-flight runs the step is checked
+    // against (`effort` = this run's own inputs.effort, or a literal effort slug); `touches` marks
+    // the step that records the declared touches receipt.
+    if (s.overlap !== undefined && (typeof s.overlap !== 'string' || (s.overlap !== 'effort' && !/^[a-z0-9][a-z0-9-]*$/.test(s.overlap)))) {
+      errors.push({ line, msg: `step \`${s.id}\`: \`overlap\` must be \`effort\` or a slug ([a-z0-9-], no leading -), got \`${s.overlap}\`` });
+    }
+    if (s.touches !== undefined && s.touches !== 'declared') {
+      errors.push({ line, msg: `step \`${s.id}\`: \`touches\` must be \`declared\`, got \`${s.touches}\`` });
+    }
+    // `effort: dropped` — the step is gated on the card being listed under `dropped:` in its effort file.
+    if (s.effort !== undefined && s.effort !== 'dropped') {
+      errors.push({ line, msg: `step \`${s.id}\`: \`effort\` must be \`dropped\`, got \`${s.effort}\`` });
+    }
+    if (s.verify !== undefined && s.verify.gh !== undefined) {
+      const gh = Array.isArray(s.verify.gh) ? s.verify.gh : [s.verify.gh];
+      for (const v of gh) if (!['merged', 'approved', 'checks-green', 'threads_resolved', 'pr-facts', 'review-posted', 'pr_closed'].includes(v)) errors.push({ line, msg: `step \`${s.id}\`: verify.gh \`${v}\` is unknown` });
+    }
+
+    // The four prose keys. Each is filled by a DIFFERENT substitution — or by none — so a `{x}`
+    // that is fine in one is printed literally in another. The validator has to know which:
+    //   title, notes — `interpolate(…, inputs)` when the step spawns a task (bin/plt#buildTask)
+    //   banner       — `renderBanners` fills exactly four run vars (lib/spine.js)
+    //   waiting      — never substituted; `render` prints `d.waiting` raw (lib/render.js)
+    for (const field of ['title', 'notes', 'banner', 'waiting']) {
       if (s[field] === undefined) continue;
+      if (typeof s[field] !== 'string' || !s[field].trim()) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`${field}\` must be a non-empty string` });
+        continue;
+      }
       for (const ph of placeholders(s[field])) {
-        if (!inputs.has(ph)) {
+        if (field === 'banner') {
+          if (!BANNER_VARS.includes(ph)) errors.push({ line, msg: `step \`${s.id}\`: banner uses {${ph}}; renderBanners fills only ${BANNER_VARS.map((v) => `{${v}}`).join(' ')} — anything else prints literally` });
+        } else if (field === 'waiting') {
+          errors.push({ line, msg: `step \`${s.id}\`: waiting uses {${ph}}, but \`waiting\` is never substituted — it prints literally` });
+        } else if (!inputs.has(ph)) {
           errors.push({ line, msg: `step \`${s.id}\`: ${field} uses {${ph}} which is not a declared input` });
         }
       }
     }
+
+    // `manual: true` means "a person starts this step, not the agent". The formula parser keeps
+    // every scalar as a STRING, and `nextCommand` reads it as `Boolean(def.manual)` — so the
+    // string `"false"` was truthy and `manual: false` did the opposite of what it says. Only the
+    // two words are accepted here; lib/spine.js#isManual now reads `false` as false.
+    if (s.manual !== undefined && !['true', 'false', true, false].includes(s.manual)) {
+      errors.push({ line, msg: `step \`${s.id}\`: \`manual: ${s.manual}\` must be true or false` });
+    }
+
+    // Each name in `tools`/`files` compiles to a requirement satisfied only by a receipt with the
+    // SAME name, so a name with a space or a duplicate is a requirement that can never be met, or
+    // one that is met twice over. The shape check above already ran; this checks the names.
+    for (const key of ['tools', 'files']) {
+      if (!Array.isArray(s[key])) continue;
+      for (const n of s[key]) {
+        if (!/^[A-Za-z0-9][\w.:/-]*$/.test(String(n))) {
+          errors.push({ line, msg: `step \`${s.id}\`: ${key.slice(0, -1)} name \`${n}\` must be a plain name (letters, digits, \`. _ - : /\`)` });
+        }
+      }
+      if (new Set(s[key]).size !== s[key].length) errors.push({ line, msg: `step \`${s.id}\`: \`${key}\` has duplicates` });
+    }
+
+    // `reapprove: { artifact, rearm }` — a second approval of a done human gate needs that
+    // artifact republished at the new pin, then re-readies the named steps. A wrong artifact name
+    // only shows up at the re-approval, as a refusal nobody can act on; a `rearm` id that matches
+    // no step is skipped in silence (lib/spine.js#gateApprove).
+    if (s.reapprove !== undefined) {
+      const r = s.reapprove;
+      if (typeof r !== 'object' || Array.isArray(r)) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`reapprove\` must be a block map with \`artifact\` and/or \`rearm\`` });
+      } else {
+        for (const k of Object.keys(r)) {
+          if (!['artifact', 'rearm', '__line', '__indent'].includes(k)) errors.push({ line, msg: `step \`${s.id}\`: reapprove.${k} is read by nothing; only \`artifact\` and \`rearm\` are` });
+        }
+        if (r.artifact !== undefined && (typeof r.artifact !== 'string' || (templates.size > 0 && !templates.has(r.artifact)))) {
+          errors.push({ line, msg: `step \`${s.id}\`: reapprove.artifact \`${r.artifact}\` is not a known template` });
+        }
+        if (r.rearm !== undefined) {
+          if (!Array.isArray(r.rearm)) errors.push({ line, msg: `step \`${s.id}\`: \`reapprove.rearm\` must be an inline list of step ids` });
+          else for (const id of r.rearm) {
+            if (!byId.has(id)) errors.push({ line, msg: `step \`${s.id}\`: reapprove.rearm \`${id}\` is not a step in this file` });
+            else if (id === s.id) errors.push({ line, msg: `step \`${s.id}\`: reapprove.rearm names its own step` });
+          }
+        }
+      }
+    }
+    // `rearm` only exists inside `reapprove`. At the top of a step it is read by nothing.
+    if (s.rearm !== undefined) errors.push({ line, msg: `step \`${s.id}\`: \`rearm\` belongs under \`reapprove\`; on its own it is read by nothing` });
   }
 
   const cycle = findDependencyCycle(steps.filter((s) => s.id));
@@ -550,7 +795,8 @@ const MERMAID_CLOSE = '<!-- /plt:mermaid -->';
 
 // Generate the mermaid flowchart for a workflow's steps. Deterministic:
 // nodes in file order, then edges grouped by kind. Branch edges carry the
-// outcome label; on_fail edges are dashed.
+// outcome label; on_fail edges are dashed; a step carrying `overlap` gets an
+// `-- overlap check --> blocked` edge (the live in-flight-lanes gate).
 function renderMermaid(steps) {
   const lines = ['flowchart TD'];
   for (const s of steps) lines.push(`  ${s.id}["${s.id} (${s.assignee})"]`);
@@ -566,6 +812,7 @@ function renderMermaid(steps) {
       lines.push(`  ${s.id} -. fail x${n} .-> ${s.on_fail.then}`);
     }
   }
+  for (const s of steps) if (s.overlap !== undefined) lines.push(`  ${s.id} -- overlap check --> blocked`);
   return lines.join('\n');
 }
 
@@ -1019,18 +1266,37 @@ function cmdShow(args) {
   return 1;
 }
 
+const RENDER_USAGE = 'usage: plt render <workflow> | plt render --workflow <name> | plt render index|run <id>|all [--out <dir>] [--published <id|index> <url>]\n';
+const BOARD_TARGETS = ['index', 'run', 'all'];
+
 function cmdRender(args) {
-  const name = args[0];
+  // `plt render --workflow <name>` always means a workflow's mermaid regen, whatever the name.
+  const byFlag = args[0] === '--workflow';
+  const name = byFlag ? args[1] : args[0];
+  // `plt render index|run <id>|all` (and a bare `--published`) are the spine's board pages, rendered
+  // from process state by lib/render.js. They are subcommands: validateWorkflow refuses a new
+  // workflow with one of these names, and one that exists anyway (written before the rule) is named
+  // on stderr with the `--workflow` form that reaches it. Anything else must resolve to an actual
+  // workflow file; a name that resolves to neither is an unambiguous error, not a silent guess.
+  if (!byFlag && (BOARD_TARGETS.includes(name) || (name && name.startsWith('--')))) {
+    if (BOARD_TARGETS.includes(name) && loadWorkflowByName(name)) {
+      process.stderr.write(`plt render: "${name}" is a subcommand; use plt render --workflow ${name} to regenerate that workflow's diagram\n`);
+    }
+    return require('../lib/spine-cli').render(args);
+  }
   if (!name) {
-    process.stderr.write('usage: plt render <workflow>\n');
+    process.stderr.write(RENDER_USAGE);
     return 2;
   }
   const wf = loadWorkflowByName(name);
   if (!wf) {
-    process.stderr.write(`plt render: no workflow named \`${name}\`\n`);
-    return 1;
+    process.stderr.write(`unknown render target '${name}' — use index, run <id>, or all\n`);
+    return 2;
   }
-  const errors = validateWorkflow(wf.parsed, wf.file, templateNames());
+  // The reserved-name error exists to keep a workflow reachable; `--workflow` is how it is reached,
+  // so that one error does not block the regen. Every other finding still does.
+  const errors = validateWorkflow(wf.parsed, wf.file, templateNames())
+    .filter((e) => !(byFlag && /is reserved by `plt render`/.test(e.msg)));
   if (errors.length > 0) {
     for (const e of errors) process.stderr.write(`FAIL  ${rel(wf.file)}:${e.line}: ${e.msg}\n`);
     return 1;
@@ -1175,39 +1441,116 @@ usage:
   plt list [--kind K] [--tag T] [--domain D]  list templates and workflows
   plt show <name>                           print a template/workflow's full markdown
   plt render <workflow>                     (re)generate the file's mermaid diagram
+  plt render --workflow <name>              the same, for a workflow named index, run or all
+  plt render index|run <id>|all [--out <dir>] [--published <id|index> <url>]
+                                             render the effort index / a run's status page from state into
+                                             process/build/ (+ publish.json: which pages changed since the
+                                             last render); --published records the page's url + artifact receipt
   plt launch <workflow> --input k=v ...     compile: create the first step task(s)
   plt advance [--run ID | --all]            advance launched runs (cron calls this)
   plt runs                                  list run states
+  plt run launch <id> --cycle <name>        start a process-spine run from a cycle formula
+  plt run recompile <id>        refresh unfinished steps' requirements from formula + config
+  plt run discard <id> --by <owner> --reason <why> [--replaced-by <card>]
+                                             drop the card: retire the cycle, walk the discard exit, then close
+  plt run close <id> [--by who]              close a run whose close-out is done (closed_as done|discarded)
+  plt run poll <id>                         arm/disarm live-fact steps (resync on a conflict) from gh pr view; on MERGED lands the merge step (receipts, jira Done, finish)
+  plt facts [--run <id>] [--json]           collect GitHub facts for every in-flight run naming a PR (or just --run) as idempotent gh receipts + review-activity
+  plt watch [--once]                        facts -> render all -> notify (windows.notify) any run whose next command
+                                             changed since the last watch; --once is what the installed timer runs,
+                                             otherwise loops every timers.watch.every
+  plt step start <id> --run <run>           claim a run's step
+  plt step finish <id> --run <run>          finish a run's step (gate + extrapolation checked)
+  plt receipt --kind <k> --name <n> [--run <run>] [--step <id>] ...   record a receipt event
+  plt gate check|approve <run> <step>       check or approve a step's gate
+    step start|finish, receipt and gate approve take --take-over: drive a run another window
+    (state.owner_window) has not handed off; logged as a taken-over event
+  plt lint prose <file|->  [--json]         deterministic prose checks (long-sentence, banned-word,
+                                             ticket-ref, undefined-acronym; config.writing.*); exit 1 on a hit
+  plt handoff <run> --goal ... --next ...   rewrite the run's HANDOFF.md
+  plt prime [--run <run>] [--no-menu|--next|--menu-only]   print the run's prime (status + next command + menu)
+  plt banners [--run <run>]                 print the standing owner banners (ask for reviews, …)
+  plt menu parse --text "<prompt>"          parse a prompt into {id, payload} or null
+  plt menu words [--run <run>]              print the effective menu word map (config.menu.words override, else defaults)
+  plt menu json [--run <run>]               print the current run's {mode, phrases}
+  plt pin [--repo <dir>]                    compute the current pin for a repo
+  plt config [key.path] [--run <run>]       print the merged process/config as JSON, or one value by dotted path
+  plt integration install|status <name> [--project <dir>] [--load]
+                                             install the spine's <name> integration (claude: hooks, agent,
+                                             settings; timers: the launchd/systemd \`plt watch --once\` timer,
+                                             --load to also launchctl/systemctl-enable it) into a project,
+                                             or report its state
+  plt effort plan <slug> [--json]           plan the parallel wave for an effort's cards
+  plt effort launch <slug> [--parallel] [--dry-run] [--only ID,ID] [--owner who]
+                                             one worktree, run and window per card in the wave
+                                             (without --parallel, launches only the wave's first card)
+  plt digest launch --for <date> [--weekly] [--owner who]
+                                             start a DIGEST run for that date/week (no-op if already closed)
+  plt digest collect --for <date> [--weekly] [--out f]
+                                             pure rollup from every run's events -> process/digests/<date>.json
+  plt digest standup --for <date>           Preparing/Ready/Blockers as Slack bullets from the same data
+                                             run ids: DIGEST-<yyyymmdd> / DIGEST-<yyyy>W<ww> (ISO week); window is UTC midnight to midnight
+  plt sync [--since <iso>] [--json]         what moved since the last session: facts -> compare every run's
+                                             next command against process/build/sync.json; idempotent
+                                             (unchanged prints "nothing moved"); first call seeds silently
+  plt mine [--effort <slug>] [--since <iso>] [--out <file>] [--json]
+                                             deterministic, no model: aggregate re-prompt families, extrapolations,
+                                             gate re-approvals and writing-adversary fail rate -> process/suggestions.md
+
+  plt fan <plan-file> [--ledger <path>] [--json]
+                                             print the next parallel wave of a plan's tasks (read-only)
+  plt fsck [<run>] [--all] [--fix] [--project <dir>] [--json]
+                                             check a run's state + events against the formula; --fix writes
+  plt schema list | plt schema validate <kind> <file>
+                                             validate a state/events/input/effort/config file against its schema
+  plt harvest <id> [--dry-run] [--json]     turn a suggestions.md row into a branch + diff for a human to merge
+  plt bump --target <t> --expected <text> --measure-at <date> [--id <id>]
+                                             append the change to the CHANGELOG and bump the target's version
 
 Repo root: $PUNCHLIST_TEMPLATES_DIR, else the checkout containing this script.
 Punchlist auth: $PUNCHLIST_URL + $PUNCHLIST_TOKEN (or the pl.sh env files).
 Workflows with \`owner\` steps additionally require $PUNCHLIST_OWNER.
 `;
 
+// The verbs bin/plt still implements itself. Every other verb lives in the module that owns
+// it — lib/registry.js scans lib/*.js for a `commands` export and dispatches on argv[0], so
+// adding a subcommand never edits this file again.
+const commands = [
+  { name: 'validate', usage: 'plt validate [path|all]', handler: (argv) => cmdValidate(argv) },
+  { name: 'index', usage: 'plt index', handler: (argv) => cmdIndex(argv) },
+  { name: 'list', usage: 'plt list [--kind K] [--tag T] [--domain D]', handler: (argv) => cmdList(argv) },
+  { name: 'show', usage: 'plt show <name>', handler: (argv) => cmdShow(argv) },
+  { name: 'render', usage: 'plt render <workflow> | plt render --workflow <name> | plt render index|run <id>|all [--out <dir>]', handler: (argv) => cmdRender(argv) },
+  { name: 'launch', usage: 'plt launch <workflow> --input k=v ...', handler: (argv) => cmdLaunch(argv) },
+  { name: 'advance', usage: 'plt advance [--run ID | --all]', handler: (argv) => cmdAdvance(argv) },
+  { name: 'runs', usage: 'plt runs', handler: (argv) => cmdRuns(argv) },
+  { name: 'lint', usage: 'plt lint prose <file|-> [--json]', handler: (argv) => require('../lib/lint').cli(argv) },
+  { name: 'integration', usage: 'plt integration install|status <name> [--project <dir>] [--load]', handler: (argv) => require('../lib/integration').cli(argv) },
+];
+
+// The shim. It parses nothing and names no verb: `plt help` prints the long usage, everything
+// else goes to the registry, which returns the exit code (or a promise of one).
 async function main(argv) {
-  const [cmd, ...rest] = argv;
-  switch (cmd) {
-    case 'validate': return cmdValidate(rest);
-    case 'index': return cmdIndex(rest);
-    case 'list': return cmdList(rest);
-    case 'show': return cmdShow(rest);
-    case 'render': return cmdRender(rest);
-    case 'launch': return cmdLaunch(rest);
-    case 'advance': return cmdAdvance(rest);
-    case 'runs': return cmdRuns(rest);
-    default:
-      process.stderr.write(USAGE);
-      return 2;
-  }
+  const cmd = argv[0];
+  // `plt help` asks for the usage, so it goes to stdout and exits 0. A bare `plt` is a
+  // mis-invocation: the usage goes to stderr and the exit code stays 2, as it always has.
+  if (cmd === 'help' || cmd === '-h' || cmd === '--help') { process.stdout.write(USAGE); return 0; }
+  // `plt --version` prints package.json's version — the shipped version doctor's `plt-resolvable`
+  // check (lib/doctor.js) compares `plt` on PATH against, and what `plt integration status`/CI
+  // read to prove the checkout in use. No task before this one added it.
+  if (cmd === '--version' || cmd === '-v') { process.stdout.write(require('../package.json').version + '\n'); return 0; }
+  if (!cmd) { process.stderr.write(USAGE); return 2; }
+  return require('../lib/registry').dispatch(argv, {
+    libDir: path.join(__dirname, '..', 'lib'),
+    cwd: process.cwd(),
+    env: process.env,
+    commands,
+  });
 }
 
-if (require.main === module) {
-  main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
-    (err) => { process.stderr.write(`plt: ${err.message}\n`); process.exit(1); }
-  );
-}
-
+// Exports are assigned BEFORE the require.main check runs `main()`: a `plt run|step|...`
+// subcommand requires lib/spine-cli -> lib/spine -> this file (for parseWorkflow), and that
+// circular require must see a fully-populated module.exports, not the empty default.
 module.exports = {
   ROOT,
   parseFrontmatter,
@@ -1231,7 +1574,17 @@ module.exports = {
   initialSteps,
   decide,
   main,
+  commands,
   MIN_EXEMPLAR_CHARS,
   MERMAID_OPEN,
   MERMAID_CLOSE,
 };
+
+// process.exitCode, never process.exit(): on macOS a pipe on stdout is asynchronous, and an exit
+// before it drains cuts piped output at the pipe buffer (a truncated `--json`).
+if (require.main === module) {
+  main(process.argv.slice(2)).then(
+    (code) => { process.exitCode = code; },
+    (err) => { process.stderr.write(`plt: ${err.message}\n`); process.exitCode = 1; }
+  );
+}

@@ -1,0 +1,45 @@
+# Public defaults for the spine. No client words. Every org overrides in config/<org>.yaml.
+state_enum: [pending, ready, claimed, in_progress, in_review, blocked, done]
+gates:
+  human_signals: [artifact-approved, reply-approved, run-discarded]
+  adversarial_timeout: 30m
+models:
+  allowed: [fable, opus, sonnet, haiku]
+  default_model: opus
+  reasoning_levels: [low, medium, high, max]
+review:
+  panel_agents: []
+  # What a failing reviewer does: hard = the step is held (a missing receipt); banner = recorded, shown as a warning.
+  panel_mode: hard
+  writing_mode: banner
+writing:
+  banned: []
+  known_acronyms: []
+jira:
+  kind: none
+estimation:
+  unit: ideal_days
+worktree:
+  canonical: ""
+  repo: ""
+  root: code/branches
+  branch: "feat/{card}-{slug}"
+  path: "{root}/{card}-{slug}/{repo}"
+  base: origin/main
+  setup: []
+windows:
+  command: ""
+  open: ""
+  notify: ""
+timers:
+  watch:
+    every: "10m"
+  label: ""
+links:
+  pr_repo: "example-org/greenhouse"
+  card: "https://tracker.example/{card}"
+actors:
+  github_logins: []
+digest:
+  daily: "17:00"
+  weekly: "fri"

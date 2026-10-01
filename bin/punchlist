@@ -19,7 +19,7 @@
 //                                                  copy the agent skills into place
 //   punchlist snapshot                             WAL-safe db backup (scripts/db-snapshot.sh)
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync, unlinkSync, readFileSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, realpathSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync, unlinkSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
@@ -27,7 +27,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   serviceSpec, serviceRestartCmd, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
-  SILVERBULLET_VERSION, resolveKbSpaceDir,
+  SILVERBULLET_VERSION, resolveKbSpaceDir, stableNodePath,
 } from '../src/service.js';
 import { tailscaleServeSpec } from '../src/tailscale.js';
 
@@ -177,7 +177,7 @@ async function installService(argv) {
     else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform)`); process.exit(2); }
   }
   const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
-  const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: process.execPath, home: homedir() });
+  const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: stableNodePath(process.execPath, realpathSync), home: homedir(), uid: process.getuid?.() ?? 0 });
 
   if (printOnly) { console.log(`# ${spec.kind} unit -> ${spec.path}\n`); process.stdout.write(spec.contents); return; }
   if (platform !== process.platform) {
@@ -295,7 +295,7 @@ async function installSilverbullet(argv) {
   const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
   const spaceDir = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
   const resolved = resolveSilverbulletCmd(home, version);
-  const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home, cmd: resolved.cmd });
+  const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home, cmd: resolved.cmd, uid: process.getuid?.() ?? 0 });
 
   if (printOnly) {
     console.log(`# binary source: ${resolved.source}${resolved.needsInstall ? ' (not yet installed)' : ''} -> ${resolved.cmd}`);
@@ -488,7 +488,7 @@ async function doctor() {
   } else bad('data/.env missing', 'run: punchlist gen-token <actor>');
 
   console.log('\nService:');
-  const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: process.execPath, home });
+  const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: stableNodePath(process.execPath, realpathSync), home, uid: process.getuid?.() ?? 0 });
   existsSync(spec.path) ? ok(`${spec.kind} unit installed`, spec.path) : warn(`${spec.kind} unit not installed`, 'run: punchlist install-service');
   if (spec.kind === 'systemd') {
     const r = spawnSync('systemctl', ['--user', 'is-active', 'punchlist.service'], { encoding: 'utf8' });

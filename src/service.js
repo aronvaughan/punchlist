@@ -48,6 +48,31 @@ function xml(s) {
     .replace(/>/g, '&gt;');
 }
 
+// Stable candidates for the node binary, most-preferred first. A package
+// manager installs node at a VERSION-PINNED path - Homebrew's
+// /opt/homebrew/Cellar/node/26.8.1/bin/node, nvm's ~/.nvm/versions/... - and
+// process.execPath reports exactly that. Baking it into a unit means the next
+// `brew upgrade node` leaves the service pointing at a binary that no longer
+// exists, and the service dies at the following boot with no obvious cause.
+export const STABLE_NODE_CANDIDATES = [
+  '/opt/homebrew/bin/node',
+  '/usr/local/bin/node',
+  '/usr/bin/node',
+];
+
+// Prefer a stable path that resolves to the SAME binary as execPath. Falls
+// back to execPath when none does (a version-managed install like nvm has no
+// stable alias, and a wrong stable path would be worse than a pinned one).
+// `realpath` is injected so this stays pure and testable.
+export function stableNodePath(execPath, realpath, candidates = STABLE_NODE_CANDIDATES) {
+  let target;
+  try { target = realpath(execPath); } catch { return execPath; }
+  for (const c of candidates) {
+    try { if (realpath(c) === target) return c; } catch { /* not installed */ }
+  }
+  return execPath;
+}
+
 // launchd LaunchAgent. RunAtLoad + KeepAlive{SuccessfulExit:false} is the
 // launchd spelling of systemd's "start on boot, Restart=on-failure". Absolute
 // node path (ProgramArguments) so it doesn't depend on launchd's minimal PATH.
@@ -209,7 +234,7 @@ export function resolveKbSpaceDir(dataDir, kbPathSetting) {
 // out of SB's index). `host` MUST stay loopback (127.0.0.1); tailnet
 // exposure is `tailscale serve`, a later increment.
 export function silverbulletSpec(platform, {
-  repo, spaceDir, home, port = 3001, host = '127.0.0.1',
+  repo, spaceDir, home, port = 3001, host = '127.0.0.1', uid = 0,
   cmd = process.env.SILVERBULLET_CMD || 'silverbullet',
   envFile = join(home, '.config', 'punchlist', 'silverbullet.env'),
 } = {}) {
@@ -232,7 +257,12 @@ export function silverbulletSpec(platform, {
       wrapperContents: silverbulletWrapper({ cmd, spaceDir, host, port, envFile }),
       contents: silverbulletLaunchdPlist({ wrapperPath, logPath }),
       reload: [['launchctl', ['unload', path]]],
-      start: [['launchctl', ['load', '-w', path]]],
+      // load registers the job; kickstart is what actually starts an already
+      // registered one, so a re-install does not leave it loaded but stopped.
+      start: [
+        ['launchctl', ['load', '-w', path]],
+        ['launchctl', ['kickstart', '-k', `gui/${uid}/${SB_LABEL}`]],
+      ],
       status: ['launchctl', ['list', SB_LABEL]],
     };
   }
@@ -260,7 +290,7 @@ export function silverbulletSpec(platform, {
 // Resolve the full install spec for a platform: where the unit goes, its
 // contents, and the idempotent reload/start commands the CLI should run.
 // `platform` is a node process.platform value ('linux' | 'darwin' | ...).
-export function serviceSpec(platform, { repo, dataDir, node, home, port = 8600 }) {
+export function serviceSpec(platform, { repo, dataDir, node, home, port = 8600, uid = 0 }) {
   const serverJs = join(repo, 'src', 'server.js');
   if (platform === 'darwin') {
     const path = join(home, 'Library', 'LaunchAgents', `${LABEL}.plist`);
@@ -275,7 +305,10 @@ export function serviceSpec(platform, { repo, dataDir, node, home, port = 8600 }
       contents: launchdPlist({ node, serverJs, repo, dataDir, logPath }),
       // unload first so a re-install is idempotent (ignore its failure on first run)
       reload: [['launchctl', ['unload', path]]],
-      start: [['launchctl', ['load', '-w', path]]],
+      start: [
+        ['launchctl', ['load', '-w', path]],
+        ['launchctl', ['kickstart', '-k', `gui/${uid}/${LABEL}`]],
+      ],
       status: ['launchctl', ['list', LABEL]],
     };
   }

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://punchlist.example/schemas/event.schema.json",
+  "title": "plt ledger event",
+  "description": "One line of a run's events.jsonl. The ledger is append-only and a newer writer may add keys, so unknown properties pass; what is named here is what every reader depends on.",
+  "type": "object",
+  "required": ["id", "ts", "run", "kind"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "string", "pattern": "^e\\d{6}$" },
+    "ts": { "type": "string", "format": "date-time" },
+    "run": { "type": "string" },
+    "kind": {
+      "enum": ["skill", "agent", "tool", "gate", "jira", "artifact", "gh", "extrapolation", "time", "suggestion", "reprompt", "file", "touches", "review-activity", "decision"]
+    },
+    "verdict": {
+      "description": "A reviewer's call on one receipt. Held to two words because gateCheck and bannerFails both key off `fail`.",
+      "enum": ["pass", "fail"]
+    },
+    "result": {
+      "description": "Free text by construction: gateApprove/gateRevoke write `approve`/`revoke`, `plt receipt` writes pass/fail/skip, and a review receipt writes its round summary. No enum can cover all three, and pretending otherwise fails every healthy run.",
+      "type": "string"
+    },
+    "actor": {
+      "description": "The ROLE that wrote the event, never the person — the person goes in `by`.",
+      "enum": ["agent", "human", "facts", "hook"]
+    },
+    "by": {
+      "description": "The person, bare, with no `human:` prefix (the prefix is CLI sugar and is stripped once, at the boundary).",
+      "type": "string"
+    },
+    "pin": {
+      "description": "What computePin returned: `sha` when the worktree is clean (value = HEAD, tree = HEAD^{tree}), `tree` when work is staged (value = write-tree, base_sha = HEAD). `null` when the run has no resolvable repo — stated, not left to an absent key.",
+      "type": ["object", "null"],
+      "properties": {
+        "kind": { "enum": ["sha", "tree"] },
+        "value": { "type": "string" },
+        "tree": { "type": "string" },
+        "base_sha": { "type": "string" }
+      },
+      "required": ["kind", "value"]
+    }
+  }
+}

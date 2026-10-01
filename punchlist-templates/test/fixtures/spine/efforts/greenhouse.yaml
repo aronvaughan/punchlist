@@ -1,0 +1,10 @@
+slug: greenhouse
+title: Greenhouse telemetry
+cards:
+  - { id: TRK-10, title: rename the sampler,  cycle: build-and-ship, estimate: 0.25, touches: [packages/sensors, packages/dashboard], after: [] }
+  - { id: TRK-11, title: dashboard store,     cycle: build-and-ship, estimate: 1.5,  touches: [packages/dashboard/src/store], after: [TRK-10] }
+  - { id: TRK-12, title: test resolver,       cycle: build-and-ship, estimate: 1.0,  touches: [packages/resolvers/test], after: [] }
+  - { id: TRK-13, title: partition spike,     cycle: spike,          estimate: 0.75, touches: [], after: [] }
+  - TRK-14
+  - { id: TRK-15, title: waits on product,    touches: [packages/orgs], after: [EXT-1] }
+  - { id: TRK-16, title: resolver overlap,    touches: [packages/resolvers], after: [] }

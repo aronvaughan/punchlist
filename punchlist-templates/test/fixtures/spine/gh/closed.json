@@ -1,0 +1,17 @@
+{
+  "view": {
+    "number": 45,
+    "url": "https://github.com/example-org/greenhouse/pull/45",
+    "state": "CLOSED",
+    "isDraft": false,
+    "headRefOid": "dddd4444",
+    "reviewDecision": null,
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "reviews": [],
+    "comments": []
+  },
+  "threads": {
+    "data": { "repository": { "pullRequest": { "reviewThreads": { "nodes": [] } } } }
+  }
+}

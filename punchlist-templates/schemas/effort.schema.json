@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://punchlist.example/schemas/effort.schema.json",
+  "title": "plt effort",
+  "description": "An effort file: the cards an effort plans, in order, with what each one waits on.",
+  "type": "object",
+  "required": ["slug", "title", "cards"],
+  "properties": {
+    "slug": { "type": "string" },
+    "title": { "type": "string" },
+    "cards": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+              "title": { "type": "string" },
+              "cycle": { "type": "string" },
+              "estimate": { "type": "number" },
+              "touches": { "type": "array", "items": { "type": "string" } },
+              "after": { "type": "array", "items": { "type": "string" } },
+              "status": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "dropped": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string" },
+              "reason": { "type": "string" },
+              "replaced_by": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "decisions": {},
+    "questions": {},
+    "parked": {}
+  }
+}

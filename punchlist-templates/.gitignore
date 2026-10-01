@@ -2,6 +2,7 @@
 /*
 !/.gitignore
 !/package.json
+!/package-lock.json
 !/README.md
 !/LICENSE
 !/docs/
@@ -11,5 +12,12 @@
 !/bin/
 !/scripts/
 !/test/
+!/lib/
+!/schemas/
+!/.github/
 # runs/ (per-run advancer state), .obsidian/ (vault config), and
 # node_modules stay ignored by /*
+# .worktrees/ (per-window worktrees, scripts/plt-worktree.sh) stays ignored
+# by /* too; the repo-window claim lives in the git dir, not the tree
+!/integrations/
+__pycache__/

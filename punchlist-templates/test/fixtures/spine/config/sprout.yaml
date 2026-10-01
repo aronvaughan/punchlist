@@ -1,0 +1,5 @@
+skills: { scope: [sprout-scope], build: [sprout-conventions], pre_pr: [sprout-pre-pr], ship: [sprout-ship], pr_loop: [sprout-pr-loop], close_out: [sprout-harvest], discard: [sprout-board] }
+tools: { build: [graph_impact] }
+review: { panel_agents: [sprout-reviewer], writing_agents: [writing-adversary], arch_agents: [sprout-reviewer] }
+models: { review_model: fable }
+jira: { kind: none, statuses: [To Do, In Progress, In Review, Done], status: { in_progress: In Progress, in_review: In Review, done: Done, discarded: Discarded } }

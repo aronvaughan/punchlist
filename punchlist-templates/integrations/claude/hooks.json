@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-prime.py\"", "timeout": 20 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-prime.py\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-gate.py\"", "timeout": 30 }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-guard.py\"", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Skill|Agent|Workflow|Artifact|Bash|mcp__gitnexus__.*)$",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-receipt.py\"", "timeout": 20 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-stop.py\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/spine-stop.py\"", "timeout": 10 }
+        ]
+      }
+    ]
+  },
+  "ask": [
+    "Bash(plt gate approve *)",
+    "Bash(node * gate approve *)"
+  ],
+  "allow": [
+    "Bash(plt run *)", "Bash(plt step *)", "Bash(plt receipt *)", "Bash(plt gate check *)",
+    "Bash(plt prime *)", "Bash(plt handoff *)", "Bash(plt pin *)", "Bash(plt recompile *)",
+    "Bash(plt effort *)", "Bash(plt menu *)", "Bash(plt banners *)", "Bash(plt facts *)",
+    "Bash(plt render *)", "Bash(plt config *)",
+    "Bash(node * run *)", "Bash(node * step *)", "Bash(node * receipt *)", "Bash(node * gate check *)",
+    "Bash(node * prime *)", "Bash(node * handoff *)", "Bash(node * pin *)", "Bash(node * recompile *)",
+    "Bash(node * effort *)", "Bash(node * menu *)", "Bash(node * banners *)", "Bash(node * facts *)",
+    "Bash(node * render *)", "Bash(node * config *)"
+  ]
+}

@@ -1,9 +1,11 @@
 # Whitelist-first: ignore everything at the top level, then re-allow tracked paths.
 /*
 !/.gitignore
+!/.gitleaks.toml
 !/package.json
 !/package-lock.json
 !/README.md
+!/punchlist-templates/
 !/src/
 !/migrations/
 !/test/
@@ -15,4 +17,6 @@
 !/packaging/
 !/install.sh
 !/LICENSE
+# CI workflows: GitHub reads them only at the repo root.
+!/.github/
 # data/ (live db, tokens) and node_modules stay ignored by /*
