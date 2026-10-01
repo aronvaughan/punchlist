@@ -41,12 +41,14 @@ test('FK: task project must exist; steps cascade on task delete', () => {
   assert.equal(db.prepare('SELECT COUNT(*) c FROM steps').get().c, 0);
 });
 
-test('file-backed migrate pre-copies db file; failed migration is named + rolled back', () => {
+test('fresh install writes no pre-copies; failed migration is named + rolled back', () => {
   const dir = mkdtempSync(join(tmpdir(), 'avtasks-'));
   const dbPath = join(dir, 'punchlist.db');
   const { db, migrate } = open(dbPath);
   migrate();
-  assert.ok(existsSync(`${dbPath}.pre-001`));
+  // nothing existed to protect, so the safety net is skipped entirely rather
+  // than leaving one empty snapshot per migration in a brand-new data dir
+  assert.ok(!existsSync(`${dbPath}.pre-001`));
 
   // a broken second migration must fail with MigrationError and leave no trace
   const migDir = join(dir, 'migs');

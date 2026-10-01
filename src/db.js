@@ -44,7 +44,10 @@ export function open(path) {
       const version = file.replace(/\.sql$/, '');
       if (applied.has(version)) continue;
       const nnn = file.slice(0, 3);
-      if (path !== ':memory:' && existsSync(path)) {
+      // Only worth a safety net when there is something to lose: a fresh
+      // install runs every migration at once and would otherwise litter the
+      // data dir with one .pre-NNN copy of an empty database per migration.
+      if (applied.size > 0 && path !== ':memory:' && existsSync(path)) {
         // pre-copy safety net — WAL-safe: a raw file copy would miss every
         // transaction still sitting in the -wal sidecar, so snapshot through
         // SQLite itself (same mechanism as scripts/db-snapshot.sh).

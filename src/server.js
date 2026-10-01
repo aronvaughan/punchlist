@@ -8,12 +8,19 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 import { open } from './db.js';
 import { buildApp } from './api.js';
 import { createDispatcher } from './dispatch.js';
+import { defaultDataDir, nodeVersionError } from './service.js';
+
+// Fail fast and legibly on an old runtime: node:sqlite imports fine on some
+// older majors, so without this the first query is where it falls over.
+const versionError = nodeVersionError();
+if (versionError) { console.error(versionError); process.exit(1); }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const DATA_DIR = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+const DATA_DIR = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
 // attachment bytes live here, each as its own file (<id>.<ext>). Separate dir
 // so backups/retention can treat blobs apart from the sqlite db.
 const MEDIA_DIR = process.env.PUNCHLIST_MEDIA_DIR || join(DATA_DIR, 'media');

@@ -20,6 +20,32 @@ export function serviceRestartCmd(platform, { uid = 0, label = LABEL } = {}) {
   return ['systemctl', ['--user', 'restart', 'punchlist.service']];
 }
 
+// Minimum runtime: node:sqlite's DatabaseSync is only stable from 26.
+export const MIN_NODE_MAJOR = 26;
+
+// null when the runtime is fine, else the message to print before exiting.
+// Kept pure (takes the version string) so it's testable off the real process.
+export function nodeVersionError(version = process.versions.node) {
+  const major = Number(String(version).split('.')[0]);
+  if (Number.isFinite(major) && major >= MIN_NODE_MAJOR) return null;
+  return `punchlist: node ${version} is too old — needs >= ${MIN_NODE_MAJOR} ` +
+    `(node:sqlite DatabaseSync). Install it, e.g.
+` +
+    `  brew install node@${MIN_NODE_MAJOR}   # or: nvm install ${MIN_NODE_MAJOR}`;
+}
+
+// Where a run's data lives. A GLOBAL npm install must NOT default to
+// <package>/data: npm wipes that directory on upgrade, taking the database
+// with it. Detect the global case by the node_modules path and fall back to
+// the XDG data dir. A source checkout keeps the repo-local ./data.
+export function defaultDataDir({ root, env = {}, home }) {
+  if (env.PUNCHLIST_DATA) return env.PUNCHLIST_DATA;
+  if (root.split(/[/\\]/).includes('node_modules')) {
+    return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'punchlist');
+  }
+  return join(root, 'data');
+}
+
 // systemd user unit — mirrors scripts/install/setup-service.sh exactly.
 export function systemdUnit({ node, serverJs, repo, dataDir }) {
   return `[Unit]

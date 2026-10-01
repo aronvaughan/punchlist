@@ -27,7 +27,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   serviceSpec, serviceRestartCmd, silverbulletSpec, silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath,
-  SILVERBULLET_VERSION, resolveKbSpaceDir, stableNodePath,
+  SILVERBULLET_VERSION, resolveKbSpaceDir, stableNodePath, defaultDataDir, nodeVersionError, MIN_NODE_MAJOR,
 } from '../src/service.js';
 import { tailscaleServeSpec } from '../src/tailscale.js';
 
@@ -176,10 +176,23 @@ async function installService(argv) {
     else if (argv[i] === '--platform' && argv[i + 1]) platform = argv[++i]; // for --print / testing
     else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform)`); process.exit(2); }
   }
-  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dataDir = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
   const spec = serviceSpec(platform, { repo: ROOT, dataDir, node: stableNodePath(process.execPath, realpathSync), home: homedir(), uid: process.getuid?.() ?? 0 });
 
   if (printOnly) { console.log(`# ${spec.kind} unit -> ${spec.path}\n`); process.stdout.write(spec.contents); return; }
+
+  // The unit pins the node that is running RIGHT NOW. Installing from a shell
+  // whose PATH leads with an old node (nvm, say) would write a unit the
+  // server's own version guard then rejects on every start -- and KeepAlive
+  // would restart it forever. Refuse instead, and name the node to use.
+  const unitVersionError = nodeVersionError();
+  if (unitVersionError) {
+    console.error(unitVersionError);
+    console.error(`\npunchlist: refusing to pin ${process.execPath} into ${spec.path} --\n` +
+      `the service would fail to start on every attempt. Re-run install-service\n` +
+      `under a node >= ${MIN_NODE_MAJOR}, e.g.\n  $(brew --prefix)/bin/node $(command -v punchlist) install-service`);
+    process.exit(1);
+  }
   if (platform !== process.platform) {
     console.error(`punchlist: refusing to install a ${platform} service on ${process.platform} (drop --platform, or use --print)`);
     process.exit(2);
@@ -292,7 +305,7 @@ async function installSilverbullet(argv) {
     else { console.error(`punchlist: bad flag ${argv[i]} (allowed: --print, --no-start, --platform, --version, --skip-binary)`); process.exit(2); }
   }
   const home = homedir();
-  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dataDir = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
   const spaceDir = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
   const resolved = resolveSilverbulletCmd(home, version);
   const spec = silverbulletSpec(platform, { repo: ROOT, spaceDir, home, cmd: resolved.cmd, uid: process.getuid?.() ?? 0 });
@@ -388,7 +401,7 @@ async function installSilverbullet(argv) {
 // silverbulletSpec() so it can never drift out of sync with the service that
 // install-silverbullet actually wires up.
 function exposeKbSpec(platform = process.platform) {
-  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dataDir = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
   const spaceDir = resolveKbSpaceDir(dataDir, readInstanceSetting(dataDir, 'kb_path'));
   const sb = silverbulletSpec(platform, { repo: ROOT, spaceDir, home: homedir() });
   return tailscaleServeSpec({ port: sb.port });
@@ -463,7 +476,7 @@ function genToken(argv) {
 async function doctor() {
   const platform = process.platform;
   const home = homedir();
-  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dataDir = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
   const port = 8600;
   let hardFail = false;
   const ok = (l, x = '') => console.log(`  ✓ ${l}${x ? `  — ${x}` : ''}`);
@@ -472,8 +485,9 @@ async function doctor() {
   const onPath = c => spawnSync('sh', ['-c', `command -v ${c}`], { stdio: 'ignore' }).status === 0;
 
   console.log('punchlist doctor\n\nPrerequisites:');
-  const nmaj = Number(process.versions.node.split('.')[0]);
-  nmaj >= 26 ? ok(`node ${process.versions.node}`) : bad(`node ${process.versions.node}`, 'need >= 26');
+  nodeVersionError() === null
+    ? ok(`node ${process.versions.node}`)
+    : bad(`node ${process.versions.node}`, `need >= ${MIN_NODE_MAJOR}`);
   onPath('jq') ? ok('jq') : bad('jq', 'required by pl.sh');
   onPath('curl') ? ok('curl') : bad('curl');
   onPath('claude') ? ok('claude CLI') : warn('claude CLI not on PATH', 'needed for the agent sweep');
@@ -550,7 +564,7 @@ function sh(cmd, args, cwd) {
 }
 function backup(argv) {
   const dry = argv.includes('--dry-run');
-  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dataDir = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
   const dbFile = join(dataDir, 'punchlist.db');
   if (!existsSync(dbFile)) { console.error(`punchlist: no database at ${dbFile}`); process.exit(1); }
   const { mode, repo } = readBackupSettings(dbFile);
@@ -594,7 +608,7 @@ function backup(argv) {
 // no task is in_progress (agents idle), otherwise defers. Lets you queue a
 // server restart without interrupting work in flight.
 function restartDb(readOnly = false) {
-  const dataDir = process.env.PUNCHLIST_DATA || join(ROOT, 'data');
+  const dataDir = defaultDataDir({ root: ROOT, env: process.env, home: homedir() });
   return new DatabaseSync(join(dataDir, 'punchlist.db'), { readOnly });
 }
 const rsGet = (db, k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value ?? '';
@@ -684,6 +698,10 @@ switch (cmd) {
     const claudeDir = resolve(flags.claude ?? join(homedir(), '.claude'));
     installSkill(join(ROOT, 'skills', 'claude', 'punchlist'), join(claudeDir, 'skills', 'punchlist'),
       '$HOME/.claude/secrets.local.env');
+    // template resolver — the punchlist skill tells agents to `plt show` a
+    // task's template, so the skill that explains plt has to ship with it
+    installSkill(join(ROOT, 'skills', 'claude', 'punchlist-templates'),
+      join(claudeDir, 'skills', 'punchlist-templates'), '$HOME/.claude/secrets.local.env');
     // data-governance skill + the guard scripts the PreToolUse hook references
     installSkill(join(ROOT, 'skills', 'claude', 'punchlist-govern'), join(claudeDir, 'skills', 'punchlist-govern'),
       '$HOME/.claude/secrets.local.env');

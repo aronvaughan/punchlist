@@ -26,19 +26,25 @@
     "node": ">=26"
   },
   "bin": {
-    "punchlist": "bin/punchlist"
+    "punchlist": "bin/punchlist",
+    "plt": "punchlist-templates/bin/plt"
   },
   "files": [
-    "src",
+    "LICENSE",
+    "README.md",
+    "bin",
     "migrations",
     "public",
-    "skills",
-    "scripts",
-    "bin",
-    "punchlist-templates/templates",
     "punchlist-templates/bin",
-    "README.md",
-    "LICENSE"
+    "punchlist-templates/integrations",
+    "punchlist-templates/lib",
+    "punchlist-templates/package.json",
+    "punchlist-templates/schemas",
+    "punchlist-templates/templates",
+    "punchlist-templates/workflows",
+    "scripts",
+    "skills",
+    "src"
   ],
   "scripts": {
     "start": "node src/server.js",
@@ -47,6 +53,8 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "hono": "^4.13.3"
+    "hono": "^4.13.3",
+    "ajv": "8.17.1",
+    "yaml": "2.9.1"
   }
 }

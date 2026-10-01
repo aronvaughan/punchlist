@@ -15,8 +15,10 @@ if [ -z "$NAME" ]; then
   echo "usage: wf-scaffold.sh <name>   (lowercase letters, digits, hyphens)" >&2
   exit 2
 fi
+# POSIX classes, not [a-z]: under a UTF-8 locale a range glob collates
+# case-insensitively, so `UPPER` sails through *[!a-z0-9-]*.
 case "$NAME" in
-  *[!a-z0-9-]* | -* | *-)
+  *[![:lower:][:digit:]-]* | -* | *-)
     echo "wf-scaffold: bad name \`$NAME\` — use lowercase letters, digits, inner hyphens" >&2
     exit 2
     ;;

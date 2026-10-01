@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   serviceSpec, serviceRestartCmd, systemdUnit, launchdPlist, silverbulletSpec, silverbulletWrapper,
   silverbulletDownloadSpec, silverbulletBinDir, silverbulletBinPath, SILVERBULLET_VERSION, resolveKbSpaceDir,
-  stableNodePath,
+  stableNodePath, nodeVersionError, defaultDataDir,
 } from '../src/service.js';
 
 const base = { repo: '/home/u/app', dataDir: '/home/u/app/data', node: '/usr/bin/node', home: '/home/u' };
@@ -248,4 +248,32 @@ test('darwin silverbullet start also kickstarts', () => {
   const s = silverbulletSpec('darwin', { repo: '/r', spaceDir: '/r/data/kb', home: '/Users/u', uid: 501 });
   assert.equal(s.start.length, 2);
   assert.deepEqual(s.start[1], ['launchctl', ['kickstart', '-k', 'gui/501/com.punchlist.silverbullet']]);
+});
+
+// --- runtime + install-location helpers -------------------------------------
+
+test('nodeVersionError: null when new enough, actionable message when not', () => {
+  assert.equal(nodeVersionError('26.5.0'), null);
+  assert.equal(nodeVersionError('27.0.0'), null);
+  assert.match(nodeVersionError('22.23.1'), /too old/);
+  assert.match(nodeVersionError('22.23.1'), />= 26/);
+  assert.match(nodeVersionError('22.23.1'), /brew install node@26|nvm install 26/);
+});
+
+test('defaultDataDir: PUNCHLIST_DATA always wins', () => {
+  assert.equal(
+    defaultDataDir({ root: '/opt/hb/lib/node_modules/@a/punchlist', env: { PUNCHLIST_DATA: '/srv/pl' }, home: '/home/u' }),
+    '/srv/pl');
+});
+
+test('defaultDataDir: a source checkout keeps repo-local ./data', () => {
+  assert.equal(defaultDataDir({ root: '/home/u/code/punchlist', env: {}, home: '/home/u' }),
+    '/home/u/code/punchlist/data');
+});
+
+test('defaultDataDir: a global install escapes node_modules (npm wipes it on upgrade)', () => {
+  const root = '/opt/homebrew/lib/node_modules/@aronvaughan/punchlist';
+  assert.equal(defaultDataDir({ root, env: {}, home: '/home/u' }), '/home/u/.local/share/punchlist');
+  // XDG override is honoured
+  assert.equal(defaultDataDir({ root, env: { XDG_DATA_HOME: '/xdg' }, home: '/home/u' }), '/xdg/punchlist');
 });
