@@ -17,7 +17,6 @@ steps:
   - id: intake
     assignee: agent
     title: "Intake {pr}: facts, base branch, stack position, add us as reviewer"
-    model: "{{config.models.default_model}}"
     verify:
       gh: [pr-facts]
     outcomes: [ready, skip]
@@ -26,34 +25,26 @@ steps:
     title: "Architectural gist of {pr}"
     needs: [intake]
     when: { step: intake, outcome: ready }
-    model: "{{config.models.review_model}}"
-    reasoning: high
     agents: "{{config.review.arch_agents}}"
   - id: panel
     assignee: agent
     title: "Adversarial defect panel on {pr}"
     needs: [gist]
-    model: "{{config.models.review_model}}"
-    reasoning: max
     agents: "{{config.review.panel_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.panel_mode}}"
       agents: "{{config.review.panel_agents}}"
-      quorum: all
-      timeout: "{{config.gates.adversarial_timeout}}"
     outcomes: [pass, fail]
   - id: write-review
     assignee: agent
     title: "Writing review of the draft comments and summary for {pr}"
     needs: [panel]
-    model: "{{config.models.review_model}}"
     agents: "{{config.review.writing_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.writing_mode}}"
       agents: "{{config.review.writing_agents}}"
-      quorum: all
     outcomes: [pass, fail]
     on_fail: { retry: 2, then: panel }
   - id: outbound
@@ -68,7 +59,6 @@ steps:
     gate:
       kind: human
       signal: reply-approved
-      by: owner
   - id: post
     assignee: agent
     title: "Post the approved review on {pr}"
@@ -90,7 +80,6 @@ steps:
     gate:
       kind: human
       signal: reply-approved
-      by: owner
   # Armed when the head moved after our review (rebase, new commits). The agent re-runs the
   # carry-forward check against the new head and refreshes the outbound page; posting again is the
   # same reply-approved gate.

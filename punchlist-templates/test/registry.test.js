@@ -124,9 +124,11 @@ test('bin/plt dispatches its own verbs and the lib verbs from one map, with no d
     assert.ok(!cmds.has(c.name), `bin/plt re-declares "${c.name}", which lib/${cmds.get(c.name) && cmds.get(c.name).module} already owns`);
     assert.strictEqual(typeof c.handler, 'function');
   }
-  for (const verb of ['validate', 'index', 'list', 'show', 'render', 'launch', 'advance', 'runs']) {
+  for (const verb of ['index', 'list', 'show', 'render', 'launch', 'advance', 'runs']) {
     assert.ok(plt.commands.some((c) => c.name === verb), `plt ${verb} is no longer declared`);
   }
+  // `validate` moved to lib/validate.js with the validator it runs.
+  assert.strictEqual(cmds.get('validate') && cmds.get('validate').module, 'validate.js');
 });
 
 // bin/plt used to end with process.exit(code): on macOS a pipe on process.stdout is async, so an

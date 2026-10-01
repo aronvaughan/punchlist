@@ -349,14 +349,15 @@ function parseArgs(args) {
   return o;
 }
 
-function resolveProcessDir(project) {
+// Shared with lib/publish.js. `env` lets a handler pass its own (a test sets PLT_PROCESS_DIR there).
+function resolveProcessDir(project, env = process.env) {
   if (typeof project === 'string') {
     const dir = path.resolve(project);
     if (fs.existsSync(path.join(dir, 'process', 'config'))) return path.join(dir, 'process');
     if (fs.existsSync(path.join(dir, 'config'))) return dir;
     throw new Error(`no process/config directory under ${dir}`);
   }
-  const p = process.env.PLT_PROCESS_DIR || spine.findProcessDir(process.cwd());
+  const p = env.PLT_PROCESS_DIR || spine.findProcessDir(process.cwd());
   if (!p) throw new Error(`no process/config directory found above ${process.cwd()} (set PLT_PROCESS_DIR, or pass --project <dir>)`);
   return p;
 }
@@ -374,4 +375,4 @@ async function fsckHandler(args) {
 
 const commands = [{ name: 'fsck', usage: USAGE, handler: fsckHandler }];
 
-module.exports = { fsckRun, fsckAll, formatFsck, fsckHandler, commands };
+module.exports = { fsckRun, fsckAll, formatFsck, fsckHandler, commands, parseArgs, resolveProcessDir };

@@ -50,7 +50,8 @@ every figure in the prose traces to a field in the input.
 - …  (or: "None flagged.")
 
 ## Estimate vs actual
-- <run id>: estimated <estimate>d, actual <actual_days>d (<over/under> by <diff>d)
+- <run id>: est <estimate.value> <estimate.unit> · actual <actual.value> <actual.unit>
+- <run id>: est <estimate.value> <estimate.unit> · actual unknown — <actual_missing>  (when actual is null)
 - …  (or: "No run closed in this period.")
 
 ## Reviews
@@ -68,6 +69,8 @@ every figure in the prose traces to a field in the input.
 - A decision id is only unique WITHIN its effort — always show `(<effort>)` next to it, even when
   only one effort has decisions this period.
 - Ages and hours are rounded to one decimal place; a null age reads "age unknown", never "0d".
+- An estimate and its actual are in different units (ideal days vs elapsed time). Show each in
+  its own unit, side by side; never subtract one from the other.
 
 ## Golden exemplar
 

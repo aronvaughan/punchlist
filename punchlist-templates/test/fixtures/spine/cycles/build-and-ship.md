@@ -7,32 +7,6 @@ domain: engineering
 tags: [spine, delivery]
 inputs: [card, effort, branch, repo_dir]
 actors: [agent, owner]
-menu:
-  words: { where: "where are we", next: "what's next", go: "go", approve: "approve", block: "block", answer: "answer",
-           drop: "drop", change: "change", dismiss: "dismiss", park: "park", capture: "capture", handoff: "handoff" }
-  commands:
-    where:   "plt prime {run}"
-    next:    "plt prime {run} --next"
-    go:      "run the Next line of HANDOFF.md verbatim"
-    approve: "plt gate approve {run} {step} --by human:{me}"
-    block:   "plt gate fail {run} {step} --reason {payload}"
-    answer:  "plt answer {run} --text {payload}"
-    drop:    "edit the text under review; re-run writing-adversary; re-render"
-    change:  "edit the text under review; re-run writing-adversary; re-render"
-    dismiss: "plt dismiss {run} {step} --at {payload}"
-    park:    "plt park {run} --reason {payload}"
-    capture: "invoke kb-code-knowledge-capture"
-    handoff: "plt handoff {run} --goal … --next …"
-  by_mode:
-    WAIT:       [approve, block, drop, handoff, where]
-    GATE:       [approve, block, drop, change, where]
-    PANEL-FAIL: [dismiss, go, block, where]
-    BLOCKED:    [answer, park, where]
-    EXTERNAL:   [where, next, block]
-    START:      [go, where, next]
-    RESUME:     [go, where, handoff]
-    NEXT:       [go, next, capture, where]
-    CLOSED:     [capture, where]
 ---
 
 # Build and ship
@@ -43,51 +17,39 @@ steps:
   - id: scope
     assignee: agent
     title: "Scope {card}"
-    model: "{{config.models.default_model}}"
-    reasoning: high
     skills: "{{config.skills.scope}}"
     artifact: dispatch-brief
     touches: declared
     jira:
       on_start: "{{config.jira.status.in_progress}}"
-      sprint: active
     outcomes: [ready, needs_input]
   - id: build
     assignee: agent
     title: "Build {card}"
     needs: [scope]
     when: { step: scope, outcome: ready }
-    model: "{{config.models.default_model}}"
-    reasoning: high
     skills: "{{config.skills.build}}"
     tools: "{{config.tools.build}}"
   - id: review
     assignee: agent
     title: "Adversarial review of {card}"
     needs: [build]
-    model: "{{config.models.review_model}}"
-    reasoning: max
     agents: "{{config.review.panel_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.panel_mode}}"
       agents: "{{config.review.panel_agents}}"
-      quorum: all
-      max_open_severity: low
-      timeout: "{{config.gates.adversarial_timeout}}"
     outcomes: [pass, fail]
     on_fail: { retry: 2, then: build }
   - id: write-review
     assignee: agent
     title: "Writing review of the draft PR message and code comments for {card}"
     needs: [review]
-    model: "{{config.models.review_model}}"
     agents: "{{config.review.writing_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.writing_mode}}"
       agents: "{{config.review.writing_agents}}"
-      quorum: all
     outcomes: [pass, fail]
     on_fail: { retry: 2, then: build }
   - id: pre-pr
@@ -104,7 +66,6 @@ steps:
     gate:
       kind: human
       signal: artifact-approved
-      by: owner
     reapprove:
       artifact: fix-summary
       rearm: [announce]
@@ -124,7 +85,10 @@ steps:
     gate:
       kind: human
       signal: reply-approved
-      by: owner
+    # One approval per reply: `replied` re-opens the step for the next one; it never settles on its
+    # own, and `plt run close` retires it.
+    outcomes: [replied, done]
+    repeat_until: done
   - id: announce
     assignee: owner
     title: "Ask the team for reviews on {card}"
@@ -151,7 +115,6 @@ steps:
     gate:
       kind: human
       signal: reply-approved
-      by: owner
     outcomes: [approved, changes_requested]
     repeat_until: approved
   - id: merge

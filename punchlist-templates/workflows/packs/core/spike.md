@@ -17,36 +17,26 @@ steps:
   - id: scope
     assignee: agent
     title: "Frame the question for {card}"
-    model: "{{config.models.default_model}}"
-    reasoning: high
     skills: "{{config.skills.scope}}"
     artifact: dispatch-brief
     jira:
       on_start: "{{config.jira.status.in_progress}}"
-      sprint: active
     outcomes: [ready, needs_input]
   - id: research
     assignee: agent
     title: "Research {card}"
     needs: [scope]
     when: { step: scope, outcome: ready }
-    model: "{{config.models.default_model}}"
-    reasoning: high
     tools: "{{config.tools.research}}"
   - id: review
     assignee: agent
     title: "Adversarial review of the findings for {card}"
     needs: [research]
-    model: "{{config.models.review_model}}"
-    reasoning: max
     agents: "{{config.review.spike_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.panel_mode}}"
       agents: "{{config.review.spike_agents}}"
-      quorum: all
-      max_open_severity: low
-      timeout: "{{config.gates.adversarial_timeout}}"
     outcomes: [pass, fail]
     on_fail: { retry: 2, then: research }
   - id: write-review
@@ -54,13 +44,11 @@ steps:
     title: "Writing review of the draft spike note for {card}"
     notes: "Before the adversary reads the text, run `plt lint prose <file>` on it (long sentences, banned words, internal ticket keys in code comments, undefined acronyms — config.writing.*), fix every hit, then record `plt receipt --kind tool --name lint-prose`. A `banner` gate never holds this step: a failing reviewer is shown by prime as a warning."
     needs: [review]
-    model: "{{config.models.review_model}}"
     agents: "{{config.review.writing_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.writing_mode}}"
       agents: "{{config.review.writing_agents}}"
-      quorum: all
     outcomes: [pass, fail]
     on_fail: { retry: 2, then: research }
   - id: note
@@ -75,7 +63,6 @@ steps:
     gate:
       kind: human
       signal: artifact-approved
-      by: owner
   - id: record
     assignee: agent
     title: "Record the decision for {card}"

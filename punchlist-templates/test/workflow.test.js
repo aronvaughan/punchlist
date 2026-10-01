@@ -318,15 +318,15 @@ test('parseSteps: a key with an empty value opens an indented block map (one lev
     '    gate:',
     '      kind: adversarial',
     '      agents: [a, b]',
-    '      quorum: all',
+    '      mode: hard',
     '    outcomes: [pass, fail]',
   ].join('\n'));
   assert.deepStrictEqual(errors, []);
-  assert.deepStrictEqual(steps[0].gate, { kind: 'adversarial', agents: ['a', 'b'], quorum: 'all' });
+  assert.deepStrictEqual(steps[0].gate, { kind: 'adversarial', agents: ['a', 'b'], mode: 'hard' });
   assert.deepStrictEqual(steps[0].outcomes, ['pass', 'fail']);
 });
 
-test('validateWorkflow: spine keys — gate kinds, human signal, model/reasoning, skills shape', () => {
+test('validateWorkflow: spine keys — gate kinds, human signal, dead model/reasoning, skills shape', () => {
   const file = path.join(FIXTURES, 'wf-spine-bad-gate.md');
   const parsed = plt.parseWorkflow(fs.readFileSync(file, 'utf8'));
   const config = {
@@ -336,8 +336,8 @@ test('validateWorkflow: spine keys — gate kinds, human signal, model/reasoning
   const msgs = plt.validateWorkflow(parsed, file, new Set(), { config }).map((e) => e.msg);
   assert.ok(msgs.some((m) => /gate\.kind `sideways`/.test(m)));
   assert.ok(msgs.some((m) => /human gate needs `signal`/.test(m)));
-  assert.ok(msgs.some((m) => /model `gpt-9`/.test(m)));
-  assert.ok(msgs.some((m) => /reasoning `extreme`/.test(m)));
+  assert.ok(msgs.some((m) => /key `model` is not read by anything — see plan 4 D-029/.test(m)));
+  assert.ok(msgs.some((m) => /key `reasoning` is not read by anything — see plan 4 D-029/.test(m)));
   assert.ok(msgs.some((m) => /`skills` must be an inline list/.test(m)));
 });
 
@@ -518,12 +518,14 @@ test('validateWorkflow: `land_on.outcome` must be one of that step\'s own outcom
 // One spelling for the green-checks fact: the hyphen. The validator's verify.gh list and every
 // shipped pack use `checks-green`; an old receipt spelled `checks_green` still counts (spine's
 // normalizeGhName), and fsck reports it as W_GH_NAME_SPELLING.
-test('validateWorkflow: verify.gh takes `checks-green`, never `checks_green`; no shipped pack spells it with `_`', () => {
+// The collector matches gh names with `-` and `_` as one character (spine.normalizeGhName), so the
+// validator does too; the shipped packs still spell it one way, `checks-green`.
+test('validateWorkflow: verify.gh takes `checks-green` and `checks_green` alike; no shipped pack spells it with `_`', () => {
   const src = (name) => ['---', 'name: x', 'kind: workflow', 'actors: [agent]', '---',
     'steps:', '  - id: open-pr', '    assignee: agent', '    verify:', `      gh: [${name}]`, ''].join('\n');
   const msgs = (name) => plt.validateWorkflow(plt.parseWorkflow(src(name)), '/tmp/x.md', new Set(), {}).map((e) => e.msg);
   assert.deepStrictEqual(msgs('checks-green'), []);
-  assert.ok(msgs('checks_green').some((m) => /verify\.gh `checks_green` is unknown/.test(m)));
+  assert.deepStrictEqual(msgs('checks_green'), []);
   const packs = path.join(REPO, 'workflows', 'packs');
   const files = fs.readdirSync(packs, { recursive: true }).filter((f) => f.endsWith('.md'));
   assert.ok(files.length > 0);

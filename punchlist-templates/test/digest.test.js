@@ -310,3 +310,126 @@ test('plt digest collect writes process/digests/<date>.json; plt digest standup 
   assert.ok(standupOut.includes('*Preparing*'));
   assert.ok(standupOut.split('\n').filter((l) => l.trim()).every((l) => l.startsWith('*')));
 });
+
+// ---- estimate vs actual: the span estimation.yaml declares ----
+
+const SPAN = { from: 'build.started', to: 'merge.finished' };
+
+function declareSpan(p, span = SPAN, unit = 'hours') {
+  const u = unit === null ? '' : `unit: ${unit}, `;
+  fs.writeFileSync(path.join(p, 'config', 'estimation.yaml'),
+    `unit: ideal_days\nactual: { ${u}from: ${span.from}, to: ${span.to} }\n`);
+}
+
+const EST = { value: 1, unit: 'ideal_days' };
+
+// A closed run whose close lands on 2026-09-17, with the given time events before it.
+function closedRun(p, runId, events, extra = {}) {
+  writeRunState(p, runId, { status: 'closed', ...extra });
+  for (const e of events) ev(p, runId, { kind: 'time', actor: 'agent', ...e });
+  ev(p, runId, { kind: 'time', what: 'closed', step: null, actor: 'agent', ts: '2026-09-17T15:00:00.000Z' });
+}
+
+test('actualSpan: first build.started to last merge.finished, in hours', () => {
+  const events = [
+    { kind: 'time', what: 'claimed', step: null, ts: '2026-09-16T08:00:00.000Z' },
+    { kind: 'time', what: 'started', step: 'build', ts: '2026-09-16T09:00:00.000Z' },
+    { kind: 'time', what: 'started', step: 'build', ts: '2026-09-16T10:00:00.000Z' },
+    { kind: 'time', what: 'finished', step: 'merge', ts: '2026-09-17T09:00:00.000Z' },
+    { kind: 'time', what: 'finished', step: 'merge', ts: '2026-09-17T12:30:00.000Z' },
+  ];
+  assert.strictEqual(digest.actualSpan(events, SPAN), 27.5);
+});
+
+test('actualSpan: null — never 0 — when an endpoint is absent or `to` is not after `from`', () => {
+  const started = { kind: 'time', what: 'started', step: 'build', ts: '2026-09-16T09:00:00.000Z' };
+  const merged = { kind: 'time', what: 'finished', step: 'merge', ts: '2026-09-16T12:00:00.000Z' };
+  assert.strictEqual(digest.actualSpan([merged], SPAN), null);
+  assert.strictEqual(digest.actualSpan([started], SPAN), null);
+  assert.strictEqual(digest.actualSpan([{ ...merged, ts: started.ts }, started], SPAN), null);
+});
+
+test('collectDigest: a closed run with both endpoints reports the declared span in its declared unit, not claimed → closed', () => {
+  const p = path.join(tmpProcess(), 'process');
+  declareSpan(p);
+  closedRun(p, 'TRK-40', [
+    { what: 'claimed', step: null, ts: '2026-09-15T08:00:00.000Z' },
+    { what: 'started', step: 'build', ts: '2026-09-16T09:00:00.000Z' },
+    { what: 'finished', step: 'merge', ts: '2026-09-17T13:00:00.000Z' },
+  ]);
+  const data = digest.collectDigest(p, digest.dayWindow('2026-09-17'));
+  assert.deepStrictEqual(data.estimates, [{ run: 'TRK-40', estimate: EST, actual: { value: 28, unit: 'hours' }, actual_missing: null }]);
+});
+
+test('collectDigest: a closed run that never started its `from` step has a null actual, and says why', () => {
+  const p = path.join(tmpProcess(), 'process');
+  declareSpan(p);
+  closedRun(p, 'TRK-41', [
+    { what: 'claimed', step: null, ts: '2026-09-16T08:00:00.000Z' },
+    { what: 'finished', step: 'merge', ts: '2026-09-17T13:00:00.000Z' },
+  ]);
+  const data = digest.collectDigest(p, digest.dayWindow('2026-09-17'));
+  assert.deepStrictEqual(data.estimates, [{ run: 'TRK-41', estimate: EST, actual: null, actual_missing: 'no build.started event' }]);
+});
+
+test('collectDigest: a closed run missing its `to` event has a null actual, and says why', () => {
+  const p = path.join(tmpProcess(), 'process');
+  declareSpan(p);
+  closedRun(p, 'TRK-42', [{ what: 'started', step: 'build', ts: '2026-09-16T09:00:00.000Z' }]);
+  const data = digest.collectDigest(p, digest.dayWindow('2026-09-17'));
+  assert.deepStrictEqual(data.estimates, [{ run: 'TRK-42', estimate: EST, actual: null, actual_missing: 'no merge.finished event' }]);
+});
+
+test('collectDigest: a run whose own cycle has no `from` step has a null actual naming the cycle and step', () => {
+  const p = path.join(tmpProcess(), 'process');
+  declareSpan(p);
+  closedRun(p, 'TRK-43', [{ what: 'started', step: 'investigate', ts: '2026-09-16T09:00:00.000Z' }], { cycle: 'spike' });
+  const data = digest.collectDigest(p, digest.dayWindow('2026-09-17'));
+  assert.deepStrictEqual(data.estimates, [{ run: 'TRK-43', estimate: EST, actual: null, actual_missing: 'cycle spike has no step build' }]);
+});
+
+test('collectDigest: no estimation.actual declared — the actual is null with a reason, not an error', () => {
+  const p = path.join(tmpProcess(), 'process');
+  closedRun(p, 'TRK-44', [
+    { what: 'started', step: 'build', ts: '2026-09-16T09:00:00.000Z' },
+    { what: 'finished', step: 'merge', ts: '2026-09-17T13:00:00.000Z' },
+  ]);
+  const data = digest.collectDigest(p, digest.dayWindow('2026-09-17'));
+  assert.deepStrictEqual(data.estimates, [{ run: 'TRK-44', estimate: EST, actual: null, actual_missing: 'estimation.actual is not declared' }]);
+});
+
+test('collectDigest: estimation.actual naming a step no formula has is an error naming the step and the config key', () => {
+  const p = path.join(tmpProcess(), 'process');
+  declareSpan(p, { from: 'biuld.started', to: 'merge.finished' });
+  assert.throws(() => digest.collectDigest(p, digest.dayWindow('2026-09-17')),
+    /estimation\.actual\.from.*biuld.*no formula/);
+});
+
+test('collectDigest: estimation.actual.unit days reports the same span as hours / 24, in days', () => {
+  const p = path.join(tmpProcess(), 'process');
+  declareSpan(p, SPAN, 'days');
+  closedRun(p, 'TRK-45', [
+    { what: 'started', step: 'build', ts: '2026-09-16T09:00:00.000Z' },
+    { what: 'finished', step: 'merge', ts: '2026-09-17T15:00:00.000Z' },
+  ]);
+  const data = digest.collectDigest(p, digest.dayWindow('2026-09-17'));
+  assert.deepStrictEqual(data.estimates, [{ run: 'TRK-45', estimate: EST, actual: { value: 1.25, unit: 'days' }, actual_missing: null }]);
+});
+
+test('collectDigest: an estimation.actual.unit that is not hours or days (or is absent) is an error naming the key', () => {
+  for (const unit of ['weeks', null]) {
+    const p = path.join(tmpProcess(), 'process');
+    declareSpan(p, SPAN, unit);
+    assert.throws(() => digest.collectDigest(p, digest.dayWindow('2026-09-17')), /estimation\.actual\.unit.*hours or days/);
+  }
+});
+
+test('the digest pack and README render estimate and actual each in its own unit, with no cross-unit arithmetic', () => {
+  const pack = fs.readFileSync(path.join(__dirname, '..', 'templates', 'packs', 'core', 'digest.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  for (const doc of [pack, readme]) assert.ok(!doc.includes('actual_days'), 'no actual_days field remains');
+  assert.ok(!/over\/under|<diff>/.test(pack), 'no over/under subtraction across units');
+  assert.ok(pack.includes('est <estimate.value> <estimate.unit> · actual <actual.value> <actual.unit>'));
+  assert.ok(pack.includes('<actual_missing>'));
+  assert.ok(readme.includes('estimates: [{run, estimate: {value, unit}, actual: {value, unit} | null, actual_missing}]'));
+});

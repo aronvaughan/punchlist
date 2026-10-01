@@ -103,6 +103,8 @@ test('recordFacts on the shipped build-and-ship cycle: one checks-green fact rec
   assert.deepStrictEqual(byStep['open-pr'], ['checks-green']);
   assert.deepStrictEqual(byStep['merge'].sort(), ['approved_on_head', 'checks-green', 'threads_resolved']);
   for (const e of gh) { assert.strictEqual(e.result, 'pass'); assert.strictEqual(e.ref, 'aaaa1111'); }
+  // The collector's own path: facts on steps that require them are not out of band, though pending.
+  assert.ok(gh.every((e) => e.out_of_band === undefined), 'collected facts are not marked out of band');
 
   const second = facts.recordFacts(p, 'TRK-1', f);
   assert.deepStrictEqual(second.recorded, []);
@@ -461,4 +463,29 @@ test('collect: two runs on the same PR number in DIFFERENT repos each read their
   };
   const guarded = facts.collect(p, { gh: wrongRepo, runId: 'TRK-81' })[0];
   assert.match(guarded.error, /example-org\/libs#42 resolved to https:\/\/github.com\/example-org\/greenhouse\/pull\/42/);
+});
+
+// `pr-loop`'s external gate waits on `review_approved`; the collector's name for that fact is
+// `approved_on_head`. Both are emitted, so a formula spelled either way is satisfied.
+test('candidateNames: an APPROVED review on the current head emits both approved_on_head and its alias review_approved', () => {
+  const f = facts.prFacts(ghOne('open-green-approved'), 'example-org/greenhouse', 42);
+  const names = facts.candidateNames(f, {});
+  assert.ok(names.includes('approved_on_head'));
+  assert.ok(names.includes('review_approved'));
+  const stale = facts.candidateNames(facts.prFacts(ghOne('stale-approval'), 'example-org/greenhouse', 47), {});
+  assert.ok(!stale.includes('approved_on_head') && !stale.includes('review_approved'), 'a stale approval is neither');
+});
+
+// GH_FACT_NAMES is the validator's allowlist source, so it must be exactly what candidateNames can
+// emit. Drive every branch true at once (and each false) instead of restating the list here.
+test('GH_FACT_NAMES is exactly the set of names candidateNames can emit', () => {
+  assert.ok(Object.isFrozen(facts.GH_FACT_NAMES));
+  const all = { state: 'MERGED', headSha: 'h1', reviewDecision: 'APPROVED', threadsUnresolved: 0,
+    checks: { total: 1, pass: 1, fail: 0, pending: 0 },
+    reviews: [{ id: 'R1', author: 'lead-gh', state: 'APPROVED', commitOid: 'h1' }] };
+  const emitted = new Set(facts.candidateNames(all, { actors: { github_logins: ['lead-gh'] } }));
+  const none = { state: 'OPEN', headSha: 'h1', reviewDecision: null, threadsUnresolved: 2,
+    checks: { total: 1, pass: 0, fail: 1, pending: 0 }, reviews: [] };
+  assert.deepStrictEqual(facts.candidateNames(none, {}), []);
+  assert.deepStrictEqual([...emitted].sort(), [...facts.GH_FACT_NAMES].sort());
 });

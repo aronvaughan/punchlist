@@ -26,21 +26,17 @@ steps:
     assignee: agent
     title: "Write the digest for {date} from the collected numbers"
     needs: [collect]
-    model: "{{config.models.default_model}}"
-    reasoning: medium
     artifact: digest
   - id: write-review
     assignee: agent
     title: "Writing review of the draft digest for {date}"
     notes: "Before the adversary reads the text, run `plt lint prose <file>` on it (long sentences, banned words, internal ticket keys in code comments, undefined acronyms — config.writing.*), fix every hit, then record `plt receipt --kind tool --name lint-prose`. A `banner` gate never holds this step: a failing reviewer is shown by prime as a warning."
     needs: [write]
-    model: "{{config.models.review_model}}"
     agents: "{{config.review.writing_agents}}"
     gate:
       kind: adversarial
       mode: "{{config.review.writing_mode}}"
       agents: "{{config.review.writing_agents}}"
-      quorum: all
     outcomes: [pass, fail]
     on_fail: { retry: 2, then: write }
   - id: close-out

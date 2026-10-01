@@ -125,6 +125,10 @@ function readLedgerDone(ledgerPath) {
 function planWaveTasks(planPath, ledgerPath) {
   const tasks = parsePlanTasks(planPath);
   const done = readLedgerDone(ledgerPath);
+  // A missing ledger and a ledger recording nothing both read as `[]`. Telling them apart is the
+  // whole of G-13: `plt fan` reported every finished task of a landed plan as "not complete"
+  // because it was reading a path that did not exist, and said nothing about it.
+  const ledger = { path: ledgerPath, found: fs.existsSync(ledgerPath) };
   const open = tasks.filter((t) => !done.includes(t.n));
   const wave = []; const excluded = [];
   for (const t of open) {
@@ -139,16 +143,38 @@ function planWaveTasks(planPath, ledgerPath) {
     if (why.length) excluded.push({ n: t.n, why: why.join('; ') });
     else wave.push({ n: t.n, title: t.title });
   }
-  return { wave, excluded, done };
+  return { wave, excluded, done, ledger };
 }
 
 function formatWave(plan) {
   const head = plan.wave.length ? 'wave: ' + plan.wave.map((t) => 'T' + t.n).join(' ') : 'wave: (none)';
+  // A wave computed against a ledger that is not there is not a wave, it is a guess. Say so on the
+  // line above it, every time, rather than letting the reader assume the tool checked.
+  const warn = plan.ledger && !plan.ledger.found
+    ? [`NO LEDGER at ${plan.ledger.path} — every task is treated as incomplete. Name the real one with`,
+       '  a `**Ledger:** <path>` line in the plan, or pass --ledger. This wave is not to be trusted.']
+    : [];
   const rows = [...plan.excluded].sort((a, b) => a.n - b.n).map((e) => `excluded: T${e.n} — ${e.why}`);
-  return [head, ...rows].join('\n');
+  return [...warn, head, ...rows].join('\n');
+}
+
+// The ledger a plan is executed against. A plan may NAME it — `**Ledger:** <path>` anywhere in the
+// file — because the directory does not always match the plan's basename: plan 3's execution ledger
+// lives under `2026-09-25-plan-3/` while its basename says
+// `2026-09-25-process-spine-impl-plan-3-doctor-schemas-harvest`. The basename default stays as the
+// convention for plans that do not say.
+function ledgerFromPlan(planPath) {
+  let text;
+  try { text = fs.readFileSync(planPath, 'utf8'); } catch (e) { return null; }
+  const m = text.match(/^\s*(?:[-*]\s*)?\*\*Ledger:\*\*\s*`?([^`\n]+?)`?\s*$/m);
+  if (!m) return null;
+  const named = m[1].trim();
+  return path.isAbsolute(named) ? named : path.resolve(process.cwd(), named);
 }
 
 function defaultLedger(planPath) {
+  const named = ledgerFromPlan(planPath);
+  if (named) return named;
   const slug = path.basename(planPath).replace(/\.md$/, '');
   return path.resolve(process.cwd(), '.superpowers', 'sdd', slug, 'progress.md');
 }
@@ -175,4 +201,4 @@ function fanHandler(args) {
 
 const commands = [{ name: 'fan', usage: 'plt fan <plan-file> [--ledger <path>] [--json]', handler: fanHandler }];
 
-module.exports = { parsePlanTasks, readInterfacesBlock, readFilesBlock, readLedgerDone, planWaveTasks, formatWave, fanHandler, commands };
+module.exports = { parsePlanTasks, defaultLedger, ledgerFromPlan, readInterfacesBlock, readFilesBlock, readLedgerDone, planWaveTasks, formatWave, fanHandler, commands };

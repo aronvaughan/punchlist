@@ -92,11 +92,13 @@ function prFacts(gh, repo, number) {
 // (real GitHub logins — a person's display name in `actors.humans` is not one and may never match);
 // `github_logins` absent or empty falls back to `humans[0]`, which is what may happen to work today
 // only when a human's login and display name are spelled the same.
+// `review_approved` is the documented alias of `approved_on_head`: it is the name `pr-loop`'s
+// external gate waits on. Both are emitted, so a formula spelled either way is satisfied.
 function candidateNames(f, cfg) {
   const names = [];
   if (f.checks && f.checks.total > 0 && f.checks.fail === 0 && f.checks.pending === 0) names.push('checks-green');
   if (f.reviewDecision === 'APPROVED' && Array.isArray(f.reviews) &&
-      f.reviews.some((r) => r.state === 'APPROVED' && r.commitOid === f.headSha)) names.push('approved_on_head');
+      f.reviews.some((r) => r.state === 'APPROVED' && r.commitOid === f.headSha)) names.push('approved_on_head', 'review_approved');
   if (f.threadsUnresolved === 0) names.push('threads_resolved');
   if (f.state === 'MERGED') names.push('merged');
   if (f.state !== 'OPEN') names.push('pr_closed');
@@ -106,6 +108,13 @@ function candidateNames(f, cfg) {
   if (logins.length && Array.isArray(f.reviews) && f.reviews.some((r) => logins.includes(r.author))) names.push('review-posted');
   return names;
 }
+
+// Every name `candidateNames` can emit, in its order. The validator's `verify.gh` allowlist reads
+// this list instead of keeping its own copy, so the collector and the validator cannot disagree.
+// `pr-facts` is not here: `recordFacts` records it on its own path, outside `candidateNames`.
+const GH_FACT_NAMES = Object.freeze([
+  'checks-green', 'approved_on_head', 'review_approved', 'threads_resolved', 'merged', 'pr_closed', 'review-posted',
+]);
 
 // Every non-done step whose compiled `receipts_required` declares a `gh` requirement matching
 // `name`, normalised (`-`/`_` as one character): the same live fact (e.g. checks all green) can
@@ -191,7 +200,7 @@ function recordFacts(processDir, runId, facts) {
     const cfg = spine.loadConfig(processDir, runId);
     const events = spine.readEvents(processDir, runId);
     const record = (stepId, name, recordRef) => {
-      const ev = spine.recordReceipt(processDir, runId, { step: stepId, kind: 'gh', name, result: 'pass', ref: recordRef, pin, actor: 'facts' });
+      const ev = spine.recordReceipt(processDir, runId, { step: stepId, kind: 'gh', name, result: 'pass', ref: recordRef, pin, actor: 'facts', [spine.FACTS_COLLECTOR]: true });
       events.push(ev);
       recorded.push(name);
     };
@@ -284,4 +293,4 @@ function collect(processDir, { gh, runId } = {}) {
   return out;
 }
 
-module.exports = { defaultGh, prFacts, findPrRepo, checkTally, threadsUnresolvedFrom, THREADS_QUERY, recordFacts, collect, findPrNumber };
+module.exports = { GH_FACT_NAMES, candidateNames, defaultGh, prFacts, findPrRepo, checkTally, threadsUnresolvedFrom, THREADS_QUERY, recordFacts, collect, findPrNumber };

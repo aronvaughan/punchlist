@@ -11,7 +11,7 @@
     "ts": { "type": "string", "format": "date-time" },
     "run": { "type": "string" },
     "kind": {
-      "enum": ["skill", "agent", "tool", "gate", "jira", "artifact", "gh", "extrapolation", "time", "suggestion", "reprompt", "file", "touches", "review-activity", "decision"]
+      "enum": ["skill", "agent", "tool", "gate", "jira", "artifact", "gh", "extrapolation", "time", "suggestion", "reprompt", "file", "touches", "review-activity", "decision", "question", "answer"]
     },
     "verdict": {
       "description": "A reviewer's call on one receipt. Held to two words because gateCheck and bannerFails both key off `fail`.",
@@ -24,6 +24,10 @@
     "actor": {
       "description": "The ROLE that wrote the event, never the person — the person goes in `by`.",
       "enum": ["agent", "human", "facts", "hook"]
+    },
+    "out_of_band": {
+      "description": "true on a receipt the spine did not collect: recorded for a step that was not in_progress or in_review, or back-filled by the landing path once GitHub said MERGED. It still counts toward the gate; renderers count it apart. Absent otherwise.",
+      "const": true
     },
     "by": {
       "description": "The person, bare, with no `human:` prefix (the prefix is CLI sugar and is stripped once, at the boundary).",

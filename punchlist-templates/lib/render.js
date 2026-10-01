@@ -50,7 +50,8 @@ const firstHuman = (cfg) => (cfg && cfg.actors && Array.isArray(cfg.actors.human
 const runIds = spine.runIds;   // one definition, in lib/spine.js beside readState/readEvents
 function currentStep(st) {
   const order = Object.keys(st.steps || {});
-  return st.current_step || order.find((s) => ['in_review', 'ready', 'in_progress', 'blocked'].includes(st.steps[s].status)) || null;
+  // A blocked step wins: its question is what a person must see, even while another step is current.
+  return spine.blockedStep(st) || st.current_step || order.find((s) => ['in_review', 'ready', 'in_progress', 'blocked'].includes(st.steps[s].status)) || null;
 }
 // The repo a run's PR lives in: `inputs.repo`, else the owner/name inside `inputs.pr`, else the
 // config default. A process can watch several repos, so `config.links.pr_repo` is a fallback and
@@ -113,13 +114,18 @@ function loadRun(processDir, id, cfg, L) {
     : st.exit ? (cur ? st.steps[cur].status : 'pending')
       : cur ? st.steps[cur].status : (order.every((s) => st.steps[s].status === 'done') ? 'done' : 'pending');
   // A ready step whose requirements carry a human gate is the owner's to start — waiting on a person too.
-  const ownerReady = status === 'ready' && cur && (st.steps[cur].receipts_required || []).some((r) => r.kind === 'gate');
+  // A loop step (`repeat_until`) between rounds has nothing to approve until the next one arrives:
+  // it waits, not "needs you". spine.betweenRounds is the one predicate nextCommand and the menu use too.
+  const betweenRounds = status === 'ready' && Boolean(cur) && spine.betweenRounds(st, events, cur);
+  const ownerReady = !betweenRounds && status === 'ready' && cur && (st.steps[cur].receipts_required || []).some((r) => r.kind === 'gate');
   // Waiting on others: nothing is ready or in flight, the run is not complete, and what remains is armed
   // by live facts (`arm_on`) — the author's reply, a moved head, the PR landing. Not anyone's step here.
   let formula = null;
   try { formula = st.cycle ? spine.loadFormula(processDir, st.cycle) : null; } catch (e) { formula = null; }
   const armed = formula ? formula.steps.filter((d) => d.arm_on && st.steps[d.id] && st.steps[d.id].status === 'pending') : [];
-  const waiting = !cur && status === 'pending' && armed.length ? armed.map((d) => d.waiting || d.id) : null;
+  const curDef = formula && cur ? formula.steps.find((d) => d.id === cur) : null;
+  const waiting = betweenRounds ? [(curDef && curDef.waiting) || `the next ${cur}`]
+    : !cur && status === 'pending' && armed.length ? armed.map((d) => d.waiting || d.id) : null;
   // Poll-derived facts (state.poll.facts, from `plt run poll`): our approval on a PR we reviewed is a fact
   // GitHub can withdraw, never a status — a waiting run whose approval stands gets its own lane, and a
   // dismissed approval is named on the row so the re-arming of re-review reads as what it is.
@@ -141,10 +147,11 @@ function loadRun(processDir, id, cfg, L) {
       : status === 'in_progress' ? 'flight' : approved ? 'approved' : waiting ? 'waiting' : 'ready';
   const me = firstHuman(cfg);
   const discardEv = events.find((e) => e.what === 'discarded') || {};
-  const next = status === 'in_review' ? `plt gate approve ${id} ${cur} --by human:${me}`
+  const next = betweenRounds ? `nothing for you — waiting on ${waiting.join(', or ')}`
+    : status === 'in_review' ? `plt gate approve ${id} ${cur} --by human:${me}`
     : status === 'in_progress' ? `plt step finish ${cur} --run ${id} --outcome <outcome>`
       : status === 'ready' ? (ownerReady ? `plt gate approve ${id} ${cur} --by human:${me}  (review the page first)` : `plt step start ${cur} --run ${id}`)
-        : status === 'blocked' ? `answer the question on ${cur}`
+        : status === 'blocked' ? `answer the question on ${cur}${spine.openQuestion(events, cur) ? `: ${spine.openQuestion(events, cur)}` : ''}`
           : status === 'closed' ? 'closed'
             : status === 'discarded' ? `discarded — ${discardEv.reason || 'no reason recorded'}${discardEv.replaced_by ? ' · replaced by ' + discardEv.replaced_by : ''}`
               : approved ? `Approved by us on ${String(live.ourApprovalSha || '').slice(0, 7) || '?'}${live.ourApprovalOnHead === false ? ' (head has moved)' : ''} · waiting on the author to merge`
@@ -158,7 +165,8 @@ function loadRun(processDir, id, cfg, L) {
   const ourReview = events.filter((e) => e.kind === 'gh' && e.name === 'review-posted' && e.result === 'pass').pop();
   return { id, st, inputs, events, cur, status, lane, activity, pollAt: (st.poll && st.poll.at) || null, next, done, total: order.length, last: events[events.length - 1], pr, facts, artifacts, ourReview, waiting, approved, dismissedNote,
     gates: events.filter((e) => e.kind === 'gate').length, reprompts: events.filter((e) => e.kind === 'reprompt').length,
-    extrapolations: events.filter((e) => e.kind === 'extrapolation' && e.missing && e.missing.scope !== 'none').length };
+    extrapolations: events.filter((e) => e.kind === 'extrapolation' && e.missing && e.missing.scope !== 'none').length,
+    outOfBand: events.filter((e) => e.out_of_band === true).length };
 }
 
 // ---- the effort index ----
@@ -197,7 +205,7 @@ function renderIndex(processDir, cfg) {
 <td>${prCell(r)}</td>
 <td class="mono">${esc(r.next)}</td>
 <td>${PAGE_LINKS.filter(([k]) => r.artifacts[k]).map(([k, label]) => `<a href="${esc(r.artifacts[k])}">${label}</a>`).join(' · ') || '—'}</td>
-<td class="num">${r.gates}g · ${r.reprompts}r · ${r.extrapolations}x</td>
+<td class="num">${r.gates}g · ${r.reprompts}r · ${r.extrapolations}x${r.outOfBand ? ` · ${r.outOfBand}o` : ''}</td>
 <td class="mono">${r.last ? esc(stamp(r.last.ts, 5)) : ''}</td></tr>`;
 
   const waveLine = (slug) => {
@@ -258,7 +266,7 @@ details.doneblock{margin-top:10px}details.doneblock>summary{cursor:pointer;font-
 <h1>${esc(title)}</h1>
 ${human.length ? `<div class="human"><b>Needs you (${human.length}):</b> ${human.map((r) => `${runPage(r) ? `<a href="${esc(runPage(r))}">${esc(r.id)}</a>` : esc(r.id)} — <code>${esc(r.next)}</code>`).join('<br>')}</div>` : `<div class="calm"><b>Nothing waiting on you.</b> ${all.filter((r) => r.lane === 'flight').map((r) => `${esc(r.id)} is at ${esc(r.cur)}`).join(' · ') || 'No runs in flight.'}</div>`}
 ${efforts.map(effortBlock).join('')}
-<p class="foot">Rendered by <code>plt render index</code> from <code>process/efforts/*.yaml</code>, <code>process/runs/*/state.yaml</code>, <code>events.jsonl</code> and the facts snapshot <code>plt facts</code> keeps on each run. Counters: g = human gate events, r = re-prompts recorded, x = extrapolations.${L.board ? ` The curated <a href="${esc(L.board)}">board</a> remains the narrative.` : ''}</p>
+<p class="foot">Rendered by <code>plt render index</code> from <code>process/efforts/*.yaml</code>, <code>process/runs/*/state.yaml</code>, <code>events.jsonl</code> and the facts snapshot <code>plt facts</code> keeps on each run. Counters: g = human gate events, r = re-prompts recorded, x = extrapolations, o = receipts recorded out of band.${L.board ? ` The curated <a href="${esc(L.board)}">board</a> remains the narrative.` : ''}</p>
 </div>
 `;
 }
@@ -293,8 +301,10 @@ function renderRun(processDir, runId, cfg) {
   const ownerReady = cur && st.steps[cur].status === 'ready' && (st.steps[cur].receipts_required || []).some((r) => r.kind === 'gate');
   const nextCmd = (() => {
     if (st.status === 'closed') return `closed ${stamp(st.closed)}`;
+    if (cur && st.steps[cur].status === 'blocked') return `plt answer ${runId} ${cur} --text <answer> --by human:${me}  — ${spine.openQuestion(events, cur) || 'the question'}`;
     if (cur && st.steps[cur].status === 'in_review') return `plt gate approve ${runId} ${cur} --by human:${me}`;
     if (cur && st.steps[cur].status === 'in_progress') return `plt step finish ${cur} --run ${runId} --outcome <outcome>`;
+    if (cur && spine.betweenRounds(st, events, cur)) return `nothing for you — waiting on the next ${cur}`;
     if (cur && st.steps[cur].status === 'ready') return ownerReady ? `plt gate approve ${runId} ${cur} --by human:${me}  (review the page first)` : `plt step start ${cur} --run ${runId}`;
     return stepOrder.every((s) => st.steps[s].status === 'done') ? 'run complete' : '—';
   })();
@@ -303,15 +313,18 @@ function renderRun(processDir, runId, cfg) {
   const adversarial = events.filter((e) => e.kind === 'agent');
   const extrapolations = events.filter((e) => e.kind === 'extrapolation' && e.missing && e.missing.scope !== 'none');
   const reprompts = events.filter((e) => e.kind === 'reprompt');
+  const outOfBand = events.filter((e) => e.out_of_band === true).length;
   const lastEvent = events[events.length - 1];
   const artifactList = (name) => { const seen = new Set(); return events.filter((e) => e.kind === 'artifact' && e.name === name && e.ref && isUrl(e.ref)).filter((e) => !seen.has(e.ref) && seen.add(e.ref)); };
   const latest = (name) => artifactList(name).pop();
   const rounds = (name, label) => { const u = artifactList(name); return u.length ? u.map((e, i) => `<a href="${esc(e.ref)}">${label} ${i + 1}</a> · ${esc(stamp(e.ts, 5))}`).join(' · ') : 'none'; };
   const stepRow = (id) => {
     const s = st.steps[id]; const reqs = s.receipts_required || [];
-    const seen = reqs.filter((r) => events.some((e) => e.step === id && e.kind === r.kind && e.name === r.name)).length;
+    // A receipt recorded out of band is shown apart, never as seen: the spine did not collect it.
+    const seen = reqs.filter((r) => events.some((e) => e.step === id && e.kind === r.kind && e.name === r.name && !e.out_of_band)).length;
+    const oob = events.filter((e) => e.step === id && e.out_of_band === true).length;
     const cls = s.status === 'done' ? 'ok' : s.status === 'in_review' ? 'human' : s.status === 'in_progress' ? 'wip' : s.status === 'blocked' ? 'bad' : 'mute';
-    return `<tr class="${id === cur ? 'cur' : ''}"><td>${esc(id)}</td><td><span class="pill ${cls}">${esc(s.status)}</span></td><td class="num">${seen}/${reqs.length}</td><td>${esc(s.outcome || '')}</td><td class="mono">${esc(stamp(s.started))}</td><td class="mono">${esc(stamp(s.finished))}</td></tr>`;
+    return `<tr class="${id === cur ? 'cur' : ''}"><td>${esc(id)}</td><td><span class="pill ${cls}">${esc(s.status)}</span></td><td class="num">${seen}/${reqs.length}${oob ? ` (+${oob} out of band)` : ''}</td><td>${esc(s.outcome || '')}</td><td class="mono">${esc(stamp(s.started))}</td><td class="mono">${esc(stamp(s.finished))}</td></tr>`;
   };
   const NOT_YET = 'not collected yet';
   const prHead = pr ? (pr.url ? `<a href="${esc(pr.url)}">#${pr.number}</a>` : `#${pr.number}`) : null;
@@ -352,7 +365,7 @@ pre{font-family:var(--mono);font-size:12.5px;background:var(--surface);border:1p
 <div><dt>Overlap</dt><dd>${overlap === 'clear' ? '<span class="pill ok">clear</span>' : /^n\/a/.test(overlap) ? esc(overlap) : `<span class="pill bad">${esc(overlap)}</span>`}</dd></div>
 <div><dt>Gates</dt><dd>${gates.length ? gates.map((g) => `${esc(g.name)} by ${esc(g.by)} @ ${esc(short(g.pin && g.pin.value))}`).join('<br>') : 'none yet'}</dd></div>
 <div><dt>Adversarial</dt><dd>${adversarial.length ? adversarial.map((a) => `${esc(a.name)}: <span class="pill ${a.verdict === 'pass' ? 'ok' : 'warn'}">${esc(a.verdict || 'n/a')}</span>`).join('<br>') : 'none'}</dd></div>
-<div><dt>Signals</dt><dd>${extrapolations.length} extrapolation${extrapolations.length === 1 ? '' : 's'} · ${reprompts.length} re-prompt${reprompts.length === 1 ? '' : 's'} · ${events.length} events</dd></div>
+<div><dt>Signals</dt><dd>${extrapolations.length} extrapolation${extrapolations.length === 1 ? '' : 's'} · ${reprompts.length} re-prompt${reprompts.length === 1 ? '' : 's'}${outOfBand ? ` · ${outOfBand} receipt${outOfBand === 1 ? '' : 's'} out of band` : ''} · ${events.length} events</dd></div>
 <div><dt>Last event</dt><dd class="mono">${esc(lastEvent ? stamp(lastEvent.ts) + ' ' + lastEvent.kind + (lastEvent.what ? ' ' + lastEvent.what : '') + (lastEvent.step ? ' · ' + lastEvent.step : '') : '—')}</dd></div>
 </dl>
 <h2>Steps</h2>
@@ -395,9 +408,14 @@ function readManifest(dir) {
   if (!fs.existsSync(f)) return { index: null, runs: {} };
   try { const m = JSON.parse(fs.readFileSync(f, 'utf8')); return { index: m.index || null, runs: m.runs || {} }; } catch (e) { return { index: null, runs: {} }; }
 }
+// Temp file + rename, so a reader never sees half a manifest. The one manifest writer:
+// lib/publish.js writes through it too.
 function writeManifest(dir, m) {
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'publish.json'), JSON.stringify(m, null, 2) + '\n');
+  const f = path.join(dir, 'publish.json');
+  const tmp = `${f}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(m, null, 2) + '\n');
+  fs.renameSync(tmp, f);
 }
 
 // publishManifest(processDir, {out}) — hashes every page in the build dir against the previous manifest.
@@ -433,12 +451,15 @@ function publishManifest(processDir, { out } = {}) {
 function recordPublished(processDir, key, url, { out, runId } = {}) {
   if (!key || !url) throw new Error('usage: --published <id|index> <url>');
   const dir = buildDir(processDir, out);
-  const m = readManifest(dir);
   const name = key === 'index' ? 'effort-index' : `run-${key}`;
-  const target = key === 'index' ? m.index || {} : m.runs[key] || {};
-  const e = { ...target, url, published_sha: target.sha || null, changed: false };
-  if (key === 'index') m.index = e; else m.runs[key] = e;
-  writeManifest(dir, m);
+  // The sha published is the sha of the page on disk — the bytes the publishing session just sent —
+  // not the manifest's, which is stale when a caller wrote the page without publishManifest.
+  // publish.recordPublished is the one writer of `published_sha`. With no page on disk the bytes are
+  // unknown, so only the url is recorded and the page stays pending (publish.recordUrl).
+  const publish = require('./publish');   // lazy: publish.js requires this module at load
+  const page = path.join(dir, pageFile(key));
+  if (fs.existsSync(page)) publish.recordPublished(processDir, key, { sha: sha256(fs.readFileSync(page, 'utf8')), url }, { out });
+  else publish.recordUrl(processDir, key, url, { out });
   const receiptRun = key === 'index' ? runId : key;
   let receipt = null;
   if (receiptRun && spine.readState(processDir, receiptRun)) {
@@ -460,4 +481,5 @@ function recordPublished(processDir, key, url, { out, runId } = {}) {
   return { key, url, name, receipt };
 }
 
-module.exports = { renderIndex, renderRun, renderAll, writeBuild, publishManifest, recordPublished, links };
+module.exports = { renderIndex, renderRun, renderAll, writeBuild, publishManifest, recordPublished, links,
+  sha256, buildDir, pageFile, readManifest, writeManifest };

@@ -86,7 +86,7 @@ test('event: a malformed id fails on /id', () => {
 test('event: every kind the ledger writes is in the enum', () => {
   const kinds = s.loadSchemas().event.properties.kind.enum;
   assert.deepStrictEqual(kinds, ['skill', 'agent', 'tool', 'gate', 'jira', 'artifact', 'gh', 'extrapolation',
-    'time', 'suggestion', 'reprompt', 'file', 'touches', 'review-activity', 'decision']);
+    'time', 'suggestion', 'reprompt', 'file', 'touches', 'review-activity', 'decision', 'question', 'answer']);
 });
 
 test('event: a pin without a value fails; sha/tree pass', () => {
@@ -132,10 +132,11 @@ test('state: an unknown key is named by path, one line per key', () => {
   assert.deepStrictEqual(bad.errors.map((e) => e.path).sort(), ['/notes', '/scratch']);
 });
 
-test('state: every §4 step status passes', () => {
-  for (const st of ['pending', 'ready', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'skipped']) {
+test('state: every step status in STATE_ENUM passes, and `claimed` (never written) does not', () => {
+  for (const st of require('../lib/spine').STATE_ENUM) {
     assert.strictEqual(s.validateObject('state', { ...GOOD_STATE, steps: { build: { status: st } } }).ok, true, st);
   }
+  assert.strictEqual(s.validateObject('state', { ...GOOD_STATE, steps: { build: { status: 'claimed' } } }).ok, false);
 });
 
 test('state: a missing required key names itself', () => {

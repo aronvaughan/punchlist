@@ -39,6 +39,69 @@ function prOf(events, inputs) {
 
 function inWindow(ts, from, to) { return Boolean(ts) && ts >= from && ts < to; }
 
+// `estimation.actual.{from,to}` name an endpoint as `<step>.<started|finished>` (e.g. build.started).
+function parseEndpoint(spec) {
+  const m = String(spec || '').match(/^(.+)\.(started|finished)$/);
+  return m ? { step: m[1], what: m[2] } : null;
+}
+
+// actualSpan(events, {from, to}) — hours from the FIRST `from` event to the LAST `to` event, or
+// null (never 0) when either endpoint is absent or `to` is not after `from`. A run that never
+// started its `from` step has no actual.
+function actualSpan(events, { from, to }) {
+  const a = parseEndpoint(from);
+  const b = parseEndpoint(to);
+  if (!a || !b) return null;
+  const match = (ep) => (e) => e.kind === 'time' && e.what === ep.what && e.step === ep.step && e.ts;
+  const start = events.filter(match(a)).map((e) => e.ts).sort()[0];
+  const end = events.filter(match(b)).map((e) => e.ts).sort().pop();
+  if (!start || !end || !(end > start)) return null;
+  return (new Date(end).getTime() - new Date(start).getTime()) / 3600000;
+}
+
+// Hours per unit an actual may be reported in (`estimation.actual.unit`).
+const ACTUAL_UNITS = { hours: 1, days: 24 };
+
+// The span estimation.yaml declares, or null when it declares none. A malformed endpoint, a step
+// that NO formula under process/cycles/ has, or a unit other than hours/days is an error naming the
+// config key — a typo there would otherwise read as "every run is missing its actual".
+function declaredSpan(processDir) {
+  const actual = (spine.loadConfig(processDir).estimation || {}).actual;
+  if (!actual) return null;
+  const dir = path.join(processDir, 'cycles');
+  const known = new Set();
+  const cycles = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.md')) : [];
+  for (const f of cycles) {
+    try { for (const s of spine.loadFormula(processDir, path.basename(f, '.md')).steps) known.add(s.id); } catch (e) { /* unreadable cycle: names nothing */ }
+  }
+  for (const key of ['from', 'to']) {
+    const ep = parseEndpoint(actual[key]);
+    if (!ep) throw new Error(`estimation.actual.${key}: "${actual[key]}" is not <step>.started or <step>.finished`);
+    if (!known.has(ep.step)) throw new Error(`estimation.actual.${key}: step "${ep.step}" is in no formula under ${dir}`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(ACTUAL_UNITS, actual.unit)) {
+    throw new Error(`estimation.actual.unit: "${actual.unit === undefined ? '' : actual.unit}" is not hours or days`);
+  }
+  return { from: actual.from, to: actual.to, unit: actual.unit };
+}
+
+// Why a run has no actual, or null when it has one: no span declared, the run's own cycle lacks an
+// endpoint step (e.g. a spike has no build), or the endpoint event never happened.
+function actualMissing(processDir, state, events, span) {
+  if (!span) return 'estimation.actual is not declared';
+  let stepIds = null;
+  try { stepIds = new Set(spine.loadFormula(processDir, state.cycle).steps.map((s) => s.id)); } catch (e) { stepIds = null; }
+  for (const spec of [span.from, span.to]) {
+    const ep = parseEndpoint(spec);
+    if (stepIds && !stepIds.has(ep.step)) return `cycle ${state.cycle} has no step ${ep.step}`;
+  }
+  for (const spec of [span.from, span.to]) {
+    const ep = parseEndpoint(spec);
+    if (!events.some((e) => e.kind === 'time' && e.what === ep.what && e.step === ep.step)) return `no ${spec} event`;
+  }
+  return `${span.to} is not after ${span.from}`;
+}
+
 // Decisions are a snapshot of the CURRENT efforts/*.yaml, not window-scoped: an effort file has no
 // per-day history, only a `status` a human edits in place. `age_days` is measured to `to` (the
 // window's end — "as of" the report date) from the decision's own `since`/`opened` date; with
@@ -77,6 +140,7 @@ function collectDigest(processDir, { from, to }) {
   const extrapolations = [];
   const estimates = [];
   const reviews = [];
+  const span = declaredSpan(processDir);
 
   for (const runId of runIds(processDir)) {
     const state = spine.readState(processDir, runId);
@@ -145,12 +209,18 @@ function collectDigest(processDir, { from, to }) {
     }
 
     // ---- estimate vs actual: closed runs only, whose close fell inside the window ----
+    // The actual is the span estimation.yaml declares (actual: {from, to, unit}), in that unit. The
+    // estimate keeps its own unit: the two are shown side by side, never subtracted.
     if (state.status === 'closed' && state.estimate) {
-      const claimed = events.find((e) => e.kind === 'time' && e.what === 'claimed');
       const closed = [...events].reverse().find((e) => e.kind === 'time' && e.what === 'closed');
-      if (claimed && closed && inWindow(closed.ts, from, to)) {
-        const actualDays = (new Date(closed.ts).getTime() - new Date(claimed.ts).getTime()) / DAY_MS;
-        estimates.push({ run: runId, estimate: state.estimate.value, actual_days: Math.round(actualDays * 100) / 100 });
+      if (closed && inWindow(closed.ts, from, to)) {
+        const hours = span ? actualSpan(events, span) : null;
+        estimates.push({
+          run: runId,
+          estimate: { value: state.estimate.value, unit: state.estimate.unit || null },
+          actual: hours === null ? null : { value: Math.round((hours / ACTUAL_UNITS[span.unit]) * 100) / 100, unit: span.unit },
+          actual_missing: hours === null ? actualMissing(processDir, state, events, span) : null,
+        });
       }
     }
   }
@@ -292,4 +362,4 @@ function renderStandup({ preparing, ready, blockers }) {
   return [section('Preparing', preparing), section('Ready', ready), section('Blockers', blockers)].join('\n\n');
 }
 
-module.exports = { collectDigest, collectWeekly, computeStandup, renderStandup, dayWindow, isoWeekdays, isoWeekLabel };
+module.exports = { actualSpan, collectDigest, collectWeekly, computeStandup, renderStandup, dayWindow, isoWeekdays, isoWeekLabel };

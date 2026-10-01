@@ -124,7 +124,13 @@ test('a config key defaults does not carry is private and lands in the umbrella'
 test('a formula step key change is written and nothing is merged or pushed', () => {
   const { P, umbrella, templates, exec } = setup();
   const r = harvest.harvestRow(P, 'S-003', { repoDir: umbrella, templatesDir: templates, exec });
-  assert.match(r.diff, /^\+.*model: fable$/m);
+  assert.match(r.diff, /^\+.*title: "Adversarial review of \{card\}, two passes"$/m);
+  // The sample key is one the validator accepts, so the harvested formula still validates.
+  // harvest returns to the base branch after its commit: read the formula from the harvest branch.
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'harvested-')), 'build-and-ship.md');
+  fs.writeFileSync(file, execFileSync('git', ['-C', r.repo, 'show', `${r.branch}:${r.files[0]}`], { encoding: 'utf8' }));
+  assert.deepStrictEqual(require('../lib/validate').validateFile(file, { templates: new Set(['dispatch-brief', 'pre-pr-summary', 'fix-summary']) }).errors
+    .filter((e) => !/not a known template|not on disk/.test(e.msg)), []);
   assert.strictEqual(exec.calls.some((c) => c.includes('merge') || c.includes('push')), false);
 });
 
@@ -243,7 +249,7 @@ test('bumpChangelog prepends an entry carrying expected and measure at', () => {
 test('bumpChangelog prepends the newest entry above the previous one', () => {
   const { P } = setup();
   harvest.bumpChangelog(P, { target: 'config:writing.banned', expected: 'fewer re-prompts', measureAt: '2026-10-09', id: 'S-001', now: new Date('2026-09-25T00:00:00Z') });
-  harvest.bumpChangelog(P, { target: 'formula:build-and-ship:review:model', expected: 'less rework', measureAt: '2026-10-16', id: 'S-003', now: new Date('2026-09-26T00:00:00Z') });
+  harvest.bumpChangelog(P, { target: 'formula:build-and-ship:review:title', expected: 'less rework', measureAt: '2026-10-16', id: 'S-003', now: new Date('2026-09-26T00:00:00Z') });
   const text = fs.readFileSync(path.join(P, 'CHANGELOG.md'), 'utf8');
   assert.ok(text.indexOf('## 2026-09-26') < text.indexOf('## 2026-09-25'), 'newest entry is first');
 });
@@ -251,7 +257,7 @@ test('bumpChangelog prepends the newest entry above the previous one', () => {
 test('bumpChangelog increments the version of the formula it names', () => {
   const { P, umbrella, templates } = setup({ overlay: true });
   harvest.bumpChangelog(P, {
-    target: 'formula:build-and-ship:review:model',
+    target: 'formula:build-and-ship:review:title',
     expected: 'less rework', measureAt: '2026-10-16', id: 'S-003',
     now: new Date('2026-09-26T00:00:00Z'), repoDir: umbrella, templatesDir: templates,
   });

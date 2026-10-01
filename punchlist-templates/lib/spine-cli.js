@@ -96,15 +96,30 @@ exports.step = async (args) => {
   if (!spine.readState(p, run)) { process.stderr.write(`no run ${run} under ${p}/runs\n`); return 1; }
   const takeOver = !!o['take-over'];
   if (sub === 'start') return out(spine.stepStart(p, run, id, { session: process.env.CLAUDE_SESSION_ID, takeOver }));
-  if (sub === 'unstart') return out(spine.stepUnstart(p, run, id, { reason: o.reason, by: o.by }));
+  if (sub === 'unstart') return out(spine.stepUnstart(p, run, id, { reason: o.reason, by: o.by, takeOver }));
   if (sub === 'finish') return out(spine.stepFinish(p, run, id, { outcome: o.outcome, noExtrapolations: !!o['no-extrapolations'],
     extrapolations: o.extrapolation ? [JSON.parse(o.extrapolation)] : [], takeOver }));
-  throw new Error('usage: plt step start|unstart|finish <id> --run <run> [--outcome o] [--no-extrapolations] [--extrapolation json] [--take-over]');
+  // The blocked-state writers live in lib/blocked.js (also `plt block` / `plt answer`); the step
+  // defaults as they do there: block takes current_step, answer takes the one blocked step.
+  if (sub === 'block' || sub === 'answer') {
+    const blocked = require('./blocked');
+    const st = spine.readState(p, run);
+    const target = id || (sub === 'block' ? st.current_step : (Object.entries(st.steps).filter(([, x]) => x.status === 'blocked').length === 1
+      ? Object.entries(st.steps).find(([, x]) => x.status === 'blocked')[0] : null));
+    if (!target) throw new Error(`plt step ${sub}: name the step (--run ${run} has no single ${sub === 'block' ? 'current' : 'blocked'} step)`);
+    const str = (v) => (typeof v === 'string' ? v : undefined);
+    if (sub === 'block') return out(blocked.stepBlock(p, run, target, { question: str(o.question), by: str(o.by), takeOver }));
+    return out(blocked.stepAnswer(p, run, target, { answer: str(o.text) || str(o.answer), by: str(o.by), takeOver }));
+  }
+  throw new Error('usage: plt step start|unstart|finish <id> --run <run> [--outcome o] [--no-extrapolations] [--extrapolation json] [--take-over] | plt step block [<id>] --run <run> --question <text> [--by who] | plt step answer [<id>] --run <run> --text <text> --by <person>');
 };
 const RECEIPT_USAGE = 'usage: plt receipt --kind <kind> --name <name> [--run <run>] [--step <id>] [--ref x] [--verdict pass|fail] [--result r] [--files a,b] [--actor who] [--take-over]';
 exports.receipt = async (args) => {
   const o = opts(args);
   if (typeof o.kind !== 'string' || !o.kind || typeof o.name !== 'string' || !o.name) { process.stderr.write(RECEIPT_USAGE + '\n'); return 2; }
+  // `facts` is the collector's role (plt facts). A receipt typed by hand is not collected evidence,
+  // so it may not claim that role (and with it the collector's out_of_band exemption).
+  if (o.actor === 'facts') { process.stderr.write('plt receipt: --actor facts is reserved for plt facts, the fact collector; record as agent or name the person\n'); return 2; }
   const p = processDir(); const run = runIdFrom(o);
   const st = spine.readState(p, run);
   if (!st) { process.stderr.write(`no run ${run} under ${p}/runs\n`); return 1; }
@@ -151,7 +166,7 @@ exports.prime = async (args) => {
   let run; try { run = runIdFrom(o); } catch (e) { process.stdout.write('(no active run: ' + e.message + ')\n'); return 0; }
   const st = spine.readState(p, run);
   if (!st) { process.stdout.write(`(no run ${run} under ${p}/runs)\n`); return 0; }
-  if (o.next) { process.stdout.write(`NEXT: ${spine.nextCommand(st, formulaOf(p, st))}\n`); return 0; }
+  if (o.next) { process.stdout.write(`NEXT: ${spine.nextCommand(st, formulaOf(p, st), spine.readEvents(p, run))}\n`); return 0; }
   if (o['menu-only']) {
     const events = spine.readEvents(p, run);
     process.stdout.write(spine.renderMenu(st, events, effectiveMenuWords(p, o)) + '\n');
@@ -233,12 +248,8 @@ exports.render = async (args) => {
   const [what, id] = o._;
   if (what && !['index', 'run', 'all'].includes(what)) throw new Error('usage: plt render index|run <id>|all [--out <dir>] [--published <id|index> <url>]');
   if (what === 'run' && !id) throw new Error('plt render run: pass the run id');
-  if (what) {
-    const cfg = spine.loadConfig(p);
-    const pages = what === 'all' ? render.renderAll(p, cfg) : what === 'index' ? { index: render.renderIndex(p, cfg) } : { runs: { [id]: render.renderRun(p, id, cfg) } };
-    const w = render.writeBuild(p, pages, { out });
-    for (const f of w.written) process.stdout.write(`wrote ${f.path}\n`);
-  }
+  // --published records what the human published: the page already on disk. It runs BEFORE any
+  // render, or a fresh render would be recorded as published and a stale page would read current.
   if (published) {
     if (!published.key || !published.url || String(published.url).startsWith('--')) throw new Error('usage: --published <id|index> <url>');
     let runId = o.run;
@@ -247,8 +258,18 @@ exports.render = async (args) => {
     const rc = r.receipt ? (r.receipt.recorded ? `receipt ${r.name} recorded on ${r.receipt.run}` : `receipt ${r.name} not recorded on ${r.receipt.run} (${r.receipt.why})`) : `no run to carry the ${r.name} receipt`;
     process.stdout.write(`published ${r.name} → ${r.url} · ${rc}\n`);
   }
+  if (what) {
+    const cfg = spine.loadConfig(p);
+    const pages = what === 'all' ? render.renderAll(p, cfg) : what === 'index' ? { index: render.renderIndex(p, cfg) } : { runs: { [id]: render.renderRun(p, id, cfg) } };
+    const w = render.writeBuild(p, pages, { out });
+    for (const f of w.written) process.stdout.write(`wrote ${f.path}\n`);
+  }
   const m = render.publishManifest(p, { out });
   process.stdout.write(`changed: ${m.changed.length ? m.changed.join(' ') : 'none'}\n`);
+  // Rendering never publishes (D-028); it names the publish as the next command. The bytes on disk
+  // against the last recorded publish decide what is pending (lib/publish.js), not `changed`.
+  const pending = require('./publish').pendingPublishes(p, { out });
+  if (pending.length) process.stdout.write(`next: plt publish${pending.length === 1 ? ` ${pending[0].target}` : ''}${out ? ` --out ${out}` : ''}\n`);
   return 0;
 };
 // PLT_EXEC, when set, is prepended to every command as the executor — e.g. `PLT_EXEC=echo` makes
@@ -342,7 +363,7 @@ function watchOnce(p) {
     const had = Object.prototype.hasOwnProperty.call(watchState, id);
     if (st.status === 'closed' && !had) continue;
     if (st.status !== 'closed') open.add(id);
-    const next = spine.nextCommand(st, formulaOf(p, st));
+    const next = spine.nextCommand(st, formulaOf(p, st), spine.readEvents(p, id));
     const old = watchState[id];
     watchState[id] = next;
     if (!had) { results.push({ run: id, notified: false, why: 'baseline' }); continue; }

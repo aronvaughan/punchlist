@@ -44,7 +44,7 @@
         "type": "object",
         "required": ["status"],
         "properties": {
-          "status": { "enum": ["pending", "ready", "claimed", "in_progress", "in_review", "blocked", "done", "skipped"] },
+          "status": { "enum": ["pending", "ready", "in_progress", "in_review", "blocked", "done", "skipped"] },
           "receipts_required": {
             "description": "What compileRequirements derived from the step. The kinds are the ledger's event kinds PLUS `overlap` and `effort` — those two are evaluated live at gateCheck (from the run's inputs and its effort file) and are never satisfied by a receipt, so they exist here and nowhere in the ledger.",
             "type": "array",

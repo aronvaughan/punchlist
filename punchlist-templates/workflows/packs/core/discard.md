@@ -20,7 +20,6 @@ steps:
     gate:
       kind: human
       signal: run-discarded
-      by: owner
   - id: record
     assignee: agent
     title: "Record the drop of {card} on the tracker and the effort"

@@ -10,7 +10,8 @@ const locking = require('./locking');
 const repoWindow = require('./repo-window');
 const { parseWorkflow } = require('../bin/plt');   // parser is the single source of the grammar
 
-const STATE_ENUM = ['pending', 'ready', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'skipped'];
+// `claimed` is gone (plan 4 D-026): no code wrote it. The launch `time` event is still named `claimed`.
+const STATE_ENUM = ['pending', 'ready', 'in_progress', 'in_review', 'blocked', 'done', 'skipped'];
 
 function findProcessDir(start) {
   let dir = path.resolve(start);
@@ -272,6 +273,10 @@ function compileRequirements(step, config) {
   return out;
 }
 
+// The fact collector's own path (lib/facts.js recordFacts) passes `[FACTS_COLLECTOR]: true`. A symbol,
+// not a field: no CLI flag or JSON can set it, and it is never written to the ledger.
+const FACTS_COLLECTOR = Symbol('facts collector');
+
 function recordReceipt(processDir, runId, r) {
   if (!r.kind || !r.name) throw new Error('receipt needs --kind and --name');
   if (r.kind === 'gate') throw new Error('gate events are written only by gateApprove');
@@ -285,9 +290,21 @@ function recordReceipt(processDir, runId, r) {
   const st = readState(processDir, runId);
   assertRepo(processDir, runId, st, r);
   assertWindow(processDir, runId, st, r);
+  // D-027: a receipt for a step that is not being worked (not started, or already done) is evidence
+  // the spine did not collect. It is recorded and still counts — never refused — but it says so, and
+  // renderers count it apart. A caller that knows better (the landing back-fill) passes it explicitly.
+  // The fact collector (`plt facts`, on its own code path — not any receipt that says actor `facts`) records a gh fact on whichever step requires it,
+  // often one not yet started (`merge` waits on pr-loop): that is the spine collecting evidence,
+  // so it is expected, not out of band (D-027 as amended).
+  const step = st && st.steps && r.step ? st.steps[r.step] : null;
+  const collected = r[FACTS_COLLECTOR] === true && r.kind === 'gh' && step
+    && (step.receipts_required || []).some((q) => q.kind === 'gh' && ghNameMatches(q.name, r.name));
+  const outOfBand = r.out_of_band === true || (!collected && (!step || !WORKING.includes(step.status)));
   return appendEvent(processDir, runId, { kind: r.kind, step: r.step, name: r.name, pin: r.pin,
-    session: r.session || null, actor: r.actor || 'agent', model: r.model, verdict: r.verdict, ref: r.ref, result: r.result, files: r.files });
+    session: r.session || null, actor: r.actor || 'agent', model: r.model, verdict: r.verdict, ref: r.ref, result: r.result, files: r.files,
+    ...(outOfBand ? { out_of_band: true } : {}) });
 }
+const WORKING = ['in_progress', 'in_review'];
 
 // ---- owner window (one window drives a run at a time) ----
 //
@@ -411,7 +428,12 @@ function gateCheck(processDir, runId, stepId, repoDir) {
       banner.push({ kind: req.kind, name: req.name, state: last ? (last.verdict === 'pass' ? 'pass' : 'fail') : 'unseen' });
       continue;                                                      // a banner reviewer never blocks (see bannerFails)
     }
-    if (!events.some((e) => satisfies(req, e, pin, events))) {
+    // A loop step re-opened by `repeat_until` asks the human again: an approval given before the
+    // re-open was for the last round (the last reply), not this one. Only THIS step's re-open counts
+    // (`events` is already this step's; the test is explicit so a later refactor cannot widen it).
+    const cut = events.map((e, i) => (e.what === 'repeated' && e.step === stepId ? i : -1)).reduce((a, b) => Math.max(a, b), -1);
+    const pool = req.kind === 'gate' ? events.slice(cut + 1) : events;
+    if (!pool.some((e) => satisfies(req, e, pin, events))) {
       const stale = events.some((e) => e.kind === req.kind && (req.kind === 'gh' ? ghNameMatches(e.name, req.name) : e.name === req.name) && !pinMatches(e.pin, pin));
       missing.push({ ...req, reason: stale ? 'receipt exists at an older pin — re-run' : 'no receipt' });
     }
@@ -499,7 +521,11 @@ function gateApprove(processDir, runId, stepId, { by, repoDir, window, takeOver 
   const after = readState(processDir, runId);
   if (after.cycle && ['in_review', 'ready', 'in_progress'].includes(after.steps[stepId].status)) {
     const g = gateCheck(processDir, runId, stepId, repoDir || after.repo_dir);
-    if (g.ok) { after.steps[stepId].outcome = after.steps[stepId].outcome || 'done'; settle(processDir, runId, stepId, runFormula(processDir, after), after, g.pin); }
+    if (g.ok) {
+      const wf = runFormula(processDir, after);
+      after.steps[stepId].outcome = after.steps[stepId].outcome || repeatOutcome(wf.steps.find((s) => s.id === stepId));
+      settle(processDir, runId, stepId, wf, after, g.pin);
+    }
   }
   return ev;
 }
@@ -558,31 +584,80 @@ function gateRevoke(processDir, runId, stepId, { by, eventId, reason }) {
 
 function packsDir() { return path.resolve(__dirname, '..', 'workflows', 'packs'); }
 
-function loadFormula(processDir, cycleName) {
+// The formula as written: the cycle file, and — for an overlay (`extends: <pack>/<name>`) — the
+// pack formula it extends, merged by step id. Steps keep their parser line (`__line`), and `origin`
+// says which file each step's line is in, so a validation error can name the file a person edits.
+function formulaSource(processDir, cycleName) {
   const file = path.join(processDir, 'cycles', `${cycleName}.md`);
   const own = parseWorkflow(fs.readFileSync(file, 'utf8'));
+  const origin = new Map((own.steps || []).map((s) => [s.id, file]));
+  if (!own.fm || !own.fm.extends) return { file, own, base: null, baseFile: null, steps: own.steps || [], origin };
+  const [pack, name] = String(own.fm.extends).split('/');
+  const baseFile = path.join(packsDir(), pack, `${name}.md`);
+  const base = parseWorkflow(fs.readFileSync(baseFile, 'utf8'));
+  const byId = new Map((base.steps || []).map((s) => [s.id, { ...s }]));
+  for (const s of base.steps || []) if (!origin.has(s.id)) origin.set(s.id, baseFile);
+  for (const s of own.steps || []) byId.set(s.id, { ...(byId.get(s.id) || {}), ...s });
+  return { file, own, base, baseFile, steps: [...byId.values()], origin };
+}
+
+function loadFormula(processDir, cycleName) {
+  const { file, own, base, steps } = formulaSource(processDir, cycleName);
   if (own.errors.length) throw new Error(`${file}: ${own.errors.map((e) => `${e.line}: ${e.msg}`).join('; ')}`);
-  let steps = own.steps || [];
-  let version = own.fm.version || 1;
-  let baseCards;
-  if (own.fm.extends) {
-    const [pack, name] = String(own.fm.extends).split('/');
-    const baseFile = path.join(packsDir(), pack, `${name}.md`);
-    const base = parseWorkflow(fs.readFileSync(baseFile, 'utf8'));
-    baseCards = base.fm.cards;
-    const byId = new Map(base.steps.map((s) => [s.id, { ...s }]));
-    for (const s of steps) byId.set(s.id, { ...(byId.get(s.id) || {}), ...s });
-    steps = [...byId.values()];
-    version = `${base.fm.version || 1}+${own.fm.version || 1}`;
-  }
+  const version = base ? `${base.fm.version || 1}+${own.fm.version || 1}` : own.fm.version || 1;
   // `cards` travels with the formula (an overlay may set it, else the base's): `external` means the run
   // tracks work we do not own, so jira requirements never apply. Anything else stays step-level.
-  return { name: cycleName, version, cards: own.fm.cards || baseCards, steps: steps.map(({ __line, __indent, ...s }) => s) };
+  return { name: cycleName, version, cards: own.fm.cards || (base && base.fm.cards), steps: steps.map(({ __line, __indent, ...s }) => s) };
+}
+
+// Template names a formula may name as an `artifact`: the ones plt resolves, plus the process
+// directory's own `templates/` (a project template such as an effort index lives there).
+function formulaTemplates(processDir) {
+  const plt = require('../bin/plt');
+  const names = plt.templateNames();
+  const dir = path.join(processDir, 'templates');
+  if (fs.existsSync(dir)) {
+    for (const f of plt.walk(dir, [])) {
+      const { fm } = plt.parseFrontmatter(fs.readFileSync(f, 'utf8'));
+      if (fm && fm.kind === 'template' && fm.name) names.add(fm.name);
+    }
+  }
+  return names;
+}
+
+// validateFormula(processDir, cycleName) -> [{file, line, msg}] — the validator run on what launches:
+// an overlay merged with its base, not the overlay file alone (an overlay that only overrides
+// `notes` has no `steps` of its own to pass). The config and on-disk checks use this process dir.
+// `file` is shown relative to the project (`process/cycles/x.md`) or to the templates repo.
+function validateFormula(processDir, cycleName) {
+  const { validateWorkflow, buildOpts } = require('./validate');
+  const src = formulaSource(processDir, cycleName);
+  const union = (a, b) => [...new Set([...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])])];
+  const parsed = !src.base ? src.own : { ...src.own, steps: src.steps,
+    fm: { ...src.base.fm, ...src.own.fm, inputs: union(src.base.fm.inputs, src.own.fm.inputs), actors: union(src.base.fm.actors, src.own.fm.actors) } };
+  const errors = validateWorkflow(parsed, src.file, formulaTemplates(processDir), buildOpts(processDir));
+  const show = (f) => {
+    const project = path.dirname(processDir);
+    return f.startsWith(project + path.sep) ? path.relative(project, f) : path.relative(path.resolve(__dirname, '..'), f);
+  };
+  const out = errors.map((e) => {
+    const m = /^step `([^`]+)`/.exec(e.msg);
+    return { file: show((m && src.origin.get(m[1])) || src.file), line: e.line, msg: e.msg };
+  });
+  if (src.base) for (const e of src.base.errors) out.push({ file: show(src.baseFile), line: e.line, msg: e.msg });
+  return out;
+}
+
+// D-025: a formula that fails validation does not launch. Throws one line per error, before any write.
+function assertFormulaValid(processDir, cycleNames) {
+  const errors = cycleNames.flatMap((c) => validateFormula(processDir, c));
+  if (errors.length) throw new Error(errors.map((e) => `formula ${e.file}:${e.line}: ${e.msg}`).join('\n'));
 }
 
 function recompileRun(processDir, runId) {
   const st = readState(processDir, runId);
   if (!st || !st.steps) throw new Error(`run ${runId} is not launched`);
+  assertFormulaValid(processDir, [st.cycle, st.exit].filter(Boolean));
   const config = loadConfig(processDir, runId);
   const wf = runFormula(processDir, st);
   for (const s of wf.steps) {
@@ -725,6 +800,7 @@ function launchRun(processDir, { runId, cycle, repoDir, owner, estimate }) {
     throw new Error(`run ${runId} is already launched (a reset is a later --reset)`);
   }
   if (estimate !== undefined && !Number.isFinite(estimate)) throw new Error('estimate must be a number');
+  assertFormulaValid(processDir, [cycle]);
   const config = loadConfig(processDir, runId);
   const wf = loadFormula(processDir, cycle);
   const pin = computePin(repoDir);
@@ -757,9 +833,9 @@ function launchRun(processDir, { runId, cycle, repoDir, owner, estimate }) {
 // launch and recompile use, so an unstarted step is armed exactly as if it had never run, and the
 // reason is appended as an event — the ledger records that a person corrected it, not that it never
 // happened.
-function stepUnstart(processDir, runId, stepId, { reason, by } = {}) {
-  const st = readState(processDir, runId);
-  const step = st.steps[stepId];
+function stepUnstart(processDir, runId, stepId, { reason, by, window, takeOver } = {}) {
+  let st = readState(processDir, runId);
+  let step = st.steps[stepId];
   if (!step) throw new Error(`no step ${stepId}`);
   // A step still named as `current_step` while its own status has moved on is the same corruption,
   // half-applied — an earlier unstart that released the status and not the claim, or a crash between
@@ -772,6 +848,12 @@ function stepUnstart(processDir, runId, stepId, { reason, by } = {}) {
   if (!reason) throw new Error('unstart needs --reason: the ledger records why, not just that');
   const receipts = readEvents(processDir, runId).filter((e) => e.step === stepId && e.kind !== 'time');
   if (receipts.length) throw new Error(`step ${stepId} has ${receipts.length} receipt(s); finish or discard it, do not unstart it`);
+  // The guards every step writer takes: a window that does not drive the run (or hold its repo) is
+  // refused, or moves the claim with --take-over, which is logged as a `taken-over` event.
+  assertRepo(processDir, runId, st, { window, takeOver });
+  assertWindow(processDir, runId, st, { window, takeOver });
+  st = readState(processDir, runId);   // a take-over wrote state
+  step = st.steps[stepId];
   const wf = runFormula(processDir, st);
   const def = (wf.steps || []).find((x) => x.id === stepId) || {};
   // Re-arm by launch's own rule (see launchRun), so an unstarted step is armed exactly as it would
@@ -837,8 +919,27 @@ function checkTouchesDrift(processDir, runId, st, pin) {
   }
 }
 
+// `repeat_until: <outcome>` makes a step a loop: settling it with any other outcome re-opens it
+// (back to ready, dependents untouched) instead of marking it done. The `reply` step is one approval
+// per reply this way; `pr-loop` goes round until `approved`. A standing loop that never reaches its
+// outcome is retired by `plt run close`.
+function repeatOutcome(def) {
+  if (!def || !def.repeat_until) return 'done';
+  return (Array.isArray(def.outcomes) && def.outcomes.find((o) => o !== def.repeat_until)) || 'done';
+}
+
 function settle(processDir, runId, stepId, wf, st, pin) {
   const step = st.steps[stepId];
+  const def = wf.steps.find((s) => s.id === stepId);
+  if (def && def.repeat_until && step.outcome !== def.repeat_until) {
+    // An `arm_on` loop (a follow-up that waits on the author) goes back to pending: nothing is waiting
+    // until the poll sees the fact again and re-arms it. Any other loop is ready for its next round.
+    step.status = def.arm_on ? 'pending' : 'ready'; step.started = null; step.finished = null;
+    if (st.current_step === stepId) st.current_step = null;
+    writeState(processDir, runId, st);
+    appendEvent(processDir, runId, { kind: 'time', what: 'repeated', step: stepId, outcome: step.outcome, until: def.repeat_until, actor: 'agent', pin });
+    return st;
+  }
   if (stepId === 'pre-pr') checkTouchesDrift(processDir, runId, st, pin);
   step.status = 'done';
   step.finished = new Date().toISOString();
@@ -918,12 +1019,32 @@ function writeHandoff(processDir, runId, { goal, next, verified = [], questions 
   return md;
 }
 
+// A loop step (`repeat_until`) with an owner gate, between rounds: its last event is the
+// `repeated` that re-opened it, and nothing has re-armed it since (a poll that armed it is the next
+// reply arriving). There is nothing to approve, so no surface offers the approval or `go`. It
+// is ready (a plain loop) or pending (an `arm_on` loop, waiting for the poll). One predicate for
+// nextCommand, the menu and the board, so the three cannot disagree.
+function betweenRounds(state, events, stepId) {
+  const s = state && state.steps && state.steps[stepId];
+  if (!s || !['ready', 'pending'].includes(s.status)) return false;
+  if (!(s.receipts_required || []).some((r) => r.kind === 'gate')) return false;
+  let last = null;
+  for (const e of events || []) {
+    if (e.step === stepId) last = e;
+    else if (e.what === 'polled' && Array.isArray(e.armed) && e.armed.includes(stepId)) last = e;
+  }
+  return Boolean(last && last.what === 'repeated');
+}
+function waitingSteps(state, events) {
+  return Object.keys((state && state.steps) || {}).filter((id) => betweenRounds(state, events, id));
+}
+
 // The one command that moves the run. `wf` (the run's formula, from runFormula) tells manual
 // steps apart: a `manual: true` step is never proposed as `plt step start` — the agent does not
 // start it. One with a human gate is proposed as the owner's gate command; one with a `banner`
 // as "tell the agent: <the banner's first line>". A ready agent step wins over a ready manual
 // one. Without `wf` (an ad-hoc state) nothing is known to be manual.
-function nextCommand(st, wf) {
+function nextCommand(st, wf, events = []) {
   if (st.status === 'closed') return 'nothing — run closed';
   const cur = st.current_step;
   if (cur) {
@@ -938,7 +1059,8 @@ function nextCommand(st, wf) {
     const v = defs.get(id) && defs.get(id).manual;
     return v === true || v === 'true';
   };
-  const ready = Object.entries(st.steps).filter(([, s]) => s.status === 'ready').map(([id]) => id);
+  const waits = waitingSteps(st, events);
+  const ready = Object.entries(st.steps).filter(([id, s]) => s.status === 'ready' && !waits.includes(id)).map(([id]) => id);
   const agentReady = ready.find((id) => !isManual(id));
   if (agentReady) return `plt step start ${agentReady} --run ${st.run}`;
   if (ready.length) {
@@ -949,6 +1071,10 @@ function nextCommand(st, wf) {
   }
   const review = Object.entries(st.steps).find(([, s]) => s.status === 'in_review');
   if (review) return `plt gate approve ${st.run} ${review[0]} --by human:<you>`;
+  if (waits.length) {
+    const id = waits[0]; const def = defs.get(id) || {};
+    return `nothing for you — waiting on ${def.waiting || `the next ${id}`}${def.arm_on ? ` (plt run poll re-arms ${id})` : ''}`;
+  }
   return 'nothing — run complete';
 }
 
@@ -1119,7 +1245,8 @@ function landRun(processDir, runId, wf, facts, actions = {}) {
     if (g.pin && g.pin.refused) return stop(s.id, 'pin refused — stage or ignore the worktree changes', g.missing);
     for (const m of g.missing) {
       if (m.kind === 'gh') {
-        recordReceipt(processDir, runId, { step: s.id, kind: 'gh', name: m.name, result: 'pass', ref: prUrl, pin: g.pin, actor: 'agent' });
+        // GitHub said MERGED; this fact was not collected. The receipt says it was back-filled (D-027).
+        recordReceipt(processDir, runId, { step: s.id, kind: 'gh', name: m.name, result: 'pass', ref: prUrl, pin: g.pin, actor: 'agent', out_of_band: true });
       } else if (m.kind === 'jira' && /^on_done:/.test(m.name)) {
         const status = m.name.slice('on_done:'.length);
         try { if (actions.jira) actions.jira(card, status); else throw new Error('no jira action wired'); }
@@ -1175,27 +1302,43 @@ const DEFAULT_MENU_WORDS = { where: 'where are we', next: "what's next", go: 'go
 const MENU_PAYLOAD_IDS = new Set(['block', 'answer', 'drop', 'change', 'dismiss', 'park']);
 const MENU_BY_MODE = {
   WAIT: ['approve', 'block', 'drop', 'handoff', 'where'], GATE: ['approve', 'block', 'drop', 'change', 'where'],
-  'PANEL-FAIL': ['dismiss', 'go', 'block', 'where'], BLOCKED: ['answer', 'park', 'where'], EXTERNAL: ['where', 'next', 'block'],
+  'PANEL-FAIL': ['dismiss', 'go', 'block', 'where'], WAITING: ['where', 'next', 'capture'], BLOCKED: ['answer', 'park', 'where'], EXTERNAL: ['where', 'next', 'block'],
   START: ['go', 'where', 'next'], RESUME: ['go', 'where', 'handoff'], NEXT: ['go', 'next', 'capture', 'where'], CLOSED: ['capture', 'where'],
 };
-// Plan 2 (`gate fail`, `answer`, `dismiss`, `park`) has not landed; these commands are the
-// documented fallback until it does — `where`/`next`/`go`/`approve`/`capture` are live today.
+// `block` and `answer` run the blocked-state writers (lib/blocked.js). `dismiss` and `park` have no
+// writer yet: those two commands are the documented fallback until they do.
 const MENU_COMMANDS = {
   where: 'plt prime {run}', next: 'plt prime {run} --next', go: 'run the Next line of HANDOFF.md verbatim',
-  approve: 'plt gate approve {run} {step} --by human:{me}', block: 'plt gate fail {run} {step} --reason {payload}',
-  answer: 'plt answer {run} --text {payload}', drop: 'edit the text under review; re-run writing-adversary; re-render',
+  approve: 'plt gate approve {run} {step} --by human:{me}', block: 'plt step block {step} --run {run} --question {payload}',
+  answer: 'plt answer {run} --text {payload} --by human:{me}', drop: 'edit the text under review; re-run writing-adversary; re-render',
   change: 'edit the text under review; re-run writing-adversary; re-render', dismiss: 'plt dismiss {run} {step} --at {payload}',
   park: 'plt park {run} --reason {payload}', capture: 'invoke kb-code-knowledge-capture', handoff: 'plt handoff {run} --goal … --next …',
 };
 const MENU_PAYLOAD_HINT = { block: '<why>', answer: '<text>', drop: '<tag>', change: '<tag>', dismiss: '<file:line why>', park: '<why>' };
 
+// The step a run is blocked on, if any. It wins over current_step: an in_review step can be
+// blocked while another step is in progress, and the question is what a person must see first.
+function blockedStep(state) {
+  const hit = Object.entries(state.steps || {}).find(([, s]) => s.status === 'blocked');
+  return hit ? hit[0] : null;
+}
+// The question a blocked step waits on: the latest `question` event for it (lib/blocked.js writes it).
+function openQuestion(events, stepId) {
+  const q = (events || []).filter((e) => e.kind === 'question' && e.step === stepId).pop();
+  return q ? q.text : null;
+}
+
 function menuFor(state, events) {
   const cur = state.current_step ? state.steps[state.current_step] : null;
   let mode;
-  if (!cur) {
-    const vals = Object.values(state.steps).map((s) => s.status);
+  if (blockedStep(state)) {
+    mode = 'BLOCKED';
+  } else if (!cur) {
+    const waits = waitingSteps(state, events);
+    const vals = Object.entries(state.steps).filter(([id]) => !waits.includes(id)).map(([, s]) => s.status);
     mode = vals.some((v) => v === 'in_review') ? 'GATE'
       : vals.some((v) => v === 'ready') ? (vals.some((v) => v === 'done') ? 'NEXT' : 'START')
+      : waits.length ? 'WAITING'
       : vals.length > 0 && vals.every((v) => v === 'done') ? 'CLOSED' : 'START';
   } else {
     const gate = (cur.receipts_required || []).find((r) => r.kind === 'gate');
@@ -1214,10 +1357,21 @@ function menuFor(state, events) {
       : cur.status === 'ready' ? 'START' : 'NEXT';
   }
   if (state.status === 'closed') mode = 'CLOSED';
-  return { mode, phrases: MENU_BY_MODE[mode].map((id) => ({ id, payload: MENU_PAYLOAD_IDS.has(id), command: MENU_COMMANDS[id] })) };
+  // `{me}` is the person a human-only command runs as (an answer, an approval): the run's owner when
+  // the state names one, else a literal <you> the human replaces. `answer` without --by is refused.
+  const me = state.owner || '<you>';
+  return { mode, phrases: MENU_BY_MODE[mode].map((id) => ({ id, payload: MENU_PAYLOAD_IDS.has(id), command: MENU_COMMANDS[id].replace('{me}', me) })) };
 }
 
-function menuStateSentence(state, mode) {
+function menuStateSentence(state, mode, events) {
+  if (mode === 'BLOCKED' && blockedStep(state)) {
+    const id = blockedStep(state); const q = openQuestion(events, id);
+    return `▶ ${state.run} · ${id} · blocked on a question${q ? `: ${q}` : ''}`;
+  }
+  if (mode === 'WAITING') {
+    const id = waitingSteps(state, events)[0];
+    return `▶ ${state.run} · ${id} · waiting on the next ${id} — nothing to approve yet`;
+  }
   const step = state.current_step || Object.entries(state.steps).find(([, s]) => s.status === 'ready' || s.status === 'in_review')?.[0] || '—';
   const gate = state.current_step && (state.steps[state.current_step].receipts_required || []).find((r) => r.kind === 'gate');
   const words = { GATE: `waiting on you (${gate ? gate.name : 'gate'})`, WAIT: 'waiting on you', 'PANEL-FAIL': 'panel failed — findings open',
@@ -1228,7 +1382,7 @@ function menuStateSentence(state, mode) {
 function renderMenu(state, events, words = DEFAULT_MENU_WORDS) {
   const m = menuFor(state, events);
   const say = m.phrases.map((p) => (p.payload ? `${words[p.id]}: ${MENU_PAYLOAD_HINT[p.id]}` : words[p.id])).join(' · ');
-  return `${menuStateSentence(state, m.mode)}\nSay: ${say}`;
+  return `${menuStateSentence(state, m.mode, events)}\nSay: ${say}`;
 }
 
 // Bare phrases match exactly (after trim/lower/collapse-whitespace); payload phrases match
@@ -1255,7 +1409,7 @@ function renderPrime(processDir, runId, { menu = true } = {}) {
   L.push(`▶ ${st.run} · ${st.cycle} v${st.formula_version}${st.exit ? ` · exit ${st.exit}` : ''} · owner ${st.owner || '?'} · ${launchPin}`);
   let wf = null;
   if (st.cycle) { try { wf = runFormula(processDir, st); } catch (e) { wf = null; } }
-  L.push(`NEXT: ${nextCommand(st, wf)}`);
+  L.push(`NEXT: ${nextCommand(st, wf, events)}`);
   for (const b of renderBanners(processDir, runId)) {
     L.push('');
     L.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -1300,12 +1454,14 @@ function renderPrime(processDir, runId, { menu = true } = {}) {
       }
     }
   }
+  const oob = events.filter((e) => e.out_of_band === true).length;
+  if (oob) L.push(`  ⚠ ${oob} receipt${oob === 1 ? '' : 's'} recorded out of band — evidence the spine did not collect (\`out_of_band: true\` in the ledger)`);
   const hand = path.join(runDir(processDir, runId), 'HANDOFF.md');
   if (fs.existsSync(hand)) { L.push(''); L.push(...fs.readFileSync(hand, 'utf8').split('\n').filter((l) => !l.startsWith('---') && !/^(run|step|written):/.test(l))); }
   const inputs = path.join(runDir(processDir, runId), 'inputs.yaml');
   if (fs.existsSync(inputs)) { L.push('Inputs:'); L.push(...fs.readFileSync(inputs, 'utf8').split('\n').slice(0, 15).map((l) => '  ' + l)); }
   L.push('');
-  L.push('Stop rules: finish with `plt step finish`; block with `plt step block --question`; never edit process/runs/** by hand.');
+  L.push(`Stop rules: finish with \`plt step finish\`; block with \`plt step block <step> --run ${st.run} --question <text>\`; never edit process/runs/** by hand.`);
   if (menu !== false) {
     const config = loadConfig(processDir, runId);
     L.push('');
@@ -1344,7 +1500,7 @@ function syncSince(processDir, { since } = {}) {
     if (!st) continue;
     let wf = null;
     if (st.cycle) { try { wf = runFormula(processDir, st); } catch (e) { wf = null; } }
-    const next = nextCommand(st, wf);
+    const next = nextCommand(st, wf, readEvents(processDir, id));
     runsNext[id] = next;
     const had = Boolean(prior && prior.runs && Object.prototype.hasOwnProperty.call(prior.runs, id));
     if (!had) continue;   // new since the last sync (or the first sync ever) — seeded silently
@@ -1545,7 +1701,7 @@ module.exports = { externalCards, reviewFacts,
   STATE_ENUM, POLL_FACTS, findProcessDir, deepMerge, loadConfig, runDir,
   readState, writeState, readInputs, readEvents, appendEvent, rewriteEvents, git,
   runIds, repoOwner: repoWindow.repoOwner, claimRepo: repoWindow.claimRepo, computePin, resolveRef, compileRequirements, recordReceipt, gateCheck, gateApprove, gateRevoke, normalizeGhName, callerWindow,
-  loadFormula, runFormula, launchRun, recompileRun, discardRun, closeRun, pollRun, stepStart, stepUnstart, stepFinish, writeHandoff, nextCommand, renderPrime, renderBanners,
+  loadFormula, runFormula, launchRun, recompileRun, betweenRounds, FACTS_COLLECTOR, validateFormula, formulaTemplates, assertHuman, assertRepo, assertWindow, personOf, actorFields, blockedStep, openQuestion, discardRun, closeRun, pollRun, stepStart, stepUnstart, stepFinish, writeHandoff, nextCommand, renderPrime, renderBanners,
   DEFAULT_MENU_WORDS, menuFor, renderMenu, parseMenuPhrase,
   syncSince, mine, mineRows, renderMine, assumedText,
 };

@@ -1,5 +1,7 @@
 const test = require('node:test'); const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const fan = require('../lib/fan');
 const PLAN = path.join(__dirname, 'fixtures', 'plans', 'five-tasks.md');
 const LEDGER = path.join(__dirname, 'fixtures', 'plans', 'five-tasks-progress.md');
@@ -77,4 +79,37 @@ test('a task number declared twice is an error naming both lines, never merged',
 test('a ledger completion line counts with or without a leading dash', () => {
   const done = fan.readLedgerDone(path.join(__dirname, 'fixtures', 'plans', 'mixed-dash-progress.md'));
   assert.deepStrictEqual(done, [1, 3]);
+});
+
+test('a plan names its own ledger, and a missing one is said out loud rather than read as empty', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fan-'));
+  const plan = path.join(dir, 'a-very-long-plan-name.md');
+  const realLedger = path.join(dir, 'elsewhere', 'progress.md');
+  fs.mkdirSync(path.dirname(realLedger), { recursive: true });
+  fs.writeFileSync(realLedger, 'Task 0: complete — abc123\n');
+  fs.writeFileSync(plan, [
+    '# Plan', '', `**Ledger:** ${realLedger}`, '', '## Tasks', '',
+    '### Task 0: first', '', '**Files:**', '- Create: `lib/a.js`', '',
+    '### Task 1: second', '', '**Files:**', '- Create: `lib/b.js`', '',
+  ].join('\n'));
+
+  // The plan's own Ledger line wins over the basename convention — plan 3's ledger directory did
+  // not match its basename, which is how a landed plan read as untouched.
+  const named = fan.planWaveTasks(plan, fan.defaultLedger(plan));
+  assert.strictEqual(named.ledger.found, true);
+  assert.deepStrictEqual(named.done, [0], 'the real ledger is read, so Task 0 is complete');
+  assert.deepStrictEqual(named.wave.map((t) => t.n), [1]);
+  assert.ok(!fan.formatWave(named).includes('NO LEDGER'));
+
+  // With no Ledger line the basename default applies, and when that file is absent the wave says so
+  // instead of quietly treating every task as incomplete.
+  const bare = path.join(dir, 'no-ledger-line.md');
+  fs.writeFileSync(bare, fs.readFileSync(plan, 'utf8').replace(/^\*\*Ledger:\*\*.*$/m, ''));
+  const guessed = fan.planWaveTasks(bare, fan.defaultLedger(bare));
+  assert.strictEqual(guessed.ledger.found, false);
+  assert.deepStrictEqual(guessed.done, []);
+  const text = fan.formatWave(guessed);
+  assert.match(text, /NO LEDGER at .*progress\.md/);
+  assert.match(text, /This wave is not to be trusted/);
+  assert.ok(text.indexOf('NO LEDGER') < text.indexOf('wave:'), 'the warning comes before the wave');
 });

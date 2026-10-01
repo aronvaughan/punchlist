@@ -177,6 +177,33 @@ completing means the step **failed**: `on_fail` retries it (fresh task,
 same step) and then hands over to its `then` step; with no `on_fail` the
 run halts as failed and the admin gets a notification task — once.
 
+The process spine (`plt run`, `plt step`) reads `repeat_until` the same way.
+A step settled with any other outcome goes back to `ready` and records a
+`repeated` time event; the steps that need it stay pending. A human gate on
+a re-opened step counts only approvals given after the re-open, so each round
+asks again. The `reply` step uses this: `outcomes: [replied, done]` and
+`repeat_until: done` make it one owner approval per reply, at the same pin or
+a new one. `plt run close` retires it.
+
+`pr-loop` (`repeat_until: approved`) now loops too: finishing it with
+`changes_requested` re-opens it, and `merge` stays pending. This changes
+landing: when GitHub reports a PR merged while `pr-loop` is re-opened, the
+poll walks `pr-loop` as an unfinished step, finds its owner gate unapproved
+for this round, and stops the landing with `cannot satisfy gate:reply-approved
+from a poll`. The PR lands after a human approves the round. An `arm_on` loop
+step re-opens to `pending`, and the poll re-arms it when its fact holds again.
+
+Between rounds (the step's last event is `repeated` and no poll has re-armed
+it since) there is nothing to approve. Prime's NEXT line, the run page and the
+board name the wait (`waiting on the next reply`), the menu is in `WAITING`
+mode (`where`, `next`, `capture`: no `approve`, no `go`), and the run is not in
+Needs you. When the next reply arrives, every surface offers the approval
+again.
+
+A formula's `menu:` frontmatter block is parsed and read by nothing. The menu
+words come from `config.menu.words`; the commands are constants in
+`lib/spine.js`.
+
 Diagrams are **generated, never drawn**: `plt render <workflow>` writes a
 mermaid block into the file between markers — it renders in Obsidian, on
 GitHub, and in web UIs. Hand-edited diagrams are invalid by rule.
@@ -209,6 +236,37 @@ an owner step without it.
 Agents that get stuck mid-step don't guess: they *block* their task with
 one concrete question, the owner answers from the punchlist "Needs input"
 lane (or chat), and the step resumes with the answer in context.
+
+### Validation: `plt validate`, and at launch
+
+`plt validate [path|all] [--project <dir>]` checks the grammar of each file.
+With a process directory (`--project`, else `$PLT_PROCESS_DIR`, else the
+nearest `process/config` above the cwd) it also checks the values that need
+the project:
+
+- `gate.signal` is in `config.gates.human_signals`;
+- `jira.on_start` / `on_done` are in `config.jira.statuses`;
+- each `skills` name is a directory holding `SKILL.md` under
+  `<project>/.claude/skills` or `~/.claude/skills` (a `plugin:skill` name is
+  not checked), and each `agents` name is an `.md` file under
+  `<project>/.claude/agents` or `~/.claude/agents`;
+- an `artifact` names a template plt resolves, or one under
+  `<project>/process/templates`.
+
+With no process directory these checks have no lists to check against, and
+`plt validate` says so on stderr.
+
+`plt run launch` and `plt run recompile` run the same validator on the
+formula that launches: an overlay (`extends: core/<name>`) merged with its
+base, not the overlay file alone. Any error refuses the launch before anything
+is written, one line per error:
+
+```
+formula process/cycles/spike.md:14: step `investigate`: notes uses {bench} which is not a declared input
+```
+
+The file is the one to edit: an error on a step the overlay overrides names
+the overlay; an error on a step it inherits names the pack file.
 
 ### Efforts and parallel lanes
 
@@ -285,6 +343,28 @@ Project literals come from `config.links`: `card` (url template, `{card}`),
 `repo_blob` (`{path}`, for an effort's relative links) and `board` (the curated
 narrative board the index footer names).
 
+#### Publishing: `plt publish`
+
+`plt render` never publishes. Publishing reaches people, so it stays a
+deliberate act. After `changed: …`, `plt render` prints `next: plt publish
+<target>` (or `next: plt publish` when several pages are behind).
+
+```bash
+bin/plt publish                                   # every page behind its last publish
+bin/plt publish TRK-10 [--json]                   # one page
+bin/plt publish --record index --url <url>        # an artifact that already exists: record its url
+```
+
+A page is behind when the sha256 of its bytes on disk differs from
+`published_sha` in `publish.json`. For each one, `plt publish` prints the exact
+Artifact call: the update in place when a url is on record, else the step to
+record an existing url, then a create call for the case where none exists.
+It writes nothing. After the call, `plt render --published <target> <url>`
+records the sha of the page on disk and the artifact receipt. It records
+before it renders anything in the same call, so the sha is the page the human
+published; a render after it that differs stays pending. `--record` stores
+a url with no publish, so the page stays pending until it is republished.
+
 ### Watch: `plt watch` and the timer
 
 `plt watch [--once]` is `facts` → `render all` → notify, on a timer, with
@@ -340,6 +420,29 @@ NEVER RUN, so an already-installed timer keeps running the old unit until it is
 reinstalled. Add `process/suggestions.md` to the project's private `.gitignore`
 before the first `plt mine` — it is a generated backlog, not a tracked file.
 
+### Blocking on a question: `plt step block` and `plt answer`
+
+An agent that needs a person to answer something before it can go on blocks
+the step. The question goes into the ledger, not into chat.
+
+```bash
+bin/plt step block [<step>] --run TRK-10 --question "which bench gets the seedlings?"
+bin/plt step answer [<step>] --run TRK-10 --text "bench 3" --by human:pat
+bin/plt block TRK-10 [<step>] --question "…"     # the same writers, run first
+bin/plt answer TRK-10 [<step>] --text "…" --by pat
+```
+
+- `block` takes an `in_progress` or `in_review` step (default: the current
+  step) to `blocked` and appends a `question` event.
+- `answer` returns the step to the status it had and appends an `answer`
+  event that points at the question (default step: the one blocked step).
+  `--by` must name a person, and one on `config.actors.humans` when the config
+  has that list.
+- Both take `--take-over` and refuse a window that does not drive the run, as
+  every other step writer does.
+- A blocked step wins over the current step: prime, the menu (`BLOCKED`) and
+  the board show it with the question text.
+
 ### Dropping a card: the discard exit
 
 A run on any cycle can end early through the `discard` exit
@@ -388,7 +491,7 @@ window `[from, to)` and returns:
   gates: [{run, step, signal, by, at}],
   decisions: { settled: [{id, question, effort}], open: [{id, question, age_days, effort}] },
   extrapolations: [{run, step, key, assumed}],
-  estimates: [{run, estimate, actual_days}],
+  estimates: [{run, estimate: {value, unit}, actual: {value, unit} | null, actual_missing}],
   reviews: [{pr, step}] }
 ```
 
@@ -433,17 +536,15 @@ days of the week appears ONCE in the merged `runs`: the earliest day's
 `plt digest standup` reads the same collected decisions (every open one
 becomes a Blocker) plus each run's LIVE current-step status: `in_progress` is
 Preparing; a step `in_review` on a HUMAN gate is a Blocker (`<run>: my
-approval — <step>`) — every human gate in the shipped formulas is `by: owner`,
-the standup's own poster, so it is never "waiting on a human", it is the
+approval — <step>`) — every human gate in the shipped formulas is the
+owner's, and the owner is the standup's own poster, so it is never "waiting on a human", it is the
 poster's own approval sitting there; a step `in_review` on an EXTERNAL gate,
 or a run with no current step still waiting on a formula's `arm_on` condition
 (an author's reply, GitHub going green, a reviewer's approval), is Ready
 ("waiting on others"); `blocked` is a Blocker.
 
-Config: `digest.daily` (the time of day the daily digest cycle runs, e.g.
-`"17:00"`) and `digest.weekly` (the day the weekly rollup runs, e.g. `"fri"`)
-— read by whatever scheduler launches `plt digest launch`; the spine itself
-does not schedule anything.
+The spine does not schedule anything: whatever runs `plt digest launch` on a
+timer owns the time of day and the weekday. There is no `digest.*` config key.
 
 ### Sync and mine
 
@@ -651,6 +752,26 @@ bin/plt schema validate event process/runs/TRK-12/events.jsonl   # one event per
 run's state, inputs and events. `plt doctor`'s `schemas` check validates every
 run. The event kind list in `schemas/event.schema.json` is the only list:
 `appendEvent` refuses an event with no kind or a kind that list does not name.
+
+### Receipts the spine did not earn: `out_of_band`
+
+A receipt is evidence the spine collected while a step ran. Two paths write
+one that is not:
+
+- `plt receipt` for a step that is not `in_progress` or `in_review` (not
+  started yet, or already done), or with no step;
+- the landing path, which back-fills a passing `gh` receipt for each missing
+  `gh` requirement once GitHub says `MERGED`.
+
+Both record the receipt with `out_of_band: true`. A `gh` fact that `plt facts`
+(actor `facts`) records on a step whose requirements name it is not marked,
+even when that step has not started (`merge` waits on `pr-loop`): the spine
+collected it. The exemption follows the collector's code path, not the actor
+name: `plt receipt --actor facts` is refused. It still counts toward the
+gate: the spine records and marks it, and never refuses it. Prime prints
+`⚠ <n> receipts recorded out of band`. The run page shows them per step as
+`(+n out of band)`, apart from the receipts seen, and on its Signals line. The
+index row adds an `o` counter.
 
 ### Write discipline
 

@@ -173,3 +173,18 @@ test('plt render all --out: writes to the given dir and prints the changed list;
   assert.ok(fs.existsSync(path.join(p, 'build', 'index.html')), 'default out is process/build');
   assert.ok(r3.includes('index'), r3);
 });
+
+test('render: receipts recorded out of band are counted apart — on the run page, per step, and on the index row', () => {
+  const { p, repo } = fixtureProcess();
+  const cfg = spine.loadConfig(p);
+  // The fixture recorded three receipts on TRK-10 while their steps were pending: all out of band.
+  assert.strictEqual(spine.readEvents(p, 'TRK-10').filter((e) => e.out_of_band).length, 3);
+  const html = render.renderRun(p, 'TRK-10', cfg);
+  assert.ok(html.includes('3 receipts out of band'), 'the Signals line counts them');
+  assert.match(html, /<td>pre-pr<\/td>.*?<td class="num">0\/\d+ \(\+3 out of band\)<\/td>/, 'the step row does not count them as seen');
+  assert.match(render.renderIndex(p, cfg), /\d+g · \d+r · \d+x · 3o/);
+  // A run with only earned receipts shows none.
+  spine.launchRun(p, { runId: 'TRK-14', cycle: 'build-and-ship', repoDir: repo, owner: 'pat', estimate: 1 });
+  writeInputs(p, 'TRK-14', { card: 'TRK-14', title: 'water the beds', effort: 'greenhouse' });
+  assert.ok(!render.renderRun(p, 'TRK-14', cfg).includes('out of band'));
+});

@@ -1,8 +1,6 @@
 # Public defaults for the spine. No client words. Every org overrides in config/<org>.yaml.
-state_enum: [pending, ready, claimed, in_progress, in_review, blocked, done]
 gates:
   human_signals: [artifact-approved, reply-approved, run-discarded]
-  adversarial_timeout: 30m
 models:
   allowed: [fable, opus, sonnet, haiku]
   default_model: opus
@@ -40,6 +38,3 @@ links:
   card: "https://tracker.example/{card}"
 actors:
   github_logins: []
-digest:
-  daily: "17:00"
-  weekly: "fri"

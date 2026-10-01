@@ -755,6 +755,10 @@ test('landing: pollRun on state MERGED records the merge step\'s gh checks, runs
   const ev = spine.readEvents(p, 'TRK-30').filter((e) => e.step === 'merge' && e.kind === 'gh');
   assert.deepEqual(ev.map((e) => e.name).sort(), ['approved_on_head', 'checks-green', 'merged', 'threads_resolved']);
   assert.ok(ev.every((e) => e.result === 'pass' && e.ref === 'https://github.com/o/r/pull/7'));
+  // D-027: a gh receipt the landing back-filled was not collected; it says so. The jira receipt is
+  // the transition the landing really ran, so it is not marked.
+  assert.ok(ev.every((e) => e.out_of_band === true), 'every back-filled gh receipt is out of band');
+  assert.ok(spine.readEvents(p, 'TRK-30').filter((e) => e.step === 'merge' && e.kind === 'jira').every((e) => e.out_of_band === undefined));
   assert.ok(spine.readEvents(p, 'TRK-30').some((e) => e.what === 'landed' && e.step === 'merge'));
   // Idempotent: a second poll after the landing is a no-op.
   assert.equal(spine.pollRun(p, 'TRK-30', { state: 'MERGED' }, { jira: () => calls.push('again') }).landed, undefined);
@@ -1483,4 +1487,400 @@ test('stepUnstart: a step started in error goes back, but only when it produced 
   spine.stepStart(p, 'TRK-90', 'scope');
   spine.recordReceipt(p, 'TRK-90', { step: 'scope', kind: 'skill', name: 'sprout-scope', pin: spine.computePin(repo), actor: 'agent' });
   assert.throws(() => spine.stepUnstart(p, 'TRK-90', 'scope', { reason: 'oops' }), /has 1 receipt\(s\); finish or discard it/);
+});
+
+// ---- a formula that fails validation does not launch (plan 4 D-025) ----
+
+const SEEDLING_CYCLE = (signal) => ['---', 'name: seedling', 'kind: workflow', 'version: 1',
+  'description: "Pot a seedling."', 'inputs: [card]', 'actors: [agent, owner]', '---', '', '# Seedling', '', 'steps:',
+  '  - id: pot', '    assignee: agent', '    title: "Pot {card}"',
+  '  - id: check', '    assignee: owner', '    title: "Check {card}"', '    needs: [pot]',
+  '    gate:', '      kind: human', `      signal: ${signal}`, ''].join('\n');
+
+test('launchRun: a formula with a gate.signal outside config.gates.human_signals refuses with file and line, and creates no run directory', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  fs.writeFileSync(path.join(p, 'cycles', 'seedling.md'), SEEDLING_CYCLE('seedling-sprouted'));
+  assert.throws(() => spine.launchRun(p, { runId: 'TRK-300', cycle: 'seedling', repoDir: repo, owner: 'lead' }),
+    /^Error: formula process\/cycles\/seedling\.md:\d+: .*seedling-sprouted/);
+  assert.strictEqual(fs.existsSync(path.join(p, 'runs', 'TRK-300')), false, 'nothing is written for a refused launch');
+  // The same formula with a known signal launches unchanged.
+  fs.writeFileSync(path.join(p, 'cycles', 'seedling.md'), SEEDLING_CYCLE('artifact-approved'));
+  assert.strictEqual(spine.launchRun(p, { runId: 'TRK-300', cycle: 'seedling', repoDir: repo, owner: 'lead' }).steps.pot.status, 'ready');
+});
+
+test('launchRun: an overlay is validated merged with its base — a broken override refuses at the overlay line, a clean one launches', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  fs.writeFileSync(path.join(p, 'config', 'tools.yaml'), 'tools: { research: [seed_catalog] }\nreview: { spike_agents: [] }\n');   // core/spike names it
+  const overlay = (extra) => ['---', 'name: greenhouse-spike', 'kind: workflow', 'version: 1', 'extends: core/spike',
+    'description: "Greenhouse overlay of the core spike."', 'inputs: [card, effort, repo_dir]', 'actors: [agent]', '---', '',
+    '# Greenhouse spike', '', 'steps:', '  - id: investigate', '    assignee: agent', '    title: "Investigate {card} in the greenhouse"', ...extra, ''].join('\n');
+  // `{bench}` is not an input of the overlay or of core/spike: the merged formula fails at the overlay's step.
+  fs.writeFileSync(path.join(p, 'cycles', 'greenhouse-spike.md'), overlay(['    notes: "Check {bench} first."']));
+  assert.throws(() => spine.launchRun(p, { runId: 'TRK-301', cycle: 'greenhouse-spike', repoDir: repo }),
+    /formula process\/cycles\/greenhouse-spike\.md:14: step `investigate`: notes uses \{bench\}/);
+  assert.strictEqual(fs.existsSync(path.join(p, 'runs', 'TRK-301')), false);
+  // A clean overlay launches, and the base's steps come through the merge.
+  fs.writeFileSync(path.join(p, 'cycles', 'greenhouse-spike.md'), overlay(['    notes: "Check {card} first."']));
+  const st = spine.launchRun(p, { runId: 'TRK-301', cycle: 'greenhouse-spike', repoDir: repo });
+  assert.deepStrictEqual(Object.keys(st.steps).sort(), Object.keys(spine.loadFormula(p, 'greenhouse-spike').steps.reduce((a, s) => ({ ...a, [s.id]: 1 }), {})).sort());
+});
+
+test('launchRun: an overlay with `steps: []` validates as the merged formula, not as an empty file', () => {
+  // The fixture discard exit declares no steps of its own; alone it fails "must have a steps block".
+  const root = tmpProcess(); const p = path.join(root, 'process');
+  assert.deepStrictEqual(spine.validateFormula(p, 'discard'), []);
+});
+
+test('launchRun: an artifact named by a template under process/templates is known', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  fs.mkdirSync(path.join(p, 'templates'), { recursive: true });
+  const cyc = SEEDLING_CYCLE('artifact-approved').replace('    title: "Pot {card}"', '    title: "Pot {card}"\n    artifact: bench-plan');
+  fs.writeFileSync(path.join(p, 'cycles', 'seedling.md'), cyc);
+  assert.throws(() => spine.launchRun(p, { runId: 'TRK-302', cycle: 'seedling', repoDir: repo }), /artifact `bench-plan` is not a known template/);
+  fs.writeFileSync(path.join(p, 'templates', 'bench-plan.md'), '---\nname: bench-plan\nkind: template\n---\n\n# Bench plan\n');
+  assert.strictEqual(spine.launchRun(p, { runId: 'TRK-302', cycle: 'seedling', repoDir: repo }).run, 'TRK-302');
+});
+
+test('recompileRun: a formula broken after launch refuses and writes nothing', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  fs.writeFileSync(path.join(p, 'cycles', 'seedling.md'), SEEDLING_CYCLE('artifact-approved'));
+  spine.launchRun(p, { runId: 'TRK-303', cycle: 'seedling', repoDir: repo });
+  const before = fs.readFileSync(path.join(p, 'runs', 'TRK-303', 'state.yaml'), 'utf8');
+  const events = spine.readEvents(p, 'TRK-303').length;
+  fs.writeFileSync(path.join(p, 'cycles', 'seedling.md'), SEEDLING_CYCLE('seedling-sprouted'));
+  assert.throws(() => spine.recompileRun(p, 'TRK-303'), /formula process\/cycles\/seedling\.md:\d+: .*seedling-sprouted/);
+  assert.strictEqual(fs.readFileSync(path.join(p, 'runs', 'TRK-303', 'state.yaml'), 'utf8'), before);
+  assert.strictEqual(spine.readEvents(p, 'TRK-303').length, events);
+});
+
+test('cli: plt validate --project knows the templates under <project>/process/templates, as launch does', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process');
+  const file = path.join(p, 'cycles', 'seedling.md');
+  fs.writeFileSync(file, SEEDLING_CYCLE('artifact-approved').replace('    title: "Pot {card}"', '    title: "Pot {card}"\n    artifact: bench-plan'));
+  const env = { ...process.env, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'home-')) };
+  delete env.PLT_PROCESS_DIR; delete env.PLT_INSTANCE_DIR; delete env.PUNCHLIST_DATA;
+  const run = () => spawnSync('node', [PLT, 'validate', file, '--project', root], { encoding: 'utf8', env });
+  assert.match(run().stdout, /artifact `bench-plan` is not a known template/);
+  fs.mkdirSync(path.join(p, 'templates'), { recursive: true });
+  fs.writeFileSync(path.join(p, 'templates', 'bench-plan.md'), '---\nname: bench-plan\nkind: template\n---\n\n# Bench plan\n');
+  const ok = run();
+  assert.strictEqual(ok.status, 0, ok.stdout + ok.stderr);
+});
+
+// ---- a receipt the spine did not earn says so (plan 4 D-027) ----
+
+test('recordReceipt: a receipt on a step that is not in progress or in review carries out_of_band; one on a working step does not; prime counts them', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-310', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  const pin = spine.computePin(repo);
+  const early = spine.recordReceipt(p, 'TRK-310', { step: 'build', kind: 'skill', name: 'sprout-conventions', pin, actor: 'agent' });
+  assert.strictEqual(early.out_of_band, true, 'build is pending: nothing the spine ran earned this');
+  const ready = spine.recordReceipt(p, 'TRK-310', { step: 'scope', kind: 'skill', name: 'sprout-scope', pin, actor: 'agent' });
+  assert.strictEqual(ready.out_of_band, true, 'a ready step has not started either');
+  spine.stepStart(p, 'TRK-310', 'scope');
+  const earned = spine.recordReceipt(p, 'TRK-310', { step: 'scope', kind: 'skill', name: 'sprout-scope', pin, actor: 'agent' });
+  assert.strictEqual(earned.out_of_band, undefined);
+  // Recorded, marked, never refused: the out-of-band receipt still counts toward the gate.
+  assert.ok(!spine.gateCheck(p, 'TRK-310', 'build').missing.some((m) => m.kind === 'skill' && m.name === 'sprout-conventions'));
+  assert.match(spine.renderPrime(p, 'TRK-310'), /⚠ 2 receipts recorded out of band/);
+});
+
+test('renderPrime: no out-of-band line when every receipt was earned', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-311', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  spine.stepStart(p, 'TRK-311', 'scope');
+  spine.recordReceipt(p, 'TRK-311', { step: 'scope', kind: 'skill', name: 'sprout-scope', pin: spine.computePin(repo), actor: 'agent' });
+  assert.doesNotMatch(spine.renderPrime(p, 'TRK-311'), /out of band/);
+});
+
+// ---- a per-reply gate re-opens instead of settling once (plan 4, the reply step's repeat_until) ----
+
+function atReply(p, runId, repo) {
+  spine.launchRun(p, { runId, cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  const st = spine.readState(p, runId);
+  for (const id of ['scope', 'build', 'review', 'write-review', 'pre-pr', 'approve', 'open-pr']) st.steps[id].status = 'done';
+  for (const id of ['pr-loop', 'reply', 'announce']) st.steps[id].status = 'ready';
+  spine.writeState(p, runId, st);
+}
+
+test('gateApprove: the reply step re-opens after each approval — a second approval at the same pin or a new pin is recorded, not refused', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-320', repo);
+  spine.gateApprove(p, 'TRK-320', 'reply', { by: 'human:lead' });
+  let st = spine.readState(p, 'TRK-320');
+  assert.strictEqual(st.steps.reply.status, 'ready', 'one approval is one reply, not the end of replies');
+  assert.strictEqual(st.steps.reply.outcome, 'replied');
+  assert.ok(spine.readEvents(p, 'TRK-320').some((e) => e.what === 'repeated' && e.step === 'reply' && e.outcome === 'replied'));
+  // The next reply, same tree: approved again, not "already done and approved at this pin".
+  spine.gateApprove(p, 'TRK-320', 'reply', { by: 'human:lead' });
+  // And after a push.
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'two\n');
+  execFileSync('git', ['-C', repo, 'add', 'b.txt']); execFileSync('git', ['-C', repo, 'commit', '-qm', 'fix']);
+  spine.gateApprove(p, 'TRK-320', 'reply', { by: 'human:lead' });
+  st = spine.readState(p, 'TRK-320');
+  assert.strictEqual(st.steps.reply.status, 'ready');
+  assert.strictEqual(spine.readEvents(p, 'TRK-320').filter((e) => e.kind === 'gate' && e.step === 'reply' && e.result === 'approve').length, 3);
+  // Closing the run retires the standing step as before.
+  st.steps.merge.status = 'done'; st.steps['close-out'].status = 'done'; st.steps['pr-loop'].status = 'done'; st.steps.announce.status = 'done';
+  spine.writeState(p, 'TRK-320', st);
+  assert.strictEqual(spine.closeRun(p, 'TRK-320', { warn: () => {} }).steps.reply.status, 'skipped');
+});
+
+test('repeat_until: pr-loop settles only on its terminal outcome; changes_requested re-opens it and leaves merge pending', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-321', repo);
+  const pin = spine.computePin(repo);
+  const loop = () => {
+    spine.stepStart(p, 'TRK-321', 'pr-loop');
+    for (const r of spine.readState(p, 'TRK-321').steps['pr-loop'].receipts_required.filter((x) => x.kind !== 'gate')) {
+      spine.recordReceipt(p, 'TRK-321', { step: 'pr-loop', kind: r.kind, name: r.name, pin, actor: 'agent', verdict: r.kind === 'agent' ? 'pass' : undefined });
+    }
+  };
+  loop();
+  spine.stepFinish(p, 'TRK-321', 'pr-loop', { outcome: 'changes_requested', noExtrapolations: true });
+  spine.gateApprove(p, 'TRK-321', 'pr-loop', { by: 'human:lead' });
+  let st = spine.readState(p, 'TRK-321');
+  assert.strictEqual(st.steps['pr-loop'].status, 'ready');
+  assert.strictEqual(st.steps.merge.status, 'pending', 'a loop that has not ended readies nothing');
+  loop();
+  spine.stepFinish(p, 'TRK-321', 'pr-loop', { outcome: 'approved', noExtrapolations: true });
+  spine.gateApprove(p, 'TRK-321', 'pr-loop', { by: 'human:lead' });
+  st = spine.readState(p, 'TRK-321');
+  assert.strictEqual(st.steps['pr-loop'].status, 'done');
+  assert.strictEqual(st.steps['pr-loop'].outcome, 'approved');
+  assert.strictEqual(st.steps.merge.status, 'ready');
+});
+
+// ---- dead constants and the words prime and the menu use (plan 4 Task 7) ----
+
+test('STATE_ENUM and the state schema have no `claimed`: nothing writes it (the launch time event keeps the name)', () => {
+  assert.ok(!spine.STATE_ENUM.includes('claimed'));
+  const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'schemas', 'state.schema.json'), 'utf8'));
+  assert.ok(!JSON.stringify(schema).includes('"claimed"'));
+});
+
+test('prime names the block command that exists, and the menu block phrase runs it', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-330', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  assert.match(spine.renderPrime(p, 'TRK-330'), /block with `plt step block <step> --run TRK-330 --question <text>`/);
+  const st = spine.readState(p, 'TRK-330'); st.steps.scope.status = 'in_review';
+  const block = spine.menuFor(st, []).phrases.find((x) => x.id === 'block');
+  assert.strictEqual(block.command, 'plt step block {step} --run {run} --question {payload}');
+});
+
+test('repeat_until: a re-open on one step does not drop an approval given on another', () => {
+  // The owner approves pr-loop while it is still in progress, then a reply re-opens `reply`.
+  // pr-loop's approval was given after none of pr-loop's own re-opens, so it still counts.
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-322', repo);
+  const pin = spine.computePin(repo);
+  spine.stepStart(p, 'TRK-322', 'pr-loop');
+  spine.gateApprove(p, 'TRK-322', 'pr-loop', { by: 'human:lead' });
+  assert.strictEqual(spine.readState(p, 'TRK-322').steps['pr-loop'].status, 'in_progress', 'receipts still missing: no settle yet');
+  spine.gateApprove(p, 'TRK-322', 'reply', { by: 'human:lead' });
+  assert.ok(spine.readEvents(p, 'TRK-322').some((e) => e.what === 'repeated' && e.step === 'reply'));
+  for (const r of spine.readState(p, 'TRK-322').steps['pr-loop'].receipts_required.filter((x) => x.kind !== 'gate')) {
+    spine.recordReceipt(p, 'TRK-322', { step: 'pr-loop', kind: r.kind, name: r.name, pin, actor: 'agent', verdict: r.kind === 'agent' ? 'pass' : undefined });
+  }
+  const st = spine.stepFinish(p, 'TRK-322', 'pr-loop', { outcome: 'approved', noExtrapolations: true });
+  assert.strictEqual(st.steps['pr-loop'].status, 'done', 'the earlier pr-loop approval satisfies the gate');
+});
+
+test('recordReceipt: the fact collector\'s receipt on a pending step that requires it is expected, not out of band; an agent receipt there still is', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-312', repo);
+  assert.strictEqual(spine.readState(p, 'TRK-312').steps.merge.status, 'pending');
+  const pin = spine.computePin(repo);
+  const fact = spine.recordReceipt(p, 'TRK-312', { step: 'merge', kind: 'gh', name: 'checks-green', result: 'pass', pin, actor: 'facts', [spine.FACTS_COLLECTOR]: true });
+  assert.strictEqual(fact.out_of_band, undefined, 'the spine collected this fact for the step that names it');
+  assert.doesNotMatch(spine.renderPrime(p, 'TRK-312'), /out of band/);
+  // A facts receipt for a name the step does not require is not the collector doing its job.
+  assert.strictEqual(spine.recordReceipt(p, 'TRK-312', { step: 'merge', kind: 'gh', name: 'review-posted', result: 'pass', pin, actor: 'facts', [spine.FACTS_COLLECTOR]: true }).out_of_band, true);
+  const agent = spine.recordReceipt(p, 'TRK-312', { step: 'merge', kind: 'gh', name: 'threads_resolved', result: 'pass', pin, actor: 'agent' });
+  assert.strictEqual(agent.out_of_band, true);
+  assert.match(spine.renderPrime(p, 'TRK-312'), /⚠ 2 receipts recorded out of band/);
+});
+
+test('recordReceipt: a receipt with no step, or an unknown step, is out of band', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-313', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  const pin = spine.computePin(repo);
+  assert.strictEqual(spine.recordReceipt(p, 'TRK-313', { kind: 'skill', name: 'x', pin }).out_of_band, true);
+  assert.strictEqual(spine.recordReceipt(p, 'TRK-313', { step: 'no-such', kind: 'skill', name: 'x', pin }).out_of_band, true);
+});
+
+// ---- a re-opened loop step is not a standing "needs you" (fix round 1, item 3) ----
+
+test('repeat_until: a loop step with arm_on re-opens to pending, and the poll re-arms it on the next hit', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  fs.writeFileSync(path.join(p, 'cycles', 'answering.md'), ['---', 'name: answering', 'kind: workflow', 'version: 1',
+    'description: "Answer the author."', 'inputs: [card]', 'actors: [agent, owner]', '---', '', '# Answering', '', 'steps:',
+    '  - id: post', '    assignee: agent', '    title: "Post {card}"',
+    '  - id: follow-up', '    assignee: owner', '    title: "Approve each reply on {card}"', '    needs: [post]',
+    '    arm_on: { gh: authorRepliedSinceOurReview, equals: true }', '    waiting: "the author to reply"',
+    '    gate:', '      kind: human', '      signal: reply-approved', '    outcomes: [replied, done]', '    repeat_until: done', ''].join('\n'));
+  spine.launchRun(p, { runId: 'TRK-323', cycle: 'answering', repoDir: repo });
+  spine.stepStart(p, 'TRK-323', 'post');
+  spine.stepFinish(p, 'TRK-323', 'post', { noExtrapolations: true });
+  assert.deepStrictEqual(spine.pollRun(p, 'TRK-323', { authorRepliedSinceOurReview: true }).armed, ['follow-up']);
+  spine.gateApprove(p, 'TRK-323', 'follow-up', { by: 'human:lead' });
+  assert.strictEqual(spine.readState(p, 'TRK-323').steps['follow-up'].status, 'pending', 'no reply is waiting after the approval');
+  assert.deepStrictEqual(spine.pollRun(p, 'TRK-323', { authorRepliedSinceOurReview: true }).armed, ['follow-up'], 'the next hit re-arms it');
+});
+
+test('render: a ready owner step whose last event is `repeated` waits for the next round; it is not "Needs you"', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  const render = require('../lib/render');
+  atReply(p, 'TRK-13', repo);
+  fs.writeFileSync(path.join(p, 'runs', 'TRK-13', 'inputs.yaml'), 'card: TRK-13\neffort: greenhouse\n');
+  const st = spine.readState(p, 'TRK-13');
+  st.steps['pr-loop'].status = 'done'; st.steps.announce.status = 'done';
+  spine.writeState(p, 'TRK-13', st);
+  const needsYou = (html) => (html.match(/<div class="human">[\s\S]*?<\/div>/) || [''])[0];
+  const cfg = spine.loadConfig(p);
+  assert.match(needsYou(render.renderIndex(p, cfg)), /TRK-13/, 'before the first approval the reply waits on the owner');
+  spine.gateApprove(p, 'TRK-13', 'reply', { by: 'human:lead' });
+  const html = render.renderIndex(p, cfg);
+  assert.doesNotMatch(needsYou(html), /TRK-13/, 'after an approval there is nothing to approve');
+  assert.match(html, /waiting on the next reply/);
+});
+
+// ---- between rounds, no surface offers an approval (fix round 2) ----
+
+const ANSWERING = ['---', 'name: answering', 'kind: workflow', 'version: 1',
+  'description: "Answer the author."', 'inputs: [card]', 'actors: [agent, owner]', '---', '', '# Answering', '', 'steps:',
+  '  - id: post', '    assignee: agent', '    title: "Post {card}"',
+  '  - id: follow-up', '    assignee: owner', '    title: "Approve each reply on {card}"', '    needs: [post]', '    manual: true',
+  '    arm_on: { gh: authorRepliedSinceOurReview, equals: true }', '    waiting: "the author to reply"',
+  '    gate:', '      kind: human', '      signal: reply-approved', '    outcomes: [replied, done]', '    repeat_until: done', ''].join('\n');
+
+// The three surfaces a person or agent reads for "what now": nextCommand (prime's NEXT line), the
+// menu under prime, and the board row. Returns what each offers.
+function surfaces(p, runId) {
+  const st = spine.readState(p, runId); const events = spine.readEvents(p, runId);
+  const wf = spine.runFormula(p, st);
+  const render = require('../lib/render');
+  const html = render.renderIndex(p, spine.loadConfig(p));
+  const row = (html.match(new RegExp(`<tr[^>]*><td>(?:<a[^>]*>)?${runId}[\\s\\S]*?</tr>`)) || [''])[0];
+  const needsYou = (html.match(/<div class="human">[\s\S]*?<\/div>/) || [''])[0];
+  const menu = spine.menuFor(st, events);
+  return { next: spine.nextCommand(st, wf, events), prime: spine.renderPrime(p, runId), menu, row, needsYou };
+}
+function assertNoApproval(x, runId, step) {
+  assert.doesNotMatch(x.next, /gate approve/, 'nextCommand: ' + x.next);
+  assert.doesNotMatch(x.prime, new RegExp(`NEXT: .*gate approve ${runId} ${step}`), 'prime NEXT line');
+  assert.strictEqual(x.menu.mode, 'WAITING');
+  assert.ok(!x.menu.phrases.some((f) => f.id === 'approve' || f.id === 'go'), 'menu: ' + x.menu.phrases.map((f) => f.id));
+  assert.doesNotMatch(x.row, /gate approve/, 'board row');
+  assert.doesNotMatch(x.needsYou, new RegExp(runId), 'Needs you');
+}
+
+test('between rounds: the reply step offers no approve and no go on nextCommand, prime, the menu or the board', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-13', repo);
+  fs.writeFileSync(path.join(p, 'runs', 'TRK-13', 'inputs.yaml'), 'card: TRK-13\neffort: greenhouse\n');
+  const st = spine.readState(p, 'TRK-13');
+  st.steps['pr-loop'].status = 'done'; st.steps.announce.status = 'done';
+  spine.writeState(p, 'TRK-13', st);
+  assert.match(surfaces(p, 'TRK-13').next, /gate approve TRK-13 reply/, 'before the first approval the reply is offered');
+  spine.gateApprove(p, 'TRK-13', 'reply', { by: 'human:lead' });
+  const x = surfaces(p, 'TRK-13');
+  assertNoApproval(x, 'TRK-13', 'reply');
+  assert.match(x.next, /waiting on the next reply/);
+  assert.match(x.prime, /▶ TRK-13 · reply · waiting on the next reply/);
+});
+
+test('between rounds on an arm_on loop: nothing is offered until the poll sees a new reply, then all three offer it again', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  fs.writeFileSync(path.join(p, 'cycles', 'answering.md'), ANSWERING);
+  spine.launchRun(p, { runId: 'TRK-14', cycle: 'answering', repoDir: repo });
+  fs.writeFileSync(path.join(p, 'runs', 'TRK-14', 'inputs.yaml'), 'card: TRK-14\neffort: greenhouse\n');
+  spine.stepStart(p, 'TRK-14', 'post');
+  spine.stepFinish(p, 'TRK-14', 'post', { noExtrapolations: true });
+  spine.pollRun(p, 'TRK-14', { authorRepliedSinceOurReview: true });
+  spine.gateApprove(p, 'TRK-14', 'follow-up', { by: 'human:lead' });
+  const x = surfaces(p, 'TRK-14');
+  assertNoApproval(x, 'TRK-14', 'follow-up');
+  assert.match(x.next, /waiting on the author to reply/);
+  // A new reply: the poll re-arms the step, and every surface offers the approval again.
+  spine.pollRun(p, 'TRK-14', { authorRepliedSinceOurReview: false });
+  spine.pollRun(p, 'TRK-14', { authorRepliedSinceOurReview: true });
+  const y = surfaces(p, 'TRK-14');
+  assert.match(y.next, /gate approve TRK-14 follow-up/);
+  assert.match(y.prime, /NEXT: plt gate approve TRK-14 follow-up/);
+  assert.notStrictEqual(y.menu.mode, 'WAITING');
+  assert.ok(y.menu.phrases.some((f) => f.id === 'go'), 'the menu offers go again');
+  assert.match(y.needsYou, /TRK-14 — <code>plt gate approve TRK-14 follow-up/);
+});
+
+test('between rounds: the run page names the wait, not an approval', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-13', repo);
+  const st = spine.readState(p, 'TRK-13');
+  st.steps['pr-loop'].status = 'done'; st.steps.announce.status = 'done';
+  spine.writeState(p, 'TRK-13', st);
+  spine.gateApprove(p, 'TRK-13', 'reply', { by: 'human:lead' });
+  const page = require('../lib/render').renderRun(p, 'TRK-13', spine.loadConfig(p));
+  assert.ok(page.includes('nothing for you — waiting on the next reply'));
+  assert.doesNotMatch(page, /gate approve TRK-13 reply/);
+});
+
+// ---- final review F-1: stepUnstart takes the guards every step writer takes ----
+
+test('stepUnstart: a foreign window is refused, --take-over moves the claim and logs it, a windowless caller passes', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-91', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  spine.stepStart(p, 'TRK-91', 'scope', { window: 'w1' });
+  const n = spine.readEvents(p, 'TRK-91').length;
+  assert.throws(() => spine.stepUnstart(p, 'TRK-91', 'scope', { reason: 'mistake', window: 'w2' }), /driven by window w1; hand off first \(or --take-over\)/);
+  assert.strictEqual(spine.readState(p, 'TRK-91').steps.scope.status, 'in_progress', 'a refused unstart writes nothing');
+  assert.strictEqual(spine.readEvents(p, 'TRK-91').length, n);
+  const st = spine.stepUnstart(p, 'TRK-91', 'scope', { reason: 'mistake', window: 'w2', takeOver: true });
+  assert.strictEqual(st.steps.scope.status, 'ready');
+  assert.ok(spine.readEvents(p, 'TRK-91').some((e) => e.what === 'taken-over' && e.from === 'w1' && e.window === 'w2'), 'the take-over is in the ledger');
+  // A caller with no window passes, as it does for every other writer.
+  spine.stepStart(p, 'TRK-91', 'scope', { window: 'w1' });
+  assert.strictEqual(spine.stepUnstart(p, 'TRK-91', 'scope', { reason: 'again', window: null }).steps.scope.status, 'ready');
+});
+
+test('stepUnstart: a window that does not hold the run\'s repo is refused', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-92', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  spine.stepStart(p, 'TRK-92', 'scope', { window: null });
+  spine.claimRepo(repo, 'w1');
+  assert.throws(() => spine.stepUnstart(p, 'TRK-92', 'scope', { reason: 'mistake', window: 'w2' }), /is being driven by window w1/);
+});
+
+test('cli: plt step unstart honours --take-over', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-93', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  spine.stepStart(p, 'TRK-93', 'scope', { window: 'w1' });
+  const env = { ...process.env, PLT_PROCESS_DIR: p, PLT_WINDOW: 'w2' };
+  delete env.PLT_BIN; delete env.PUNCHLIST_TEMPLATES_DIR;
+  const run = (extra) => spawnSync('node', [PLT, 'step', 'unstart', 'scope', '--run', 'TRK-93', '--reason', 'mistake', ...extra], { encoding: 'utf8', env });
+  assert.notStrictEqual(run([]).status, 0);
+  const ok = run(['--take-over']);
+  assert.strictEqual(ok.status, 0, ok.stderr);
+  assert.strictEqual(spine.readState(p, 'TRK-93').steps.scope.status, 'ready');
+});
+
+// ---- final review F-3: the collector exemption keys on the code path, not the actor string ----
+
+test('recordReceipt: actor facts alone does not earn the exemption — only the collector\'s internal option does', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-314', repo);
+  const pin = spine.computePin(repo);
+  const typed = spine.recordReceipt(p, 'TRK-314', { step: 'merge', kind: 'gh', name: 'checks-green', result: 'pass', pin, actor: 'facts' });
+  assert.strictEqual(typed.out_of_band, true, 'a hand-written actor: facts is not the collector');
+  assert.ok(!Object.getOwnPropertySymbols(typed).length && !('collector' in typed), 'the option is not written to the ledger');
+});
+
+test('cli: plt receipt --actor facts is refused; only plt facts records as the collector', () => {
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  atReply(p, 'TRK-315', repo);
+  const env = { ...process.env, PLT_PROCESS_DIR: p }; delete env.PLT_BIN; delete env.PUNCHLIST_TEMPLATES_DIR; delete env.PLT_WINDOW;
+  const r = spawnSync('node', [PLT, 'receipt', '--run', 'TRK-315', '--step', 'merge', '--kind', 'gh', '--name', 'checks-green', '--result', 'pass', '--actor', 'facts'], { encoding: 'utf8', env });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /--actor facts is reserved for plt facts/);
+  assert.ok(!spine.readEvents(p, 'TRK-315').some((e) => e.kind === 'gh' && e.name === 'checks-green'), 'nothing is recorded');
 });
