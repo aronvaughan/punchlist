@@ -6,6 +6,8 @@ models:
   default_model: opus
   reasoning_levels: [low, medium, high, max]
 review:
+  effort_agents: []
+  effort_mode: banner
   panel_agents: []
   # What a failing reviewer does: hard = the step is held (a missing receipt); banner = recorded, shown as a warning.
   panel_mode: hard
@@ -38,3 +40,5 @@ links:
   card: "https://tracker.example/{card}"
 actors:
   github_logins: []
+tools:
+  herdr: ""

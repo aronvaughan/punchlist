@@ -1,5 +1,5 @@
 'use strict';
-// repo-window — the repo-window guard (D-025-ish, Task 9). Two windows sharing one
+// repo-window — the repo-window guard. Two windows sharing one
 // checkout have twice destroyed each other's uncommitted work here: a sweeping
 // `git add` swept a fixer's hunks into an unrelated commit, and a dirty
 // `templates/index.json` was left mid-task by another window. `owner_window`

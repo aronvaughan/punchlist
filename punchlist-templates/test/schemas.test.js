@@ -85,8 +85,28 @@ test('event: a malformed id fails on /id', () => {
 
 test('event: every kind the ledger writes is in the enum', () => {
   const kinds = s.loadSchemas().event.properties.kind.enum;
+  // Pinned as an exact list on purpose: adding a kind is a deliberate act, and this
+  // test is where it gets declared. The last six are the EFFORT ledger's vocabulary
+  // (lib/effort-events.js); they share this enum because lib/spine.js reads exactly
+  // `properties.kind.enum` to decide what any writer may append.
   assert.deepStrictEqual(kinds, ['skill', 'agent', 'tool', 'gate', 'jira', 'artifact', 'gh', 'extrapolation',
-    'time', 'suggestion', 'reprompt', 'file', 'touches', 'review-activity', 'decision', 'question', 'answer']);
+    'time', 'suggestion', 'reprompt', 'file', 'touches', 'review-activity', 'decision', 'question', 'answer',
+    'ask', 'escalation', 'blocked', 'wave', 'epoch', 'pane']);
+});
+
+test('event: a line belongs to exactly one ledger — run or effort, never both, never neither', () => {
+  const base = { id: 'e000001', ts: '2026-09-25T00:00:00Z' };
+  const run = { ...base, kind: 'skill', run: 'TRK-10' };
+  // An effort line carries its own vocabulary AND its own required fields: `who`
+  // answers who decided, `gate_epoch` says which review it belongs to. A line
+  // missing either is a decision that cannot be attributed or cannot be reviewed.
+  const effort = { ...base, kind: 'decision', effort: 'greenhouse', who: 'brain', gate_epoch: 0 };
+  assert.strictEqual(s.validateObject('event', run).ok, true);
+  assert.strictEqual(s.validateObject('event', effort).ok, true);
+  assert.strictEqual(s.validateObject('event', { ...run, effort: 'greenhouse' }).ok, false, 'both');
+  assert.strictEqual(s.validateObject('event', { ...base, kind: 'skill' }).ok, false, 'neither');
+  assert.strictEqual(s.validateObject('event', { ...run, who: 'brain' }).ok, false, 'who on a run line');
+  assert.strictEqual(s.validateObject('event', { ...effort, kind: 'skill' }).ok, false, 'a run kind on an effort line');
 });
 
 test('event: a pin without a value fails; sha/tree pass', () => {

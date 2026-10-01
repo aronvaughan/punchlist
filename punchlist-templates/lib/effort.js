@@ -6,11 +6,34 @@ const { execSync } = require('node:child_process');
 const yaml = require('./yaml');
 const spine = require('./spine');
 
+// The cycle a card runs when it does not name one. `build-and-ship` was hardcoded here,
+// which made "does this project use pull requests?" a question only editable by patching
+// the library. It is a project fact, so it lives in project config — and it is an
+// OVERRIDE, never a requirement: a project that sets nothing keeps the old default, so no
+// existing effort changes behaviour.
+//
+// This is config picking a PACK, not config changing control flow. A `review.mode` flag
+// that skipped open-pr/pr-loop/resync/reply/merge would put branching in config, which
+// the spine keeps in the formula; `build-and-commit` declares that shape instead.
+const CYCLE_FALLBACK = 'build-and-ship';
+function defaultCycle(processDir) {
+  {
+    const cfg = spine.loadConfig(processDir);
+    const v = cfg && cfg.cycles && cfg.cycles.default;
+    return typeof v === 'string' && v.trim() ? v.trim() : CYCLE_FALLBACK;
+  }
+  // No catch. Swallowing a config error here made `plt effort plan` report
+  // build-and-ship for every card while `launchWave` - which reloads config unguarded -
+  // threw the YAML error, so the two disagreed and the quieter one was wrong. A project
+  // whose config will not parse has a problem worth stopping for, at the first command
+  // that reads it rather than the second.
+}
+
 function readEffort(processDir, slug) {
   const f = path.join(processDir, 'efforts', `${slug}.yaml`);
   if (!fs.existsSync(f)) throw new Error(`no effort ${slug} (expected ${f})`);
   const e = yaml.parse(fs.readFileSync(f, 'utf8'));
-  return { ...e, cards: normalizeCards(e.cards || []) };
+  return { ...e, cards: normalizeCards(e.cards || [], defaultCycle(processDir)) };
 }
 
 // A card id names a run directory, a branch and a worktree path, and is interpolated into git
@@ -18,11 +41,11 @@ function readEffort(processDir, slug) {
 // no leading `.`/`-`, no whitespace, no shell metacharacters).
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-function normalizeCards(cards) {
+function normalizeCards(cards, defaultCycle = CYCLE_FALLBACK) {
   return cards.map((c) => (typeof c === 'string' ? { id: c } : c)).map((c) => {
     if (typeof c.id !== 'string' || !SAFE_ID.test(c.id)) throw new Error(`effort card id "${c.id}" is not a safe identifier`);
     return {
-      cycle: 'build-and-ship', touches: [], after: [], ...c,
+      cycle: defaultCycle, touches: [], after: [], ...c,
       touches: [...(c.touches || [])].map((t) => t.replace(/\/+$/, '')),
       after: [...(c.after || [])],
     };
@@ -31,12 +54,26 @@ function normalizeCards(cards) {
 
 // q(s) — single-quote a value for `sh`, so a path with a space (or anything else the shell would
 // read) reaches git as one argument. Used wherever a substituted VALUE is spliced into a command
-// this module builds; never applied inside the user's own `windows.*` templates.
+// this module builds, and to the free-text values (paths, refs, config strings) substituted into
+// the user's `windows.*` templates, so those templates leave the tokens bare.
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+// This checkout: `{templates}` in a windows.* template (see launchWave, and watchOnce in spine-cli.js).
+const TEMPLATES_DIR = path.resolve(__dirname, '..');
+// The windows.* values that arrive shell-quoted. Ids stay bare.
+const WINDOW_QUOTED = ['path', 'branch', 'base', 'umbrella', 'process_dir', 'repo', 'root', 'templates'];
 
 const segs = (p) => p.split('/').filter(Boolean);
 function prefixOf(a, b) { const x = segs(a), y = segs(b); return x.length <= y.length && x.every((s, i) => s === y[i]); }
 function touchesOverlap(a, b) { return a.some((p) => b.some((q) => prefixOf(p, q) || prefixOf(q, p))); }
+// CONTAINMENT, one-directional: is `file` inside one of `declared`? `touchesOverlap` answers a
+// different question — "do these two declarations collide" — and is symmetric because collision
+// is. Used as a containment test it also returns true when the FILE is an ancestor of a declared
+// path, so a change that escapes the declaration reads as inside it, and the drift check
+// under-reports the very thing it exists to report. Narrow in practice, because `git diff` names
+// files rather than directories, and not narrow for a submodule entry or a declaration naming a
+// path that is not a file. The guard is cheap; being wrong in the lenient direction is not.
+function coversPath(declared, file) { return declared.some((d) => prefixOf(d, file)); }
 // The paths two touches lists both cover: for each overlapping pair, the deeper of the two (the
 // wider one contains it). `packages/resolvers` against `packages/resolvers/test` shares the latter.
 function sharedTouches(a, b) {
@@ -128,20 +165,26 @@ function inflightRuns(processDir, effortSlug, exceptRun) {
 }
 
 // Whether `origin/main` actually resolves in this repo — false for no remote, an unfetched clone,
-// or a repo whose default branch isn't `main`. Checked once; every base decision below depends on it.
+// or a repo whose default branch isn't `main`. liveChanges' landed-file filter and overlapCheck's
+// staleness half depend on it; branchBase tries it after the configured base.
 function hasOriginMain(repoDir) {
   try { spine.git(repoDir, ['rev-parse', '--verify', '--quiet', 'origin/main']); return true; } catch { return false; }
 }
 
-// branchBase(repoDir, launchPin) — the commit a run's changes are measured FROM, for the overlap
-// and touches-drift diffs. Never the launch pin itself: a tree pin's base_sha is the branch HEAD
-// at launch, so a diff from it sees only what is staged and misses every commit the branch made
-// since. Order: (1) `origin/main` resolves → the merge-base of HEAD and origin/main, i.e. the
-// whole branch; (2) no remote → the launch pin's commit (base_sha for a tree pin, value for a
-// sha pin) — "everything since launch"; (3) no pin either → HEAD (only the staged tree counts).
-function branchBase(repoDir, launchPin) {
-  if (hasOriginMain(repoDir)) {
-    try { return spine.git(repoDir, ['merge-base', 'HEAD', 'origin/main']).trim(); } catch { /* unrelated histories: fall through */ }
+// branchBase(repoDir, launchPin, baseRef) — the commit a run's changes are measured FROM, for the
+// overlap and touches-drift diffs. Never the launch pin itself: a tree pin's base_sha is the
+// branch HEAD at launch, so a diff from it sees only what is staged and misses every commit the
+// branch made since. Order: (1) `baseRef` (the configured `worktree.base`) resolves → the
+// merge-base of HEAD and it; (2) `origin/main` resolves → the merge-base of HEAD and origin/main;
+// (3) neither → the launch pin's commit (base_sha for a tree pin, value for a sha pin) —
+// "everything since launch"; (4) no pin either → HEAD (only the staged tree counts). (1) comes
+// first because the pin goes stale once the branch merges its base: every file the base gained
+// would count as the run's own.
+function branchBase(repoDir, launchPin, baseRef) {
+  for (const ref of [baseRef, 'origin/main']) {
+    if (!ref) continue;
+    try { spine.git(repoDir, ['rev-parse', '--verify', '--quiet', ref]); } catch { continue; }
+    try { return spine.git(repoDir, ['merge-base', 'HEAD', ref]).trim(); } catch { /* unrelated histories: fall through */ }
   }
   const pinSha = launchPin && (launchPin.kind === 'tree' ? launchPin.base_sha : launchPin.value);
   if (pinSha) return pinSha;
@@ -150,9 +193,12 @@ function branchBase(repoDir, launchPin) {
 
 // Live conflict check for a run against its effort's other in-flight runs: which changed files
 // they share, and whether this run's pinned base has fallen behind origin/main. Both diffs run
-// from `branchBase` — this run's from its own launch pin, each sibling's computed live from that
-// sibling's `repo_dir` and its own recorded launch pin — so committed branch work counts, with or
-// without a remote. Base freshness is ANCESTRY (`git merge-base --is-ancestor origin/main <head>`),
+// from `branchBase` with the configured `worktree.base` — this run's from its own repo, each
+// sibling's computed live from that sibling's `repo_dir` — so committed branch work counts, with or
+// without a remote, and a base the run has merged does not count as its own. Two checks still use
+// `origin/main` only: liveChanges' landed-file filter and the staleness half below. So with a
+// local base and no remote, a sibling fast-forwarded into the base shows no live files, and this
+// run is not told that the base moved under a file it shares. Base freshness is ANCESTRY (`git merge-base --is-ancestor origin/main <head>`),
 // never SHA equality — a branch that has committed past origin/main is still fresh as long as
 // origin/main is still one of its ancestors. `head` is the LIVE pin's commit: base_sha for a tree
 // pin, value for a sha pin; the caller (gateCheck) passes its freshly computed pin — given none
@@ -161,7 +207,7 @@ function branchBase(repoDir, launchPin) {
 // with anything and its base can't go stale relative to a wave it isn't part of — trivially
 // ok/fresh. A repo with no resolvable `origin/main` (no remote, an unfetched clone, a non-`main`
 // default branch) can't be checked for staleness — fresh by definition — but its overlap half
-// still runs, from the launch pin.
+// still runs, from the configured base or, failing that, the launch pin.
 function overlapCheck(processDir, runId, { repoDir, pin, effortSlug } = {}) {
   const st = spine.readState(processDir, runId);
   const repo = repoDir || st.repo_dir;
@@ -172,12 +218,19 @@ function overlapCheck(processDir, runId, { repoDir, pin, effortSlug } = {}) {
   let myPin = pin;
   if (!myPin) { const live = spine.computePin(repo); myPin = live.refused ? st.pin : live; }
 
-  const mine = new Set(liveChanges(repo, branchBase(repo, st.pin)));
+  // One base for this run and its siblings: they share the effort, so they share its config. A
+  // config that cannot be read throws: falling back to the launch pin in silence would bring back
+  // the false overlaps this base exists to remove. The YAML error carries a line but no file, so
+  // the rethrow names the config directory.
+  let baseRef;
+  try { baseRef = ((spine.loadConfig(processDir) || {}).worktree || {}).base; }
+  catch (e) { throw new Error(`overlapCheck: cannot read the config in ${path.join(processDir, 'config')}: ${e.message}`); }
+  const mine = new Set(liveChanges(repo, branchBase(repo, st.pin, baseRef)));
   const shared = [];
   for (const other of inflightRuns(processDir, slug, runId)) {
     if (!other.repoDir || !fs.existsSync(other.repoDir)) continue;   // a run whose worktree is gone cannot collide
     let theirs;
-    try { theirs = liveChanges(other.repoDir, branchBase(other.repoDir, other.pin)); } catch { continue; }   // no comparable base: cannot collide
+    try { theirs = liveChanges(other.repoDir, branchBase(other.repoDir, other.pin, baseRef)); } catch { continue; }   // no comparable base: cannot collide
     const files = theirs.filter((f) => mine.has(f));
     if (files.length) shared.push({ run: other.id, files });
   }
@@ -263,7 +316,12 @@ function launchWave(processDir, slug, { dryRun = false, only, exec, owner } = {}
     // dropped below, so it lands on `feat/{card}` rather than `feat/{card}-{card lowercased}`.
     const cardSlug = kebab(card.title);
     const Summary = pascalSummary(card.title || card.id);
-    const vars = { card: card.id, slug: cardSlug, Summary, repo: wt.repo || '', root: wt.root || '', umbrella, cycle: card.cycle };
+    // `effort` is the effort's slug. `slug` is the card's title in kebab case, and a window driver
+    // needs the effort's name: each effort gets one workspace.
+    // `process_dir` is where the runs live. A window seeded in a worktree cannot find them from its cwd.
+    // `templates` is this checkout, so a windows.* template names a shipped driver without a path in
+    // config. A path in config would put a home directory into a file that can be published.
+    const vars = { card: card.id, slug: cardSlug, Summary, repo: wt.repo || '', root: wt.root || '', umbrella, cycle: card.cycle, effort: slug, process_dir: processDir, templates: TEMPLATES_DIR };
     const canonical = resolveFromUmbrella(umbrella, wt.canonical || '');
 
     let repoDir; let branch;
@@ -273,6 +331,9 @@ function launchWave(processDir, slug, { dryRun = false, only, exec, owner } = {}
       spine.loadFormula(processDir, card.cycle);
       if (isSpike) {
         repoDir = canonical;
+        // A spike works in the canonical checkout, so that is its {path}. Without it the token stays
+        // literal and `--cwd {path}` opens on the string "{path}".
+        vars.path = canonical;
       } else {
         branch = dropEmptySlug(renderTemplate(wt.branch, vars), cardSlug);
         vars.branch = branch;
@@ -303,24 +364,33 @@ function launchWave(processDir, slug, { dryRun = false, only, exec, owner } = {}
     }
 
     if (windows.command) {
-      const cmd = renderTemplate(windows.command, vars);
+      // The same rule as worktree.setup: quote the free-text values (paths, refs, config strings).
+      // Otherwise a space in the umbrella splits `--cwd {path}` into two arguments.
+      // Ids (card, effort, slug, cycle, pane_id, tab_id) stay bare, as `plt watch` leaves them.
+      const winVars = () => {
+        const w = { ...vars };
+        for (const k of WINDOW_QUOTED) if (w[k] !== undefined) w[k] = q(w[k]);
+        return w;
+      };
+      const cmd = renderTemplate(windows.command, winVars());
       if (dryRun) {
         console.log(cmd);
-        if (windows.open) console.log(renderTemplate(windows.open, vars));   // {pane_id}/{tab_id} stay literal: nothing ran
+        if (windows.open) console.log(renderTemplate(windows.open, winVars()));   // {pane_id}/{tab_id} stay literal: nothing ran
       } else {
         try {
           const stdout = run(cmd);
-          let paneId, tabId;
+          let paneId, tabId, paneLabel;
           try {
             const raw = JSON.parse(stdout);
             const parsed = (raw && raw.result) || raw;   // some window tools wrap the payload under `result`
             paneId = parsed && parsed.root_pane && parsed.root_pane.pane_id;
             tabId = parsed && parsed.tab && parsed.tab.tab_id;
+            paneLabel = parsed && parsed.root_pane && parsed.root_pane.label;
           } catch { /* not JSON: no pane/tab to expose */ }
           if (paneId !== undefined) vars.pane_id = paneId;
           if (tabId !== undefined) vars.tab_id = tabId;
-          if (windows.open) run(renderTemplate(windows.open, vars));
-          windowResult = { pane_id: paneId, tab_id: tabId };
+          if (windows.open) run(renderTemplate(windows.open, winVars()));
+          windowResult = { pane_id: paneId, tab_id: tabId, label: paneLabel };
         } catch (e) {
           windowResult = { error: e.message };
         }
@@ -334,10 +404,12 @@ function launchWave(processDir, slug, { dryRun = false, only, exec, owner } = {}
       inputs.touches = card.touches;
       inputs.merge = 'auto';
       // A window that actually opened (no error, a real pane id) is persisted so `plt watch` can
-      // notify into it later — the label mirrors the `{card}-{Summary}` naming `pascalSummary` was
-      // built for (`TRK-10-RenameTheSampler`), not the raw window title template.
+      // notify into it later. The label is the one the window tool gave the pane, so {label} in a
+      // notify template names the pane agents see. A tool that returns none gets the
+      // `{card}-{Summary}` name `pascalSummary` was built for (`TRK-10-RenameTheSampler`).
       if (windowResult && !windowResult.error && windowResult.pane_id !== undefined) {
-        inputs.window = { tab_id: windowResult.tab_id, pane_id: windowResult.pane_id, label: `${card.id}${Summary ? '-' + Summary : ''}` };
+        const label = typeof windowResult.label === 'string' && windowResult.label ? windowResult.label : `${card.id}${Summary ? '-' + Summary : ''}`;
+        inputs.window = { tab_id: windowResult.tab_id, pane_id: windowResult.pane_id, label };
       }
       fs.mkdirSync(path.join(processDir, 'runs', card.id), { recursive: true });
       fs.writeFileSync(path.join(processDir, 'runs', card.id, 'inputs.yaml'), yaml.stringify(inputs));
@@ -348,7 +420,7 @@ function launchWave(processDir, slug, { dryRun = false, only, exec, owner } = {}
   return { launched, skipped };
 }
 
-module.exports = {
+module.exports = { CYCLE_FALLBACK, defaultCycle,
   readEffort, normalizeCards, touchesOverlap, planWave, droppedIds, runStatus, diffPaths, inflightRuns, branchBase, overlapCheck,
-  kebab, pascalSummary, launchWave, renderTemplate, q,
+  kebab, pascalSummary, launchWave, renderTemplate, q, TEMPLATES_DIR, coversPath,
 };

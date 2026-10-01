@@ -1,5 +1,5 @@
 // tpleditor.js — conversational, AI-assisted template editor (admin-only).
-// Opens the #tpl-editor-dialog shell (added in Task 6) and mounts a chat thread
+// Opens the #tpl-editor-dialog shell and mounts a chat thread
 // beside a LIVE rendered preview of the working draft. The draft + thread persist
 // in localStorage keyed by the template name so a mid-edit close is recoverable;
 // they're cleared on a successful save or an explicit revert.

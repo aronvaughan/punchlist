@@ -13,7 +13,7 @@
 # checkout, so a pull changes nothing the daemon executes until the package is rebuilt. That gap
 # is silent - source and behaviour simply disagree until someone notices.
 #
-# Because the denylist scripts live at the repo root (R3), git rev-parse --show-toplevel and the
+# Because the denylist scripts live at the repo root, git rev-parse --show-toplevel and the
 # scripts' actual location agree here — no cross-boundary relative path is needed.
 #
 # Refuses (exit 1, printing the existing first line) to overwrite a pre-commit hook that isn't
@@ -43,4 +43,9 @@ write_hook post-merge 'exec "$(git rev-parse --show-toplevel)/scripts/reinstall-
 # git passes: $1 prev HEAD, $2 new HEAD, $3 flag (1 = branch checkout, 0 = file checkout).
 # Only a branch switch changes what the tree means; a `git checkout -- file` must not trigger it.
 write_hook post-checkout '[ "$3" = 1 ] || exit 0
+# `git worktree add` also fires post-checkout with flag=1, and passes an all-zero
+# previous HEAD. A brand-new worktree has adopted no new code - reinstalling and
+# restarting the service on every card launch is pure noise, and a wave of three
+# cards restarted punchlist three times before this guard existed.
+case "$1" in *[!0]*) ;; *) exit 0 ;; esac
 exec "$(git rev-parse --show-toplevel)/scripts/reinstall-local.sh" --quiet'

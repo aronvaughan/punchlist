@@ -121,8 +121,9 @@ tail -f ~/Library/Logs/punchlist.log                           # logs
 
 SilverBullet is an **optional** second service — a folder-backed markdown
 editor ("web Obsidian") for `data/kb`. It stays bound to loopback only;
-`tailscale serve` is the only tailnet edge (see
-`docs/2026-08-31-kb-silverbullet.md` for the design rationale).
+`tailscale serve` is the only tailnet edge. Tailscale supplies the tailnet
+identity and HTTPS; SilverBullet is reached only through that edge, never
+directly.
 
 ```bash
 # 0. install the SilverBullet binary (recommended; Docker is an alternative).

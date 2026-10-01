@@ -191,8 +191,7 @@ quarantine locks out agent execution, not you.
 A task's title and notes are text an agent will read and act on — which
 makes the punchlist a prompt-injection surface the moment untrusted
 channels (like email) can create tasks. Defense is four layers deep; no
-single layer is the whole story, and each fails differently. The full
-design is in [`docs/2026-08-24-agent-security-design.md`](docs/2026-08-24-agent-security-design.md).
+single layer is the whole story, and each fails differently.
 
 **Layer 1 — provenance vetting (server-enforced).** Every task carries a
 `vetted` flag: tasks from trusted actors are vetted at creation; tasks from
@@ -238,8 +237,7 @@ rows show a small 📎 count. Bytes live as their own files in a separate media
 dir (`PUNCHLIST_MEDIA_DIR`, default `<data>/media`), not in the database.
 Each image carries a retention rule — **Keep** (default), **Delete when
 done**, or **Expire on a date** — and a daily reaper
-(`scripts/reap-media.sh`) deletes files whose rule has fired. See
-[`docs/2026-08-26-attachments.md`](docs/2026-08-26-attachments.md).
+(`scripts/reap-media.sh`) deletes files whose rule has fired.
 
 ![Attachments dialog: a kept image attachment with its retention control](docs/screenshots/attachments-editor.png)
 
@@ -253,8 +251,7 @@ is on `PATH` and `PUNCHLIST_TEMPLATES_DIR` points at your templates repo
 watch the draft re-render, and iterate; the spawned Claude is text-only and
 touches nothing on disk. **Save** validates the draft with `plt` and, only
 if it passes, writes the override to the templates repo's `authored/`
-directory and **commits** it locally — never pushes. See
-[`docs/2026-08-28-template-editor-design.md`](docs/2026-08-28-template-editor-design.md).
+directory and **commits** it locally — never pushes.
 
 Open it from a task's **Template** field → the pencil beside the chosen
 template. The dialog shows the live-rendered draft beside the conversation
@@ -360,12 +357,10 @@ as native tools in every MCP-speaking client — pick per agent, they coexist.
 
 ## Docs
 
-Design records live in [`docs/`](docs/) — product analysis, PRD,
-architecture, module design (the API contract), the delegation design, the
-agent security design, and the image-attachments design.
-**[Release notes](docs/releases/)** track each version. Maintainers: the
-[pre-push process](docs/2026-09-02-pre-push-process.md) (leak-scan → review →
-release notes → push) gates every push of this public repo.
+**[Release notes](docs/releases/)** track each version.
+[`docs/macos-setup.md`](docs/macos-setup.md) sets up a Mac as the host.
+Before every push to this repo, maintainers run a leak scan and a review,
+and write release notes.
 
 ## Theme gallery
 

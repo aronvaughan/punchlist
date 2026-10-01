@@ -8,9 +8,10 @@ const crypto = require('crypto');
 const yaml = require('./yaml');
 const locking = require('./locking');
 const repoWindow = require('./repo-window');
+const effortEvents = require('./effort-events');   // the one ledger writer; no cycle, it requires only fs/path/crypto/locking
 const { parseWorkflow } = require('../bin/plt');   // parser is the single source of the grammar
 
-// `claimed` is gone (plan 4 D-026): no code wrote it. The launch `time` event is still named `claimed`.
+// `claimed` is not a step state: no code wrote it. The launch `time` event is still named `claimed`.
 const STATE_ENUM = ['pending', 'ready', 'in_progress', 'in_review', 'blocked', 'done', 'skipped'];
 
 function findProcessDir(start) {
@@ -88,7 +89,7 @@ function readInputs(processDir, runId) { return readYaml(path.join(runDir(proces
 // the new one, never a half-written file.
 //
 // A state object that came from readState is a read-modify-write. If the file changed after that
-// read, another writer's update would be lost, so the write is refused instead (D-022). An object
+// read, another writer's update would be lost, so the write is refused instead. An object
 // with no remembered read (a fresh launch, a hand-built state) writes as before. After a write the
 // object remembers the text it wrote, so its owner can write it again.
 function writeState(processDir, runId, state) {
@@ -134,7 +135,7 @@ function eventKinds() {
   return cachedEventKinds;
 }
 
-function appendEvent(processDir, runId, event) {
+function appendEvent(processDir, runId, event, { at } = {}) {
   // Three live events reached a real ledger with no `kind` at all, because the guard lived in
   // recordReceipt and every other writer went straight past it. It belongs HERE: appendEvent is the
   // one call every writer goes through, so a kindless or misspelt event cannot be written from any
@@ -144,28 +145,21 @@ function appendEvent(processDir, runId, event) {
   if (!eventKinds().includes(event.kind)) {
     throw new Error(`event kind ${event.kind} is not one of: ${eventKinds().join(', ')}`);
   }
+  // ONE WRITER. This used to stamp its own envelope as `{ id, ts, run: runId, ...event }`, so a
+  // caller-supplied `id`, `ts` or `run` won by spread order. Twenty-odd call sites pass literals,
+  // which is why nothing had tripped it — and exactly why it would have survived until something
+  // replayed an event. It is the identical defect a review found in the effort ledger,
+  // fixed there and left standing here, in the writer every other writer goes through.
+  //
+  // `run` is the one worth naming: the line lands in THIS run's ledger while claiming to belong to
+  // another, so every reader that groups by run attributes the work to a run that may not exist.
+  //
+  // effort-events.appendTo has the guard, the serialize-once round trip and the id/ts stamping
+  // after the spread. It requires only fs/path/crypto/locking, so there is no cycle. The envelope
+  // is built by a builder rather than by the caller, because the caller is who we are guarding
+  // against.
   const dir = runDir(processDir, runId);
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, 'events.jsonl');
-  // The lock spans the read as well as the write: the new id is computed from the ledger's length,
-  // so two writers that both read before either appends would both take the same id.
-  return locking.withLock(dir, () => {
-    const n = readEvents(processDir, runId).length + 1;
-    const full = { id: 'e' + String(n).padStart(6, '0'), ts: new Date().toISOString(), run: runId, ...event };
-    // A truncated trailing line (crash mid-append) is dropped rather than preserved: rewrite the
-    // ledger to only its last-known-good lines before appending the new, complete event.
-    if (fs.existsSync(file)) {
-      const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-      const lastLine = lines[lines.length - 1];
-      let lastLineOk = lastLine === undefined;
-      if (!lastLineOk) {
-        try { JSON.parse(lastLine); lastLineOk = true; } catch (err) { lastLineOk = false; }
-      }
-      if (!lastLineOk) locking.writeFileAtomic(file, lines.slice(0, -1).map((l) => l + '\n').join(''));
-    }
-    fs.appendFileSync(file, JSON.stringify(full) + '\n');
-    return full;
-  });
+  return effortEvents.appendTo(dir, event, { stamp: { run: runId }, at });
 }
 
 // Rewrites the ledger under the run's lock. `edit(lines)` gets the ledger's raw lines as they are
@@ -263,7 +257,14 @@ function compileRequirements(step, config) {
   if (step.gate && step.gate.kind === 'human') out.push({ kind: 'gate', name: step.gate.signal });
   if (step.gate && step.gate.kind === 'external') for (const c of list(step.gate.checks)) out.push({ kind: 'gh', name: c });
   if (step.verify && step.verify.gh) for (const v of list(step.verify.gh)) out.push({ kind: 'gh', name: v });
-  if (step.jira) for (const k of ['on_start', 'on_done']) if (step.jira[k]) out.push({ kind: 'jira', name: `${k}:${resolveRef(step.jira[k], config)}` });
+  // `jira.kind: none` means this project has no tracker, so a `jira:` block on a step names a
+  // transition that cannot happen. Compiling it into a requirement anyway forced every card to
+  // record a receipt for a status change nobody made, and a receipt that cannot be true is
+  // worse than an absent one: it teaches the reader that receipts
+  // are paperwork rather than evidence. The step keeps its `jira:` block, because the same pack
+  // ships to projects that DO have a tracker; only the requirement goes.
+  const jiraOff = config && config.jira && config.jira.kind === 'none';
+  if (step.jira && !jiraOff) for (const k of ['on_start', 'on_done']) if (step.jira[k]) out.push({ kind: 'jira', name: `${k}:${resolveRef(step.jira[k], config)}` });
   // `overlap: effort` means "this run's inputs.effort"; a literal slug names an effort directly.
   // Resolved at gateCheck time (from readInputs), because compileRequirements has no run inputs.
   if (step.overlap) out.push({ kind: 'overlap', name: step.overlap === 'effort' ? '{{inputs.effort}}' : step.overlap });
@@ -287,15 +288,23 @@ function recordReceipt(processDir, runId, r) {
     throw new Error(`verdict ${r.verdict} must be pass or fail`);
   }
   if (!r.pin || r.pin.refused) throw new Error('receipt needs a pin: ' + JSON.stringify(r.pin));
+  // A `touches declared` receipt carries the list it declared. Without this the receipt is a bare
+  // assertion that scope "declared touches" with no record of WHAT, and the drift check that reads
+  // it had nothing to compare against — see checkTouchesDrift. Filled from the card's inputs when
+  // the caller does not narrow it, so the evidence stands on its own a year later.
+  if (r.kind === 'touches' && r.name === 'declared' && !Array.isArray(r.files)) {
+    const declared = readInputs(processDir, runId).touches;
+    if (Array.isArray(declared) && declared.length) r = { ...r, files: [...declared] };
+  }
   const st = readState(processDir, runId);
   assertRepo(processDir, runId, st, r);
   assertWindow(processDir, runId, st, r);
-  // D-027: a receipt for a step that is not being worked (not started, or already done) is evidence
+  // A receipt for a step that is not being worked (not started, or already done) is evidence
   // the spine did not collect. It is recorded and still counts — never refused — but it says so, and
   // renderers count it apart. A caller that knows better (the landing back-fill) passes it explicitly.
   // The fact collector (`plt facts`, on its own code path — not any receipt that says actor `facts`) records a gh fact on whichever step requires it,
   // often one not yet started (`merge` waits on pr-loop): that is the spine collecting evidence,
-  // so it is expected, not out of band (D-027 as amended).
+  // so it is expected, not out of band.
   const step = st && st.steps && r.step ? st.steps[r.step] : null;
   const collected = r[FACTS_COLLECTOR] === true && r.kind === 'gh' && step
     && (step.receipts_required || []).some((q) => q.kind === 'gh' && ghNameMatches(q.name, r.name));
@@ -403,6 +412,51 @@ function externalCards(processDir, state) {
   try { return loadFormula(processDir, state.cycle).cards === 'external'; } catch (e) { return false; }
 }
 
+// ---- step behaviour is DECLARED, not inferred from the id --------------------------------
+//
+// Three checks used to key on step NAMES, and each one vanished silently when a pack author
+// named a step honestly. One card hit all three:
+//
+//   gateCheck  `['open-pr','merge'].includes(stepId)` for the base-freshness check, so a
+//              landing step called `commit` got no "branch base is behind origin/main" signal.
+//   settle     `stepId === 'pre-pr'` for the touches-drift check, so renaming that step to
+//              `pre-commit` switched the check off for every card on the cycle.
+//   the same   the extrapolation event hardcoded `step: 'pre-pr'`, so the finding was filed
+//              against a step that may not exist on this cycle at all.
+//
+// The cost was not the bug, it was the trade it offered: an honest step name in exchange for a
+// safety check, which no pack author should ever be asked to make. A step now says what it DOES
+// — `lands: true`, `checks_drift: true` — and the id is free to describe the step.
+//
+// The name rules stay as the FALLBACK, deliberately. Every shipped pack and every live run
+// behaves exactly as before until it opts in by declaring the property; changing when a
+// base-freshness check fires on somebody else's project is not a thing to do as a side effect.
+const NAME_FALLBACK = {
+  lands: (id) => ['open-pr', 'merge'].includes(id),
+  checks_drift: (id) => id === 'pre-pr',
+};
+
+// This YAML parser makes every scalar a STRING, which is why `manual: false` once read as
+// truthy. A flag that silently accepted `'false'` as true would reintroduce the exact class of
+// bug this whole change removes, so anything that is not a recognisable boolean is an error
+// naming the step rather than a quiet default.
+function stepBool(v, where) {
+  if (v === true || v === 'true') return true;
+  if (v === false || v === 'false') return false;
+  throw new Error(`${where} must be true or false, got ${JSON.stringify(v)}`);
+}
+
+// `def` is the step's formula definition, or null when the run's state has a step the current
+// formula no longer carries — then only the name rule can answer.
+function stepDeclares(def, stepId, flag) {
+  if (def && def[flag] !== undefined && def[flag] !== null) return stepBool(def[flag], `step ${stepId}: ${flag}`);
+  return NAME_FALLBACK[flag](stepId);
+}
+
+function stepDefOf(processDir, st, stepId) {
+  try { return runFormula(processDir, st).steps.find((x) => x.id === stepId) || null; } catch (e) { return null; }
+}
+
 function gateCheck(processDir, runId, stepId, repoDir) {
   const state = readState(processDir, runId);
   if (!state || !state.steps[stepId]) throw new Error(`no step ${stepId} in run ${runId}`);
@@ -451,7 +505,7 @@ function gateCheck(processDir, runId, stepId, repoDir) {
     for (const s of oc.shared) {
       missing.push({ kind: 'overlap', name: s.run, reason: `${s.files.length} file(s) also changed by ${s.run}: ${s.files.slice(0, 3).join(', ')}${s.files.length > 3 ? ' …' : ''}` });
     }
-    if (['open-pr', 'merge'].includes(stepId) && !oc.baseFresh) {
+    if (stepDeclares(stepDefOf(processDir, state, stepId), stepId, 'lands') && !oc.baseFresh) {
       const head = pin.kind === 'tree' ? pin.base_sha : pin.value;
       missing.push({ kind: 'base', name: 'origin/main', reason: `branch base ${String(head).slice(0, 8)} is behind origin/main ${String(oc.mainSha).slice(0, 8)} — rebase, then re-pin` });
     }
@@ -607,7 +661,12 @@ function loadFormula(processDir, cycleName) {
   const version = base ? `${base.fm.version || 1}+${own.fm.version || 1}` : own.fm.version || 1;
   // `cards` travels with the formula (an overlay may set it, else the base's): `external` means the run
   // tracks work we do not own, so jira requirements never apply. Anything else stays step-level.
-  return { name: cycleName, version, cards: own.fm.cards || (base && base.fm.cards), steps: steps.map(({ __line, __indent, ...s }) => s) };
+  // `kind` travels with the formula. It did not, so every consumer saw `undefined` and had to
+  // assume `workflow` — which meant `kind: effort` could be declared, validated and then silently
+  // treated as a card cycle by anything that loaded it. An overlay inherits its base's kind unless
+  // it says otherwise: a project overlay of `effort` is still an effort.
+  const kind = own.fm.kind || (base && base.fm.kind) || 'workflow';
+  return { name: cycleName, kind, version, cards: own.fm.cards || (base && base.fm.cards), steps: steps.map(({ __line, __indent, ...s }) => s) };
 }
 
 // Template names a formula may name as an `artifact`: the ones plt resolves, plus the process
@@ -648,10 +707,38 @@ function validateFormula(processDir, cycleName) {
   return out;
 }
 
-// D-025: a formula that fails validation does not launch. Throws one line per error, before any write.
+// A formula that fails validation does not launch. Throws one line per error, before any write.
 function assertFormulaValid(processDir, cycleNames) {
   const errors = cycleNames.flatMap((c) => validateFormula(processDir, c));
   if (errors.length) throw new Error(errors.map((e) => `formula ${e.file}:${e.line}: ${e.msg}`).join('\n'));
+}
+
+// The inputs a recompile may refresh, and the reason the list is short.
+//
+// `title` and `touches` are the CARD's, copied out of the effort file at launch. They can be
+// corrected while the run is in flight, and until now the correction never arrived: inputs.yaml is
+// a launch-time snapshot. When an effort's `touches` were widened, the card kept the old list,
+// and the review panel then reported an in-scope change as out-of-scope against a list that had
+// been fixed an hour earlier. A wrong list reads as authoritative, which is worse than none.
+//
+// Everything else stays. `branch`, `repo_dir` and `window` describe what EXISTS ON DISK — a
+// worktree that is checked out and being worked in — so recomputing them from config templates
+// would rename or repoint something a person is standing in. `card` and `effort` are identity.
+// `merge` is a launch-time default nobody re-derives.
+const REFRESHABLE_INPUTS = ['title', 'touches'];
+
+// The card as the effort file describes it NOW, or null when that cannot be read. Every failure
+// here is a null rather than a throw: a recompile's first job is the requirements, and a card
+// whose effort file was moved, renamed or is mid-edit must still be able to refresh those.
+function currentCard(processDir, st, inputs) {
+  const slug = inputs && inputs.effort;
+  const id = (inputs && inputs.card) || st.run;
+  if (!slug || !id) return null;
+  try {
+    const effort = require('./effort');   // lazy: effort.js requires spine at its top
+    const e = effort.readEffort(processDir, slug);
+    return (e.cards || []).find((c) => c.id === id) || null;
+  } catch (err) { return null; }
 }
 
 function recompileRun(processDir, runId) {
@@ -672,7 +759,34 @@ function recompileRun(processDir, runId) {
     step.receipts_required = compileRequirements(s, config);
   }
   writeState(processDir, runId, st);
-  appendEvent(processDir, runId, { kind: 'time', what: 'recompiled', step: null, actor: 'agent', pin: st.pin || null });
+
+  // The card's own inputs, refreshed from the effort file in the same pass. A card that is no
+  // longer in the effort — dropped, renamed, or its file unreadable — keeps what it has: blanking
+  // `touches` would be the worst outcome available, because checkTouchesDrift returns early on an
+  // empty declared list, so an emptied snapshot switches the drift guard OFF for a card that is
+  // still running. The last known declaration is better evidence than none.
+  const changed = [];
+  const inputs = readInputs(processDir, runId);
+  const card = currentCard(processDir, st, inputs);
+  if (card && Object.keys(inputs).length) {
+    for (const k of REFRESHABLE_INPUTS) {
+      const next = card[k];
+      if (next === undefined || next === null) continue;
+      if (Array.isArray(next) && next.length === 0) continue;   // see above: empty is not a declaration
+      if (JSON.stringify(inputs[k]) === JSON.stringify(next)) continue;
+      inputs[k] = next;
+      changed.push(k);
+    }
+    if (changed.length) {
+      const file = path.join(runDir(processDir, runId), 'inputs.yaml');
+      locking.writeFileAtomic(file, yaml.stringify(inputs));
+    }
+  }
+
+  // Names WHICH inputs moved, not merely that a recompile ran. A reader looking at why a card was
+  // judged against one list and not another needs the field, and `recompiled` alone does not say.
+  appendEvent(processDir, runId, { kind: 'time', what: 'recompiled', step: null, actor: 'agent', pin: st.pin || null,
+    ...(changed.length ? { inputs_changed: changed } : {}) });
   return st;
 }
 
@@ -732,16 +846,36 @@ function discardRun(processDir, runId, { by, reason, replacedBy } = {}) {
 
 // Close a run whose close-out is done: retire every step still ready/pending (standing steps such
 // as `reply` never finish on their own) and mark the run closed so renderers stop offering it work.
-function closeRun(processDir, runId, { by = 'agent', warn = (m) => process.stderr.write(m + '\n') } = {}) {
+// `landed` is the exit for a run whose WORK shipped outside its own cycle: someone merged the
+// branch by hand, or the card was landed by fast-forward while the run sat on a pull-request
+// cycle whose `open-pr` step now describes a PR that will never exist. Before this existed there
+// were only two ways out, and both lied. `close` demands `close-out` done, and the chain to it
+// runs through steps that cannot honestly be finished — recording them would fake receipts for
+// a review nobody did. `discard` is honest about the process but says the WORK was abandoned, so
+// it never satisfies an `after:` dependency, and three merged cards went on blocking the cards
+// built on top of them.
+//
+// So this closes the run as `done` — the code is on the base branch, which is what a dependent
+// card needs to know — while recording, permanently and in the same event, that the gates were
+// NOT walked: `landed_out_of_band: true`, the sha it landed at, who says so, why, and every step
+// that was retired unrun. A reader of the ledger can tell this run from one that earned its
+// close. It takes an owner and a reason for that purpose: an unattributed one would be
+// indistinguishable from the real thing a month later.
+function closeRun(processDir, runId, { by = 'agent', landed = null, reason = null, warn = (m) => process.stderr.write(m + '\n') } = {}) {
   let st = readState(processDir, runId);
   if (!st || !st.steps) throw new Error(`run ${runId} is not launched`);
   if (st.status === 'closed') return st;
-  const co = st.steps['close-out'];
-  if (!co || co.status !== 'done') throw new Error(`run ${runId}: close-out is not done; finish it before closing the run`);
+  if (landed) {
+    if (!reason || !String(reason).trim()) throw new Error(`run ${runId}: --landed needs --reason saying how the work shipped without the cycle`);
+    if (!by || by === 'agent') throw new Error(`run ${runId}: --landed needs --by <owner>; an agent cannot vouch that work landed outside the process`);
+  } else {
+    const co = st.steps['close-out'];
+    if (!co || co.status !== 'done') throw new Error(`run ${runId}: close-out is not done; finish it before closing the run` + `\n  if the work landed outside this cycle (merged by hand, or fast-forwarded on a PR cycle), that is \`plt run close ${runId} --landed <sha> --by <owner> --reason <why>\``);
+  }
   if (st.current_step) throw new Error(`run ${runId}: step ${st.current_step} is still in progress`);
 
   // Final facts snapshot: a run closed without ever capturing its terminal PR state left the run
-  // page showing "not collected yet" forever (T1 concern). Best-effort, before marking closed: if
+  // page showing "not collected yet" forever. Best-effort, before marking closed: if
   // the run names a PR and state.facts is missing or older than the newest gh receipt, take one
   // facts.prFacts snapshot and record it — same mechanism `plt facts` uses live. Lazy-required
   // (facts.js requires spine at its top, like effort.js) and never allowed to fail the close. A run
@@ -778,6 +912,7 @@ function closeRun(processDir, runId, { by = 'agent', warn = (m) => process.stder
     if (step.status === 'ready' || step.status === 'pending') { step.status = 'skipped'; step.outcome = 'retired'; retired.push(id); }
   }
   st.status = 'closed';
+  if (landed) { st.landed_out_of_band = { sha: String(landed), by, reason: String(reason).trim(), at: new Date().toISOString(), retired: [...retired] }; }
   // Clearing the claim here is correct even from a caller with no window of its own: the run is
   // closed, so the claim guards nothing — no step can be started, finished or receipted against it
   // again. This is a teardown, not a release to another driver (that is `writeHandoff`'s job, and
@@ -787,8 +922,51 @@ function closeRun(processDir, runId, { by = 'agent', warn = (m) => process.stder
   // What the closed run means to the planner: `done` satisfies an `after:` dependency; `discarded` never does.
   st.closed_as = st.exit === 'discard' ? 'discarded' : 'done';
   writeState(processDir, runId, st);
-  appendEvent(processDir, runId, { kind: 'time', what: 'closed', step: null, ...actorFields(by), pin: st.pin || null, retired, closed_as: st.closed_as });
+  appendEvent(processDir, runId, { kind: 'time', what: 'closed', step: null, ...actorFields(by), pin: st.pin || null, retired, closed_as: st.closed_as,
+    ...(landed ? { landed_out_of_band: true, landed_sha: String(landed), reason: String(reason).trim() } : {}) });
   return st;
+}
+
+// ---- shared with the effort runner (lib/effort-run.js) -------------------------------------
+//
+// An effort run needs the SAME answers a card run does: which steps are entries, and which become
+// ready once a step finishes. Exported rather than reimplemented — this effort found four separate
+// copies of one rule drifting in a single day, and step readiness is the last place to want a
+// fifth. `launchRun` and `settle` keep using them, so there is one definition and two callers.
+
+// A step with no inbound edge of any kind. `else_of` is excluded deliberately: an else branch is
+// reached by its counterpart NOT matching, never by being an entry.
+function entryStepIds(wf) {
+  return new Set(wf.steps.filter((s) => !s.needs && !s.when && !s.else_of).map((s) => s.id));
+}
+
+// Which pending steps become ready now that `state` has moved. A step is ready when every step it
+// needs is done AND its `when` (if any) matches the outcome that step settled with. An `else_of`
+// readies when its counterpart is done and its `when` did NOT match — which is what makes `park`
+// reachable from a `review` that settled `park` rather than `continue`.
+function readyAfter(wf, steps) {
+  const done = (id) => steps[id] && steps[id].status === 'done';
+  const out = [];
+  for (const s of wf.steps) {
+    const cur = steps[s.id];
+    if (!cur || cur.status !== 'pending') continue;
+    if (s.else_of) {
+      const other = wf.steps.find((x) => x.id === s.else_of);
+      if (!other || !done(s.else_of)) continue;
+      const w = other.when;
+      const matched = !w || (steps[w.step] && steps[w.step].outcome === w.outcome);
+      // The counterpart's OWN `when` is not the test here: what decides an else branch is whether
+      // the counterpart's outcome took the path its dependants expect.
+      const dependants = wf.steps.filter((x) => x.when && x.when.step === s.else_of);
+      const anyTook = dependants.some((x) => steps[s.else_of].outcome === x.when.outcome);
+      if (dependants.length ? !anyTook : !matched) out.push(s.id);
+      continue;
+    }
+    if ((s.needs || []).some((n) => !done(n))) continue;
+    if (s.when && !(steps[s.when.step] && steps[s.when.step].outcome === s.when.outcome)) continue;
+    out.push(s.id);
+  }
+  return out;
 }
 
 function launchRun(processDir, { runId, cycle, repoDir, owner, estimate }) {
@@ -804,7 +982,7 @@ function launchRun(processDir, { runId, cycle, repoDir, owner, estimate }) {
   const config = loadConfig(processDir, runId);
   const wf = loadFormula(processDir, cycle);
   const pin = computePin(repoDir);
-  const initial = new Set(wf.steps.filter((s) => !s.needs && !s.when && !s.else_of).map((s) => s.id));
+  const initial = entryStepIds(wf);
   const steps = {};
   for (const s of wf.steps) {
     steps[s.id] = { status: initial.has(s.id) ? 'ready' : 'pending', outcome: null,
@@ -904,17 +1082,35 @@ function stepStart(processDir, runId, stepId, { session, window, takeOver } = {}
 // runs from the branch base (effort.branchBase: merge-base with origin/main, else the LAUNCH pin's
 // commit, else HEAD) — never from the settling pin, whose base_sha is the current HEAD and would
 // hide every commit the branch made since scope.
-function checkTouchesDrift(processDir, runId, st, pin) {
+// `stepId` is the step the check actually ran on. It was hardcoded as 'pre-pr', which filed the
+// finding against a step id that a commit-review or effort cycle need not have — an extrapolation
+// nobody could locate, on a step nobody could open.
+function checkTouchesDrift(processDir, runId, st, pin, stepId = 'pre-pr') {
   const events = readEvents(processDir, runId);
+  // WHERE THE DECLARED LIST ACTUALLY LIVES. This read `declared.files` off the receipt and
+  // returned when it was empty — and nothing in the codebase has ever written that field. Every
+  // touches receipt in every run of this project carries `files: null`, so this check has never
+  // run, on any card, since it was written. One card spent three review rounds keeping a step named
+  // `pre-pr` so this guard would keep firing; it was firing into a function that returned on its
+  // second line.
+  //
+  // The card's declared touches are in its `inputs.yaml`, put there by launchWave from the effort
+  // file. The receipt stays the evidence that scope declared them, and is still preferred when it
+  // carries a list (a caller may narrow it); inputs are the fallback, which makes the guard live
+  // for runs that already exist rather than only for ones launched after this commit.
   const declared = [...events].reverse().find((e) => e.kind === 'touches' && e.name === 'declared' && e.step === 'scope');
-  if (!declared || !Array.isArray(declared.files) || declared.files.length === 0) return;
+  if (!declared) return;
+  const declaredFiles = Array.isArray(declared.files) && declared.files.length
+    ? declared.files
+    : (readInputs(processDir, runId).touches || []);
+  if (!Array.isArray(declaredFiles) || declaredFiles.length === 0) return;
   const effort = require('./effort');   // lazy require: effort.js requires spine at its top
   const actual = effort.diffPaths(st.repo_dir, effort.branchBase(st.repo_dir, st.pin));
   for (const f of actual) {
-    if (effort.touchesOverlap([f], declared.files)) continue;
-    appendEvent(processDir, runId, { kind: 'extrapolation', step: 'pre-pr',
+    if (effort.coversPath(declaredFiles, f)) continue;
+    appendEvent(processDir, runId, { kind: 'extrapolation', step: stepId,
       missing: { scope: 'card', key: 'touches-drift' },
-      assumed: `${f} outside declared ${declared.files.join(', ')}`,
+      assumed: `${f} outside declared ${declaredFiles.join(', ')}`,
       confidence: 'high', actor: 'agent', pin });
   }
 }
@@ -940,7 +1136,7 @@ function settle(processDir, runId, stepId, wf, st, pin) {
     appendEvent(processDir, runId, { kind: 'time', what: 'repeated', step: stepId, outcome: step.outcome, until: def.repeat_until, actor: 'agent', pin });
     return st;
   }
-  if (stepId === 'pre-pr') checkTouchesDrift(processDir, runId, st, pin);
+  if (stepDeclares(def, stepId, 'checks_drift')) checkTouchesDrift(processDir, runId, st, pin, stepId);
   step.status = 'done';
   step.finished = new Date().toISOString();
   for (const s of wf.steps) {
@@ -1245,7 +1441,7 @@ function landRun(processDir, runId, wf, facts, actions = {}) {
     if (g.pin && g.pin.refused) return stop(s.id, 'pin refused — stage or ignore the worktree changes', g.missing);
     for (const m of g.missing) {
       if (m.kind === 'gh') {
-        // GitHub said MERGED; this fact was not collected. The receipt says it was back-filled (D-027).
+        // GitHub said MERGED; this fact was not collected. The receipt says it was back-filled.
         recordReceipt(processDir, runId, { step: s.id, kind: 'gh', name: m.name, result: 'pass', ref: prUrl, pin: g.pin, actor: 'agent', out_of_band: true });
       } else if (m.kind === 'jira' && /^on_done:/.test(m.name)) {
         const status = m.name.slice('on_done:'.length);
@@ -1700,7 +1896,7 @@ function renderMine(m) {
 module.exports = { externalCards, reviewFacts,
   STATE_ENUM, POLL_FACTS, findProcessDir, deepMerge, loadConfig, runDir,
   readState, writeState, readInputs, readEvents, appendEvent, rewriteEvents, git,
-  runIds, repoOwner: repoWindow.repoOwner, claimRepo: repoWindow.claimRepo, computePin, resolveRef, compileRequirements, recordReceipt, gateCheck, gateApprove, gateRevoke, normalizeGhName, callerWindow,
+  runIds, repoOwner: repoWindow.repoOwner, claimRepo: repoWindow.claimRepo, computePin, resolveRef, compileRequirements, stepDeclares, stepBool, NAME_FALLBACK, entryStepIds, readyAfter, recordReceipt, gateCheck, gateApprove, gateRevoke, normalizeGhName, callerWindow,
   loadFormula, runFormula, launchRun, recompileRun, betweenRounds, FACTS_COLLECTOR, validateFormula, formulaTemplates, assertHuman, assertRepo, assertWindow, personOf, actorFields, blockedStep, openQuestion, discardRun, closeRun, pollRun, stepStart, stepUnstart, stepFinish, writeHandoff, nextCommand, renderPrime, renderBanners,
   DEFAULT_MENU_WORDS, menuFor, renderMenu, parseMenuPhrase,
   syncSince, mine, mineRows, renderMine, assumedText,

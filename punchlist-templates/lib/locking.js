@@ -1,8 +1,7 @@
 'use strict';
-// locking — advisory file lock + atomic write for the process spine (D-022).
-// Standalone module: no dependency on spine.js. The integration task wires
-// spine.writeState/appendEvent to call these; this file ships fully tested
-// on its own.
+// locking — advisory file lock + atomic write for the process spine.
+// Standalone module: no dependency on spine.js, which calls withLock from
+// writeState and appendEvent. This file is tested on its own.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

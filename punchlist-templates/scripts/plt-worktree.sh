@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# plt-worktree.sh <name> — per-window worktree (Task 9). Two windows sharing
+# plt-worktree.sh <name> — per-window worktree. Two windows sharing
 # one checkout have twice destroyed each other's uncommitted work here; the
 # fix is structural — give each window its own worktree instead of a shared
 # mutable checkout. Creates (or reuses) <repo>/.worktrees/<name> on branch

@@ -128,8 +128,8 @@ export function launchdPlist({ label = LABEL, node, serverJs, repo, dataDir, log
 `;
 }
 
-// Pinned SilverBullet release. Bump deliberately (with a matching human
-// verification pass — see docs/2026-08-31-kb-silverbullet.md) rather than
+// Pinned SilverBullet release. Bump deliberately (after a person checks that a
+// fresh install still binds to loopback only) rather than
 // tracking `latest`, so a fresh `install-silverbullet` always provisions the
 // exact binary this repo has been checked against.
 export const SILVERBULLET_VERSION = '2.10.0';
@@ -241,7 +241,7 @@ function silverbulletLaunchdPlist({ wrapperPath, logPath }) {
 
 // Resolve SilverBullet's space root directory. Defaults to `<dataDir>/kb`
 // (the private plane, out of the sqlite db/media/backup/govern/.env
-// boundary — see docs/2026-08-31-kb-silverbullet.md), but is overridable via
+// boundary), but is overridable via
 // the instance `kb_path` setting so an operator can point SB at a KB that
 // lives elsewhere (e.g. an existing vault outside this instance's data dir).
 // Pure — the caller is responsible for reading `kb_path` out of the db.

@@ -7,13 +7,12 @@ workflows choreograph multi-step, multi-actor work by compiling to
 punchlist tasks. Markdown-first, Obsidian-curatable, mermaid-visualized,
 agent-agnostic.
 
-Shipped so far (P1 + P3 + P4): the template format, the `plt` CLI
+Shipped: the template format, the `plt` CLI
 (validate/list/show/render/launch/advance/runs), three core templates,
 resolver and workflow-writer skills for claude and hermes, and the
 workflow runtime — the format, validator, mermaid renderer, compiler
 (`launch`) and advancer (`advance`), plus two shipped workflows
-(`research-and-buy`, `weekly-review-flow`). See
-[docs/2026-08-25-prd.md](docs/2026-08-25-prd.md).
+(`research-and-buy`, `weekly-review-flow`).
 
 ## Quickstart
 
@@ -66,8 +65,7 @@ authored without that review.
 
 ## Format reference
 
-Full contract: [docs/2026-08-25-prd.md](docs/2026-08-25-prd.md). A
-template is markdown + frontmatter:
+A template is markdown + frontmatter:
 
 ```markdown
 ---
@@ -117,6 +115,14 @@ wins.
 4. **Author under `templates/authored/`**, not in packs. Copy a pack
    template there to customize it.
 5. Run `bin/plt validate all` before committing.
+6. **A page that lands or pushes a change says where.** Tag such a template
+   `lands`, and declare `<!-- slot:scope required source=git -->` directly
+   after its `meta` slot (or first, when it has no `meta`). The slot names
+   the repo, its local path, and every remote with its URL and visibility.
+   It also names the branch the change lands on, and the pushes the approval
+   authorizes and does not. Read visibility from the host, for example with
+   `gh repo view <owner/name> --json visibility`; with no answer, the page
+   says `unknown`. `plt validate` rejects a `lands` template without this slot.
 
 ## Workflows
 
@@ -125,7 +131,7 @@ workflow compiles to punchlist tasks — there is no engine.** Each step
 becomes a real task with an assignee; a small *advancer* watches for
 completed steps and spawns the next ones. Monitoring, review, security
 (vetting/screening), and notifications are all inherited from punchlist.
-(Shipped in P3: format, validator, mermaid renderer, `launch` compiler and
+(Shipped: format, validator, mermaid renderer, `launch` compiler and
 `advance` advancer, plus the `research-and-buy` pack workflow.)
 
 A workflow is one markdown file, `workflows/{packs,authored}/<name>.md`:
@@ -661,7 +667,7 @@ A task joins the wave when all of these are true:
   gets the file; the higher one waits for the next wave.
 
 ```bash
-bin/plt fan docs/plans/greenhouse-plan.md
+bin/plt fan plans/greenhouse-plan.md
 # wave: T2 T4
 # excluded: T3 — after Task 2 (not complete)
 # excluded: T5 — shares lib/sensor.js with Task 4
@@ -697,14 +703,25 @@ line, sorted. No other file changes when a verb is added.
 ### Doctor and fsck
 
 `plt doctor [--project <dir>] [--json]` proves the framework works on this
-machine, for this project. It is read-only. It runs eleven checks:
+machine, for this project. It is read-only. It runs thirteen checks:
 `plt-resolvable`, `process-dir`, `config-layering`, `formulas-validate`,
-`schemas`, `hooks-installed`, `timers-running`, `denylist-file`, `gh`,
-`tracker` and `runs-consistent`. Each check reports what it proved, not what a
-state file claims. For example, `gh` runs `gh auth status`; it does not only
-look for a config key. A shell-out that takes more than 5 seconds reports
-`skip`, not `fail`. Every failed check prints one pasteable fix command, in
-order. Exit 0 when nothing failed, else 1.
+`schemas`, `state-fields-declared`, `hooks-installed`, `timers-running`,
+`denylist-file`, `gh`, `deps`, `tracker` and `runs-consistent`. Each check
+reports what it proved, not what a state file claims. For example, `gh` runs
+`gh auth status`; it does not only look for a config key. A shell-out that
+takes more than 5 seconds reports `skip`, not `fail`. Every failed check
+prints one pasteable fix command, in order. Exit 0 when nothing failed,
+else 1.
+
+`plt deps [status|install] [<id>...] [--project <dir>] [--dry-run]` manages
+the external tools a project needs. The project lists them in `config.deps`
+(for example `deps: [gitnexus, herdr]`). `lib/deps.js` holds, for each id, the
+binary to find and the install recipes to try. A tool passes when it resolves
+on PATH, however it was installed. `status` reports each tool. `install` runs
+the first recipe whose prerequisite (`npm`, `brew`, `curl`) is on this machine,
+only for missing tools, and then checks PATH again: an installer that exits 0
+but leaves the binary off PATH is a failure. The doctor's `deps` check fails on
+a missing tool, and its fix is `plt deps install`.
 
 `plt fsck <run> | --all [--fix] [--project <dir>] [--json]` checks each run's
 four parts against each other: the event ledger, the state, the formula the
@@ -750,7 +767,17 @@ bin/plt schema validate event process/runs/TRK-12/events.jsonl   # one event per
 `validate` exits 0 on a valid file. On an invalid file it prints one
 `<path>: <message>` line per problem and exits 1. `plt fsck` validates each
 run's state, inputs and events. `plt doctor`'s `schemas` check validates every
-run. The event kind list in `schemas/event.schema.json` is the only list:
+run — but only what runs have already written, so a field written on a rare
+path is not checked until some run takes that path. `state-fields-declared`
+is the half that needs no run: it scans `lib/*.js` for `<state>.<field> =`
+and fails when a field written there is not in `schemas/state.schema.json`,
+so a new writer is caught when it is added. It is a text scan, not a parse,
+and it does not see the object literal `launchRun` writes, computed writes,
+`Object.assign`, spreads, or a state reached under another variable name.
+The comment above `scanStateFieldWrites` in `lib/doctor.js` lists every hole
+and `test/state-schema-drift.test.js` pins one case per hole, so the list
+cannot quietly go out of date. The event kind list in
+`schemas/event.schema.json` is the only list:
 `appendEvent` refuses an event with no kind or a kind that list does not name.
 
 ### Receipts the spine did not earn: `out_of_band`
@@ -822,8 +849,8 @@ The terms file is never committed. It is `$LEAK_TERMS`, default
 `~/.config/leak-scan/terms.txt`, one extended regex per line, mode 600. The
 scan refuses to run without it. The pre-commit hook runs the scan with
 `--staged`. The install script refuses to replace a pre-commit hook it did
-not write. The CI job (`.github/workflows/denylist.yml` at the repo root, where GitHub reads workflows) writes the terms
-file from the `LEAK_TERMS` secret and scans the pull request's range.
+not write. You can add a CI job that runs the same scan: it writes the terms
+file from a `LEAK_TERMS` secret and scans the pull request's range.
 `plt doctor`'s `denylist-file` check proves the terms file exists, is not
 empty, and has mode 600.
 
@@ -901,7 +928,6 @@ runs/                         # (gitignored) per-run advancer state
 skills/{claude,hermes,shared} # resolver skills + canonical shim
 bin/plt                       # zero-dependency CLI
 scripts/advance-sweep.sh      # cron wrapper for `plt advance --all`
-docs/                         # product analysis, PRD
 test/                         # node:test suite
 ```
 

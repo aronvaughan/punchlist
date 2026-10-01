@@ -731,6 +731,12 @@ test('menuFor: PANEL-FAIL uses the LATEST verdict per agent — an earlier fail 
 
 test('landing: pollRun on state MERGED records the merge step\'s gh checks, runs jira on_done, finishes merge and readies close-out', () => {
   const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  // This test is ABOUT the jira landing, so the project must have a tracker. The shipped
+  // fixture declares `jira: { kind: none }`, and it used to make no difference: the merge step
+  // compiled a jira requirement either way, so a project with no tracker had its merge blocked
+  // by "jira transition to Done failed" — a transition into a system it does not have. That was
+  // the bug, asserted here as behaviour. The `kind: none` case is now its own test below.
+  fs.writeFileSync(path.join(p, 'config', 'zz-tracked.yaml'), 'jira:\n  kind: jira\n');
   spine.launchRun(p, { runId: 'TRK-30', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
   const st = spine.readState(p, 'TRK-30');
   for (const id of ['scope', 'build', 'review', 'write-review', 'pre-pr', 'approve', 'open-pr', 'pr-loop']) st.steps[id].status = 'done';
@@ -763,6 +769,29 @@ test('landing: pollRun on state MERGED records the merge step\'s gh checks, runs
   // Idempotent: a second poll after the landing is a no-op.
   assert.equal(spine.pollRun(p, 'TRK-30', { state: 'MERGED' }, { jira: () => calls.push('again') }).landed, undefined);
   assert.equal(calls.length, 1);
+});
+
+test('landing: a project with jira.kind none lands without attempting a transition', () => {
+  // The other half of the fix. With no tracker there is no transition to run, so the landing
+  // must not stop at one — and must not need a jira action wired to get a card merged. Before
+  // this, punchlist (kind: none) could not have landed a card through pollRun at all.
+  const root = tmpProcess(); const p = path.join(root, 'process'); const repo = tmpRepo();
+  spine.launchRun(p, { runId: 'TRK-32', cycle: 'build-and-ship', repoDir: repo, owner: 'lead', estimate: 0.5 });
+  const st = spine.readState(p, 'TRK-32');
+  for (const id of ['scope', 'build', 'review', 'write-review', 'pre-pr', 'approve', 'open-pr', 'pr-loop']) st.steps[id].status = 'done';
+  spine.writeState(p, 'TRK-32', st);
+  spine.appendEvent(p, 'TRK-32', { kind: 'gh', step: 'open-pr', name: 'pr:create', result: 'pass', ref: 'https://github.com/o/r/pull/9', pin: spine.computePin(repo), actor: 'agent' });
+
+  const calls = [];
+  const landed = spine.pollRun(p, 'TRK-32', { state: 'MERGED' }, { jira: (c, s2) => calls.push([c, s2]) }).landed;
+  assert.ok(landed, 'the landing must not be blocked by a tracker the project does not have');
+  assert.equal(landed.blocked, undefined);
+  assert.deepEqual(calls, [], 'no transition is attempted');
+  assert.deepEqual(landed.finished, ['merge']);
+  const after = spine.readState(p, 'TRK-32');
+  assert.equal(after.steps.merge.status, 'done');
+  assert.equal(after.steps['close-out'].status, 'ready');
+  assert.equal(spine.readEvents(p, 'TRK-32').filter((e) => e.kind === 'jira').length, 0, 'and no jira receipt is written');
 });
 
 test('landing: an unfinished ancestor that needs a human or artifact receipt blocks the landing at that step', () => {

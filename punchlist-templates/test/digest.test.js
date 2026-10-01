@@ -41,7 +41,9 @@ function writeRunState(p, runId, extra = {}) {
   });
 }
 
-function ev(p, runId, fields) { spine.appendEvent(p, runId, fields); }
+// A fixture chooses its timestamps on purpose; `at` is the named seam for that. Passing `ts`
+// inside the event is refused, because that is the shape a caller's own data arrives in.
+function ev(p, runId, fields) { const { ts, ...rest } = fields; spine.appendEvent(p, runId, rest, { at: ts }); }
 
 function writeDecisions(p, list) {
   const e = yaml.parse(fs.readFileSync(path.join(p, 'efforts', 'greenhouse.yaml'), 'utf8'));

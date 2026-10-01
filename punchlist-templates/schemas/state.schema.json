@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://punchlist.example/schemas/state.schema.json",
   "title": "plt run state",
-  "description": "A run's state.yaml. plt is the only writer, so an unknown top-level key is a defect, not a feature. Every key here is one lib/spine.js writes: launchRun writes run/cycle/status/formula_version/repo_dir/owner/created/estimate/pin/current_step/steps, stepStart claims owner_window, pollRun writes poll, closeRun writes closed/closed_as, gateCheck writes facts and discardRun writes exit.",
+  "description": "A run's state.yaml. plt is the only writer, so an unknown top-level key is a defect, not a feature. Every key here is one lib/spine.js writes: launchRun writes run/cycle/status/formula_version/repo_dir/owner/created/estimate/pin/current_step/steps, stepStart claims owner_window, pollRun writes poll, closeRun writes closed/closed_as (and landed_out_of_band when closed with --landed), gateCheck writes facts and discardRun writes exit. The doctor check `state-fields-declared` scans lib/*.js for `<state>.<field> =` and fails when a field written there is missing from `properties` below — it does not see the object literal launchRun writes, computed writes or spreads, so adding a key by one of those forms is still caught only by validating a real run.",
   "type": "object",
   "additionalProperties": false,
   "required": ["run", "cycle", "status", "steps"],
@@ -21,6 +21,19 @@
     "pin": { "type": ["object", "null"] },
     "facts": { "type": ["object", "null"] },
     "exit": { "type": ["string", "null"] },
+    "landed_out_of_band": {
+      "description": "Written by closeRun when `plt run close --landed` closes a run whose code reached the base branch outside the cycle: the sha, who vouches, why, when, and every step retired unrun. Its presence says the gates were not walked.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha", "by", "reason", "at", "retired"],
+      "properties": {
+        "sha": { "type": "string" },
+        "by": { "type": ["string", "null"] },
+        "reason": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "retired": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "poll": {
       "description": "The last facts `plt run poll` saw, and when. A snapshot of GitHub's truth, not a status the spine owns.",
       "type": ["object", "null"],

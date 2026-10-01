@@ -5,6 +5,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -270,4 +272,50 @@ test('pl.sh tag-edit: sets kb_path (and notes/template) on an EXISTING tag', asy
   const noFlags = await pl(TOK_ARON, ['tag-edit', 'editme']);
   assert.equal(noFlags.status, 2);
   assert.match(noFlags.stderr, /usage: pl\.sh tag-edit/);
+});
+
+// --as <actor>: resolve a token from the SERVER's data/.env, so a human on the
+// machine never handles one. The per-agent shim pins PUNCHLIST_ENV_FILE to the
+// agent's own secrets file, which is why `pl answer` returned 403 for the human
+// who owns the machine — they were authenticating as the agent.
+test('pl.sh --as: resolves an actor, and admin, from the server env file', async () => {
+  const dir = await fs.mkdtemp(join(tmpdir(), 'pl-as-'));
+  await fs.writeFile(join(dir, '.env'),
+    `PUNCHLIST_TOKENS=alex:${TOK_ARON},claude:${TOK_CLAUDE}\nPUNCHLIST_ADMIN=alex\n`, { mode: 0o600 });
+  const asRun = (args) => execFileAsync('bash', [PL, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, PUNCHLIST_URL: url, PUNCHLIST_DATA: dir,
+      PUNCHLIST_TOKEN: '', PUNCHLIST_ENV_FILE: '', HERMES_HOME: '' },
+  }).then(r => ({ status: 0, ...r })).catch(e => ({ status: e.code, stdout: e.stdout ?? '', stderr: e.stderr ?? '' }));
+
+  const named = await asRun(['--as', 'claude', 'counts']);
+  assert.equal(named.status, 0, named.stderr);
+  assert.match(named.stdout, /actor: claude/);
+
+  const admin = await asRun(['--as', 'admin', 'counts']);
+  assert.equal(admin.status, 0, admin.stderr);
+  assert.match(admin.stdout, /actor: alex/);
+
+  // An unknown actor names the ones that exist — and never a token.
+  const bad = await asRun(['--as', 'nobody', 'counts']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /no such actor/);
+  assert.match(bad.stderr, /known: .*alex.*claude/);
+  assert.doesNotMatch(bad.stderr, new RegExp(TOK_ARON));
+  assert.doesNotMatch(bad.stderr, new RegExp(TOK_CLAUDE));
+
+  // --as WINS over an exported token: acting as someone else than asked is the
+  // one outcome worth refusing.
+  const wins = await execFileAsync('bash', [PL, '--as', 'claude', 'counts'], {
+    encoding: 'utf8',
+    env: { ...process.env, PUNCHLIST_URL: url, PUNCHLIST_DATA: dir,
+      PUNCHLIST_TOKEN: TOK_ARON, PUNCHLIST_ENV_FILE: '', HERMES_HOME: '' },
+  });
+  assert.match(wins.stdout, /actor: claude/);
+
+  const noName = await asRun(['--as']);
+  assert.equal(noName.status, 2);
+  assert.match(noName.stderr, /--as needs an actor name/);
+
+  await fs.rm(dir, { recursive: true, force: true });
 });

@@ -1,6 +1,6 @@
 'use strict';
 // facts — one GitHub collector recording facts as idempotent receipts on every in-flight run that
-// names a PR (D-020: watching is a collector, not a cycle, unlike `plt run poll`'s live-arming of
+// names a PR (watching is a collector, not a cycle, unlike `plt run poll`'s live-arming of
 // `arm_on`/`land_on` steps). `prFacts` is pure given an injected `gh`; `recordFacts` is the only
 // place that writes — gh receipts (idempotent per {name, head sha}), a `review-activity` event past
 // the run's cursor, and a `state.facts` snapshot so renderers never call gh themselves.

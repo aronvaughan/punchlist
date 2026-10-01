@@ -5,7 +5,7 @@ import json, os, re, shlex, subprocess, sys
 # Shipped version of the claude integration (hooks + agents). `plt integration install claude`
 # stamps it into every installed file's managed header; `plt integration status claude` compares.
 # 5: spine-prime's UserPromptSubmit branch now appends the `plt fan` wave line.
-VERSION = 5
+VERSION = 6
 
 def read_input():
     try: return json.load(sys.stdin)

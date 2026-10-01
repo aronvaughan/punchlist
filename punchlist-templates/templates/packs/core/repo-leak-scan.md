@@ -66,7 +66,7 @@ the tree or anywhere in history.
 - `README.md:459` — "© 2026 Riley Chen" — **intentional** license footer.
 
 ### HEURISTIC (2 — both false positives)
-- `docs/2026-08-23-architecture.md:71` — "Single shared secret:
+- `docs/architecture.md:71` — "Single shared secret:
   `PUNCHLIST_TOKEN` in `data/.env` (gitignored)" — documentation *about*
   where the secret lives, not the value.
 - `test/attachments.test.js:475` — `const secret = join(outside,

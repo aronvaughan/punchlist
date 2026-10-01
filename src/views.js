@@ -146,7 +146,7 @@ const VIEWS = {
     where: `assignee <> :admin AND vetted = 0 AND ${OPEN}`,
     keys: ['assignee', `COALESCE(rank, ${BIG})`], dir: 'ASC',
   },
-  // dispatch.js's Q3 predicate (see docs/2026-09-03-event-dispatch.md): the
+  // dispatch.js's claimable predicate: the
   // active/claimable leg of the `queue` view's WHERE, scoped by caller-supplied
   // assignee via taskCount's `assignee` param — kept here (not hand-rolled SQL
   // in dispatch.js) so it can never silently drift from `queue`.

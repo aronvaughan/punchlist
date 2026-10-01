@@ -336,8 +336,8 @@ test('validateWorkflow: spine keys — gate kinds, human signal, dead model/reas
   const msgs = plt.validateWorkflow(parsed, file, new Set(), { config }).map((e) => e.msg);
   assert.ok(msgs.some((m) => /gate\.kind `sideways`/.test(m)));
   assert.ok(msgs.some((m) => /human gate needs `signal`/.test(m)));
-  assert.ok(msgs.some((m) => /key `model` is not read by anything — see plan 4 D-029/.test(m)));
-  assert.ok(msgs.some((m) => /key `reasoning` is not read by anything — see plan 4 D-029/.test(m)));
+  assert.ok(msgs.some((m) => /key `model` is not read by anything, so it has no effect — remove it/.test(m)));
+  assert.ok(msgs.some((m) => /key `reasoning` is not read by anything, so it has no effect — remove it/.test(m)));
   assert.ok(msgs.some((m) => /`skills` must be an inline list/.test(m)));
 });
 

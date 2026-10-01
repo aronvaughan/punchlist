@@ -5,7 +5,7 @@
 // The target passed to `tailscale serve` MUST stay loopback (127.0.0.1) —
 // `tailscale serve` is the only tailnet edge: it terminates HTTPS and gates
 // access by tailnet identity, so the service itself never binds anything
-// beyond localhost. See docs/2026-08-31-kb-silverbullet.md ("Exposure model").
+// beyond localhost.
 export function tailscaleServeSpec({ port, host = '127.0.0.1', httpsPort = 443 }) {
   const target = `http://${host}:${port}`;
   return {

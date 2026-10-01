@@ -13,6 +13,18 @@
       "path": "templates/packs/core/coding-task.md"
     },
     {
+      "name": "commit-plan",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "gate",
+        "commits"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/commit-plan.md"
+    },
+    {
       "name": "digest",
       "kind": "template",
       "tags": [
@@ -36,11 +48,35 @@
       "path": "templates/packs/core/dispatch-brief.md"
     },
     {
+      "name": "effort-plan",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "effort"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/effort-plan.md"
+    },
+    {
+      "name": "effort-review",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "effort",
+        "gate"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/effort-review.md"
+    },
+    {
       "name": "fix-summary",
       "kind": "template",
       "tags": [
         "spine",
-        "gate"
+        "gate",
+        "lands"
       ],
       "domain": "engineering",
       "output": "markdown",
@@ -71,11 +107,24 @@
       "path": "templates/packs/core/health-report.md"
     },
     {
+      "name": "pre-commit-summary",
+      "kind": "template",
+      "tags": [
+        "spine",
+        "gate",
+        "lands"
+      ],
+      "domain": "engineering",
+      "output": "markdown",
+      "path": "templates/packs/core/pre-commit-summary.md"
+    },
+    {
       "name": "pre-pr-summary",
       "kind": "template",
       "tags": [
         "spine",
-        "gate"
+        "gate",
+        "lands"
       ],
       "domain": "engineering",
       "output": "markdown",
@@ -88,7 +137,8 @@
         "git",
         "review",
         "prepush",
-        "release"
+        "release",
+        "lands"
       ],
       "domain": "engineering",
       "output": "markdown",

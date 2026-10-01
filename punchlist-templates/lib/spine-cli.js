@@ -27,10 +27,21 @@ function runIdFrom(o, repo) {
 }
 const out = (v) => { process.stdout.write(JSON.stringify(v, null, 2) + '\n'); return 0; };
 
+// Each verb's usage is written ONCE, here, and used twice: the error this handler throws when the
+// arguments do not parse, and the command descriptor at the foot of this file, which is what
+// `plt help` prints. They cannot say different things. A subverb this module dispatches and the
+// usage does not name is the bug these constants exist to stop: `plt step unstart|block|answer`,
+// `plt gate revoke` and `plt run poll` were all dispatched here while the descriptors named none
+// of them, so the help advertised less than the CLI accepted.
+const RUN_USAGE = 'plt run launch <id> --cycle <name> [--repo <dir>] [--owner who] [--estimate n]'
+  + ' | plt run recompile <id>'
+  + ' | plt run discard <id> --by <owner> --reason <why> [--replaced-by <card>]'
+  + ' | plt run close <id> [--by who] [--landed <sha>] [--reason <why>]'
+  + ' | plt run poll <id>';
 exports.run = async (args) => {
   const o = opts(args); const p = processDir();
   if (o._[0] === 'recompile') return out(spine.recompileRun(p, o._[1]));
-  if (o._[0] === 'close') return out(spine.closeRun(p, o._[1], { by: o.by || 'agent' }));
+  if (o._[0] === 'close') return out(spine.closeRun(p, o._[1], { by: o.by || 'agent', landed: typeof o.landed === 'string' ? o.landed : null, reason: o.reason }));
   if (o._[0] === 'discard') return out(spine.discardRun(p, o._[1], { by: o.by, reason: o.reason, replacedBy: typeof o['replaced-by'] === 'string' ? o['replaced-by'] : undefined }));
   if (o._[0] === 'poll') {
     // Facts come from the PR named by the run's receipts: `gh pr view <n> --json mergeStateStatus,reviewDecision,state,…`.
@@ -85,11 +96,15 @@ exports.run = async (args) => {
     };
     return out({ facts: pollFacts, ...spine.pollRun(p, runId, pollFacts, { jira }) });
   }
-  if (o._[0] !== 'launch') throw new Error('usage: plt run launch <id> --cycle <name> [--repo dir] [--owner who] [--estimate n] | plt run recompile <id> | plt run discard <id> --by <owner> --reason <why> [--replaced-by <card>] | plt run close <id> [--by who]');
+  if (o._[0] !== 'launch') throw new Error(`usage: ${RUN_USAGE}`);
   const estimate = o.estimate !== undefined ? Number(o.estimate) : undefined;
   if (estimate !== undefined && !Number.isFinite(estimate)) throw new Error('estimate must be a number');
   return out(spine.launchRun(p, { runId: o._[1], cycle: o.cycle, repoDir: path.resolve(o.repo || process.cwd()), owner: o.owner, estimate }));
 };
+const STEP_USAGE = 'plt step start|unstart|finish <id> --run <run> [--outcome o] [--reason why] [--by who]'
+  + ' [--no-extrapolations] [--extrapolation json] [--take-over]'
+  + ' | plt step block [<id>] --run <run> --question <text> [--by who] [--take-over]'
+  + ' | plt step answer [<id>] --run <run> --text <text> --by <person> [--take-over]';
 exports.step = async (args) => {
   const o = opts(args); const p = processDir(); const [sub, id] = o._;
   const run = runIdFrom(o);
@@ -111,12 +126,12 @@ exports.step = async (args) => {
     if (sub === 'block') return out(blocked.stepBlock(p, run, target, { question: str(o.question), by: str(o.by), takeOver }));
     return out(blocked.stepAnswer(p, run, target, { answer: str(o.text) || str(o.answer), by: str(o.by), takeOver }));
   }
-  throw new Error('usage: plt step start|unstart|finish <id> --run <run> [--outcome o] [--no-extrapolations] [--extrapolation json] [--take-over] | plt step block [<id>] --run <run> --question <text> [--by who] | plt step answer [<id>] --run <run> --text <text> --by <person>');
+  throw new Error(`usage: ${STEP_USAGE}`);
 };
-const RECEIPT_USAGE = 'usage: plt receipt --kind <kind> --name <name> [--run <run>] [--step <id>] [--ref x] [--verdict pass|fail] [--result r] [--files a,b] [--actor who] [--take-over]';
+const RECEIPT_USAGE = 'plt receipt --kind <kind> --name <name> [--run <run>] [--step <id>] [--ref x] [--verdict pass|fail] [--result r] [--files a,b] [--actor who] [--take-over]';
 exports.receipt = async (args) => {
   const o = opts(args);
-  if (typeof o.kind !== 'string' || !o.kind || typeof o.name !== 'string' || !o.name) { process.stderr.write(RECEIPT_USAGE + '\n'); return 2; }
+  if (typeof o.kind !== 'string' || !o.kind || typeof o.name !== 'string' || !o.name) { process.stderr.write(`usage: ${RECEIPT_USAGE}\n`); return 2; }
   // `facts` is the collector's role (plt facts). A receipt typed by hand is not collected evidence,
   // so it may not claim that role (and with it the collector's out_of_band exemption).
   if (o.actor === 'facts') { process.stderr.write('plt receipt: --actor facts is reserved for plt facts, the fact collector; record as agent or name the person\n'); return 2; }
@@ -131,6 +146,7 @@ exports.receipt = async (args) => {
     session: o.session || process.env.CLAUDE_SESSION_ID, actor: o.actor, verdict: o.verdict, ref: o.ref, result: o.result,
     files: o.files ? String(o.files).split(',').map((f) => f.trim()).filter(Boolean) : undefined, takeOver: !!o['take-over'] }));
 };
+const GATE_USAGE = 'plt gate check|approve|revoke <run> <step> [--by who] [--event id --reason text] [--take-over]';
 exports.gate = async (args) => {
   const o = opts(args); const p = processDir(); const [sub, run, step] = o._;
   if (sub === 'check') {
@@ -143,7 +159,7 @@ exports.gate = async (args) => {
   }
   if (sub === 'approve') return out(spine.gateApprove(p, run, step, { by: o.by, takeOver: !!o['take-over'] }));
   if (sub === 'revoke') return out(spine.gateRevoke(p, run, step, { by: o.by, eventId: o.event, reason: o.reason }));
-  throw new Error('usage: plt gate check|approve|revoke <run> <step> [--by who] [--event id --reason text] [--take-over]');
+  throw new Error(`usage: ${GATE_USAGE}`);
 };
 exports.handoff = async (args) => {
   const o = opts(args); const p = processDir(); const run = o._[0] || runIdFrom(o);
@@ -191,6 +207,7 @@ function effectiveMenuWords(p, o) {
 // `plt menu parse --text "..."` — used by the UserPromptSubmit hook to tag menu phrases without
 // re-implementing parseMenuPhrase in Python. `plt menu words` prints the effective word map (for
 // the hook's near-miss check); `plt menu json` prints {mode, phrases} for the current run.
+const MENU_USAGE = 'plt menu parse --text "<prompt>" | plt menu words [--run <run>] | plt menu json [--run <run>]';
 exports.menu = async (args) => {
   const o = opts(args); const p = processDir();
   if (o._[0] === 'parse') return out(spine.parseMenuPhrase(o.text || '', effectiveMenuWords(p, o)));
@@ -202,7 +219,7 @@ exports.menu = async (args) => {
     const events = spine.readEvents(p, run);
     return out(spine.menuFor(st, events));
   }
-  throw new Error('usage: plt menu parse --text "<prompt>" | plt menu words [--run <run>] | plt menu json [--run <run>]');
+  throw new Error(`usage: ${MENU_USAGE}`);
 };
 // `plt config [key.path] [--run <run>]` — the merged process/config/*.yaml (plus the run's input
 // vars) as JSON, or one value by dotted path. The installed hooks and agents read every
@@ -266,7 +283,7 @@ exports.render = async (args) => {
   }
   const m = render.publishManifest(p, { out });
   process.stdout.write(`changed: ${m.changed.length ? m.changed.join(' ') : 'none'}\n`);
-  // Rendering never publishes (D-028); it names the publish as the next command. The bytes on disk
+  // Rendering never publishes; it names the publish as the next command. The bytes on disk
   // against the last recorded publish decide what is pending (lib/publish.js), not `changed`.
   const pending = require('./publish').pendingPublishes(p, { out });
   if (pending.length) process.stdout.write(`next: plt publish${pending.length === 1 ? ` ${pending[0].target}` : ''}${out ? ` --out ${out}` : ''}\n`);
@@ -282,10 +299,10 @@ function execWithPltExec() {
   };
 }
 
-const EFFORT_USAGE = 'usage: plt effort plan <slug> [--json] | plt effort launch <slug> [--parallel] [--dry-run] [--only ID,ID] [--owner who] [--json]';
+const EFFORT_USAGE = 'plt effort plan <slug> [--json] | plt effort launch <slug> [--parallel] [--dry-run] [--only ID,ID] [--owner who] [--json]';
 exports.effort = async (args) => {
   const o = opts(args); const p = processDir(); const [sub, slug] = o._;
-  if (['plan', 'launch'].includes(sub) && !slug) { process.stderr.write(EFFORT_USAGE + '\n'); return 2; }
+  if (['plan', 'launch'].includes(sub) && !slug) { process.stderr.write(`usage: ${EFFORT_USAGE}\n`); return 2; }
   if (sub === 'plan') {
     const plan = effort.planWave(p, slug);
     if (o.json) return out(plan);
@@ -306,7 +323,12 @@ exports.effort = async (args) => {
     }
     const result = effort.launchWave(p, slug, launchOpts);
     if (o.json) return out(result);
-    for (const l of result.launched) process.stdout.write(`launched: ${l.card}${l.branch ? ` (${l.branch})` : ''} → ${l.path}\n`);
+    for (const l of result.launched) {
+      process.stdout.write(`launched: ${l.card}${l.branch ? ` (${l.branch})` : ''} → ${l.path}\n`);
+      // A failed window does not fail the launch, because the run and worktree exist. This loop still
+      // reports it; otherwise the first symptom is `plt watch` saying "no inputs.window" much later.
+      if (l.window && l.window.error) process.stderr.write(`window: ${l.card} — no window opened: ${String(l.window.error).trim().split('\n').pop()}\n`);
+    }
     for (const s of result.skipped) process.stdout.write(`skipped: ${s.card} — ${s.error}\n`);
     return result.skipped.length ? 1 : 0;
   }
@@ -382,8 +404,8 @@ function watchOnce(p) {
     // `q()` so a template author writes a terminal multiplexer's notify command
     // (`mux notify {text} --body {next}`) bare, never `'{text}'`. {run}/{tab_id}/{pane_id} are
     // simple tokens (card ids, pane/tab ids) and stay unquoted so a template can still splice them
-    // into a larger word if it wants to.
-    const vars = { run: id, text: effort.q(text), next: effort.q(next) };
+    // into a larger word if it wants to. {templates} is this checkout, quoted like a path.
+    const vars = { run: id, text: effort.q(text), next: effort.q(next), templates: effort.q(effort.TEMPLATES_DIR) };
     if (win.tab_id !== undefined) vars.tab_id = win.tab_id;
     if (win.pane_id !== undefined) vars.pane_id = win.pane_id;
     if (win.label !== undefined) vars.label = effort.q(win.label);
@@ -404,13 +426,17 @@ function digestRunId(forDate, weekly) {
   const digest = require('./digest');
   return weekly ? `DIGEST-${digest.isoWeekLabel(forDate).replace('-', '')}` : `DIGEST-${forDate.replace(/-/g, '')}`;
 }
-const DIGEST_USAGE = 'usage: plt digest collect --for <date> [--weekly] [--out f] | plt digest standup --for <date> | plt digest launch --for <date> [--weekly] [--owner who]\n' +
-  '  run ids: DIGEST-<yyyymmdd> (daily) / DIGEST-<yyyy>W<ww> (weekly, ISO week); the window is UTC midnight to midnight.';
+const DIGEST_USAGE = 'plt digest launch --for <date> [--weekly] [--owner who]'
+  + ' | plt digest collect --for <date> [--weekly] [--out f]'
+  + ' | plt digest standup --for <date>';
+// Not a usage line, so it is not part of the declaration: the run-id shape a caller needs when the
+// arguments are wrong. `plt help` reads it from here rather than keeping its own wording.
+const DIGEST_NOTE = 'run ids: DIGEST-<yyyymmdd> (daily) / DIGEST-<yyyy>W<ww> (weekly, ISO week); the window is UTC midnight to midnight.';
 exports.digest = async (args) => {
   const o = opts(args); const p = processDir();
   const digest = require('./digest');
   const sub = o._[0];
-  if (!o.for) { process.stderr.write(DIGEST_USAGE + '\n'); return 2; }
+  if (!o.for) { process.stderr.write(`usage: ${DIGEST_USAGE}\n  ${DIGEST_NOTE}\n`); return 2; }
   const forDate = String(o.for);
   if (sub === 'launch') {
     const runId = digestRunId(forDate, !!o.weekly);
@@ -490,21 +516,23 @@ exports.watch = async (args) => {
 //
 // Each handler takes the argv tokens after the verb and returns the exit code. They are the
 // same async functions exported above, so nothing about a verb's behaviour changes.
+Object.assign(exports, { RUN_USAGE, STEP_USAGE, RECEIPT_USAGE, GATE_USAGE, MENU_USAGE, EFFORT_USAGE, DIGEST_USAGE, DIGEST_NOTE });
+
 exports.commands = [
-  { name: 'run', usage: 'plt run launch|recompile|discard|close|poll <id> [...]', handler: (argv) => exports.run(argv) },
-  { name: 'step', usage: 'plt step start|finish <id> --run <run> [--take-over]', handler: (argv) => exports.step(argv) },
-  { name: 'receipt', usage: 'plt receipt --kind <k> --name <n> [--run <run>] [--step <id>] [...]', handler: (argv) => exports.receipt(argv) },
-  { name: 'gate', usage: 'plt gate check|approve <run> <step> [--take-over]', handler: (argv) => exports.gate(argv) },
+  { name: 'run', usage: RUN_USAGE, handler: (argv) => exports.run(argv) },
+  { name: 'step', usage: STEP_USAGE, handler: (argv) => exports.step(argv) },
+  { name: 'receipt', usage: RECEIPT_USAGE, handler: (argv) => exports.receipt(argv) },
+  { name: 'gate', usage: GATE_USAGE, handler: (argv) => exports.gate(argv) },
   { name: 'handoff', usage: 'plt handoff <run> --goal ... --next ...', handler: (argv) => exports.handoff(argv) },
   { name: 'prime', usage: 'plt prime [--run <run>] [--no-menu|--next|--menu-only]', handler: (argv) => exports.prime(argv) },
-  { name: 'menu', usage: 'plt menu parse --text "<prompt>" | plt menu words|json [--run <run>]', handler: (argv) => exports.menu(argv) },
+  { name: 'menu', usage: MENU_USAGE, handler: (argv) => exports.menu(argv) },
   { name: 'banners', usage: 'plt banners [--run <run>]', handler: (argv) => exports.banners(argv) },
   { name: 'pin', usage: 'plt pin [--repo <dir>]', handler: (argv) => exports.pin(argv) },
-  { name: 'effort', usage: 'plt effort plan|launch <slug> [--parallel] [--dry-run] [--only ID,ID] [--owner who] [--json]', handler: (argv) => exports.effort(argv) },
+  { name: 'effort', usage: EFFORT_USAGE, handler: (argv) => exports.effort(argv) },
   { name: 'config', usage: 'plt config [key.path] [--run <run>]', handler: (argv) => exports.config(argv) },
   { name: 'facts', usage: 'plt facts [--run <id>] [--json]', handler: (argv) => exports.facts(argv) },
   { name: 'watch', usage: 'plt watch [--once]', handler: (argv) => exports.watch(argv) },
   { name: 'sync', usage: 'plt sync [--since <iso>] [--json]', handler: (argv) => exports.sync(argv) },
   { name: 'mine', usage: 'plt mine [--effort <slug>] [--since <iso>] [--out <file>] [--json]', handler: (argv) => exports.mine(argv) },
-  { name: 'digest', usage: 'plt digest launch|collect|standup --for <date> [--weekly] [...]', handler: (argv) => exports.digest(argv) },
+  { name: 'digest', usage: DIGEST_USAGE, handler: (argv) => exports.digest(argv) },
 ];

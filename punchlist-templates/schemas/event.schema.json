@@ -2,16 +2,42 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://punchlist.example/schemas/event.schema.json",
   "title": "plt ledger event",
-  "description": "One line of a run's events.jsonl. The ledger is append-only and a newer writer may add keys, so unknown properties pass; what is named here is what every reader depends on.",
+  "description": "One line of a ledger. A RUN ledger (process/runs/<run>/events.jsonl) carries `run`; an EFFORT ledger (process/efforts/<slug>/events.jsonl) carries `effort`. Exactly one, never both — that is what tells a reader which ledger a line came from. The ledger is append-only and a newer writer may add keys, so unknown properties pass; what is named here is what every reader depends on.",
   "type": "object",
-  "required": ["id", "ts", "run", "kind"],
+  "required": ["id", "ts", "kind"],
   "additionalProperties": true,
+  "oneOf": [
+    {
+      "title": "a run ledger line",
+      "required": ["run"],
+      "not": { "anyOf": [{ "required": ["effort"] }, { "required": ["who"] }, { "required": ["gate_epoch"] }] }
+    },
+    {
+      "title": "an effort ledger line",
+      "comment": "`who` and `gate_epoch` are REQUIRED here, not merely allowed. A decision with no authority cannot answer the only question the log exists to answer, and one with no epoch escapes the gate that reviews it.",
+      "required": ["effort", "who", "gate_epoch"],
+      "not": { "required": ["run"] },
+      "properties": {
+        "kind": { "enum": ["ask", "decision", "escalation", "blocked", "wave", "epoch", "pane"] }
+      }
+    }
+  ],
   "properties": {
     "id": { "type": "string", "pattern": "^e\\d{6}$" },
     "ts": { "type": "string", "format": "date-time" },
     "run": { "type": "string" },
+    "effort": { "type": "string" },
+    "who": {
+      "description": "WHICH authority produced this line, distinct from `actor` (the role that wrote it). `fan` = the wave computation decided; `brain` = the orchestrator decided on its own; `gate` = a human decided, or was asked to. Effort ledgers only.",
+      "enum": ["fan", "brain", "gate"]
+    },
+    "gate_epoch": {
+      "description": "The human-gate epoch this line was written in. The brain's authority resets when a gate closes and the epoch increments, so 'what did it decide alone since I last looked' is a filter rather than a judgement.",
+      "type": "integer",
+      "minimum": 0
+    },
     "kind": {
-      "enum": ["skill", "agent", "tool", "gate", "jira", "artifact", "gh", "extrapolation", "time", "suggestion", "reprompt", "file", "touches", "review-activity", "decision", "question", "answer"]
+      "enum": ["skill", "agent", "tool", "gate", "jira", "artifact", "gh", "extrapolation", "time", "suggestion", "reprompt", "file", "touches", "review-activity", "decision", "question", "answer", "ask", "escalation", "blocked", "wave", "epoch", "pane"]
     },
     "verdict": {
       "description": "A reviewer's call on one receipt. Held to two words because gateCheck and bannerFails both key off `fail`.",

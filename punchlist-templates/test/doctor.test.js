@@ -66,7 +66,7 @@ function tmpProject(opts = {}) {
   fs.chmodSync(deny, 0o600);
   const tracker = path.join(dir, 'tracker.py');
   fs.writeFileSync(tracker, '#\n');
-  fs.writeFileSync(path.join(p, 'config', 'zz-doctor.yaml'), `denylist_file: ${deny}\njira: { kind: none, script: ${tracker} }\n`);
+  fs.writeFileSync(path.join(p, 'config', 'zz-doctor.yaml'), `denylist_file: ${deny}\njira: { kind: none, script: ${tracker} }\ndeps: [gitnexus]\n`);
   if (opts.dropPanelMode) {
     const f = path.join(p, 'config', 'defaults.yaml');
     fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^\s*panel_mode: hard\n/m, ''));
@@ -98,16 +98,52 @@ function opts(over = {}) {
 }
 const byId = (r, id) => r.checks.find((c) => c.id === id);
 
+// Every check runDoctor is expected to report, in order. runDoctor is `CHECKS.map(...)` with a
+// per-check catch, so asserting `checks.length === CHECKS.length` asserts nothing at all; the
+// roster below is what catches a registration dropped, duplicated or renamed by accident.
+const CHECK_IDS = [
+  'plt-resolvable', 'process-dir', 'config-layering', 'formulas-validate', 'schemas',
+  'state-fields-declared', 'hooks-installed', 'timers-running', 'denylist-file', 'gh',
+  'deps', 'tracker', 'runs-consistent',
+];
+
+// README.md documents the roster in prose, and prose does not run. It said 'twelve checks' and
+// listed twelve while doctor carried thirteen — drift created by the commit that added the
+// thirteenth, caught by a person reading it. On a card about a guard that looked present and
+// reported nothing, a documented roster nothing verifies is the same shape, so it is verified here.
+const NUMBER_WORDS = { 10: 'ten', 11: 'eleven', 12: 'twelve', 13: 'thirteen', 14: 'fourteen', 15: 'fifteen', 16: 'sixteen' };
+
+test('README lists exactly the checks doctor registers, and counts them correctly', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const m = /It runs ([a-z]+) checks:([\s\S]*?)\. Each check/.exec(readme);
+  assert.ok(m, 'README must carry an "It runs <n> checks: …" roster for plt doctor');
+  const listed = [...m[2].matchAll(/`([a-z][a-z-]*)`/g)].map((x) => x[1]);
+  assert.deepStrictEqual(listed, CHECK_IDS, 'README roster and doctor registration disagree');
+  const word = NUMBER_WORDS[CHECK_IDS.length];
+  assert.ok(word, `add ${CHECK_IDS.length} to NUMBER_WORDS in this test`);
+  assert.strictEqual(m[1], word, `README says "${m[1]} checks" for ${CHECK_IDS.length}`);
+});
 // ---- (a) complete fixture --------------------------------------------------
 
-test('doctor: a complete project passes all eleven checks', () => {
+test('doctor: a complete project passes every registered check', () => {
   const doctor = doctorWith();
   const { dir } = tmpProject();
   const r = doctor.runDoctor(dir, opts());
   const bad = r.checks.filter((c) => c.state !== 'pass').map((c) => `${c.id}: ${c.state} — ${c.detail}`);
   assert.deepStrictEqual(bad, []);
-  assert.strictEqual(r.checks.length, 11);
+  assert.deepStrictEqual(r.checks.map((c) => c.id), CHECK_IDS);
   assert.strictEqual(r.ok, true);
+});
+
+test('deps: a declared tool that does not resolve fails, and the fix is the installer', () => {
+  const doctor = doctorWith();
+  const { dir } = tmpProject();
+  const miss = { code: 1, stdout: '', stderr: '', timedOut: false };
+  const r = doctor.runDoctor(dir, opts({ exec: fakeExec({ 'sh -c command -v gitnexus': miss }) }));
+  const c = byId(r, 'deps');
+  assert.strictEqual(c.state, 'fail');
+  assert.strictEqual(c.detail, 'missing: gitnexus');
+  assert.strictEqual(c.fix, `plt deps install --project ${dir}`);
 });
 
 // ---- (b) formulas-validate -------------------------------------------------
@@ -154,6 +190,43 @@ test('timers-running: installed and loaded but runs = 0 is a fail, not a pass', 
   assert.strictEqual(c.state, 'fail');
   assert.match(c.detail, /installed but never run/);
   assert.match(doctor.formatDoctor(r), /plt integration install timers/);
+});
+
+// A timer that ran once and then stopped still has runs > 0 and last exit 0. Only the time of
+// its last run gives it away. The fixture config sets no timers.watch.every, so the interval is 10m.
+const NOW = Date.parse('2026-09-30T12:00:00Z');
+function timerAt(lastRun) {
+  return opts({ now: () => NOW, deps: Object.assign({}, opts().deps, { timerStatus: () => Object.assign({}, OK_TIMER, { lastRun }) }) });
+}
+
+test('timers-running: a last run older than three intervals is a fail, naming how long ago', () => {
+  const doctor = doctorWith();
+  const { dir } = tmpProject();
+  const c = byId(doctor.runDoctor(dir, timerAt('2026-09-30T10:00:00Z')), 'timers-running');
+  assert.strictEqual(c.state, 'fail');
+  assert.match(c.detail, /last ran 2h ago, expected every 10m/);
+  assert.match(c.fix, /plt integration install timers/);
+});
+
+test('timers-running: one missed tick is not a fault', () => {
+  const doctor = doctorWith();
+  const { dir } = tmpProject();
+  const c = byId(doctor.runDoctor(dir, timerAt('2026-09-30T11:45:00Z')), 'timers-running');
+  assert.strictEqual(c.state, 'pass');
+  assert.match(c.detail, /last ran 15m ago/);
+});
+
+test('timers-running: the systemd time form is read, and an unreadable time never fails', () => {
+  const doctor = doctorWith();
+  const { dir } = tmpProject();
+  // Built from local fields, because the systemd form carries a zone abbreviation that is read as local time.
+  const d = new Date(NOW - 5 * 3600 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  const sd = `Wed ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} CDT`;
+  assert.strictEqual(byId(doctor.runDoctor(dir, timerAt(sd)), 'timers-running').state, 'fail');
+  const c = byId(doctor.runDoctor(dir, timerAt('whenever')), 'timers-running');
+  assert.strictEqual(c.state, 'pass');
+  assert.match(c.detail, /last run time unknown/);
 });
 
 // ---- (d) denylist ----------------------------------------------------------
@@ -272,7 +345,7 @@ test('cli doctor --json prints the result object', () => {
   let out = '';
   doctor.cli(['doctor', '--project', dir, '--json'], Object.assign(opts(), { io: { write: (t) => { out += t; } } }));
   const parsed = JSON.parse(out);
-  assert.strictEqual(parsed.checks.length, 11);
+  assert.deepStrictEqual(parsed.checks.map((c) => c.id), CHECK_IDS);
   assert.strictEqual(parsed.ok, true);
 });
 
@@ -336,7 +409,7 @@ test('process-dir: a project with no process/ fails with a mkdir -p fix naming t
   assert.strictEqual(c.state, 'fail');
   assert.ok(c.fix.startsWith('mkdir -p ' + path.join(dir, 'process') + '/config'), c.fix);
   // Every downstream check still reports rather than exploding.
-  assert.strictEqual(r.checks.length, 11);
+  assert.deepStrictEqual(r.checks.map((c) => c.id), CHECK_IDS);
 });
 
 test('config-layering: a config file that does not parse names the file', () => {

@@ -162,7 +162,7 @@ test('cli: plt validate <file> --project runs the config check', () => {
   assert.match(res.stdout, /gate\.signal `seedling-sprouted` is not in config\.gates\.human_signals/);
 });
 
-// D-029: a key the validator checked and no runtime path read is now an error, not a green
+// A key the validator checked and no runtime path read is now an error, not a green
 // `plt validate` with no behaviour behind it.
 const DEAD_KEYS = [
   ['gate.quorum', ['    gate:', '      kind: human', '      signal: artifact-approved', '      quorum: all']],
@@ -174,17 +174,17 @@ const DEAD_KEYS = [
   ['jira.sprint', ['    jira:', '      sprint: active']],
 ];
 for (const [key, lines] of DEAD_KEYS) {
-  test(`validateFile: \`${key}\` is read by nothing, so it is an error (D-029)`, () => {
+  test(`validateFile: \`${key}\` is read by nothing, so it is an error`, () => {
     const { root, processDir, home } = scratchProject();
     const file = workflow(root, `greenhouse-dead-${key.replace(/\./g, '-').replace(/_/g, '-')}`, lines);
     const res = validate.validateFile(file, { processDir, templates: new Set(), home });
     assert.strictEqual(res.ok, false);
-    const want = `step \`plant\`: key \`${key}\` is not read by anything — see plan 4 D-029`;
+    const want = `step \`plant\`: key \`${key}\` is not read by anything, so it has no effect — remove it`;
     assert.deepStrictEqual(res.errors.map((e) => e.msg), [want]);
   });
 }
 
-test('validateFile: `on_fail` still validates (kept by D-029, not yet executed)', () => {
+test('validateFile: `on_fail` still validates (kept on purpose, not yet executed)', () => {
   const { root, processDir, home } = scratchProject();
   const file = workflow(root, 'greenhouse-on-fail', [
     '    on_fail: { retry: 2, then: water }', '  - id: water', '    assignee: agent',

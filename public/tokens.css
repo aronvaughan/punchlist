@@ -2321,7 +2321,7 @@ wa-button[variant="brand"]::part(base) {
 }
 .doc-gate-btn:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
-/* ---- AI template editor dialog (Task 7): chat + live draft + save ---- */
+/* ---- AI template editor dialog: chat + live draft + save ---- */
 .tpl-editor-header {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; margin-bottom: 10px;

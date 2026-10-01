@@ -92,6 +92,19 @@
 #
 # Auth: Bearer $PUNCHLIST_TOKEN. Base URL: $PUNCHLIST_URL (default 127.0.0.1:8600).
 # NEVER print the token.
+#
+#   pl.sh --as <actor> <command>...    act as another actor on THIS machine
+#   pl.sh --as admin   <command>...    ... as whoever PUNCHLIST_ADMIN names
+#
+# Why --as exists: the per-agent shim pins PUNCHLIST_ENV_FILE to the agent's own
+# secrets file, so a human running `pl` on their own machine authenticates as the
+# AGENT and every admin door (answer, approve, complete) returns 403. Documenting
+# "export PUNCHLIST_TOKEN first" was a workaround in place of a fix.
+#
+# It grants nothing new: --as reads the server's own data/.env, and anyone who can
+# read that file already holds every token in it. It removes the token from the
+# human's hands and shell history, nothing more. It is local-only by construction —
+# a machine that is not running the server has no such file to read.
 set -u
 
 BASE="${PUNCHLIST_URL:-http://127.0.0.1:8600}"
@@ -109,6 +122,33 @@ read_env_token() { # read_env_token FILE -> token on stdout (trimmed, unquoted)
   sed -n 's/^PUNCHLIST_TOKEN=//p' "$1" | head -n1 \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//'
 }
+# --as <actor>: resolve that actor's token from the server's own data/.env, which
+# holds PUNCHLIST_TOKENS=name:tok,... and PUNCHLIST_ADMIN=<name>. Consumed here, so it
+# never reaches the command parser. It WINS over every other source, including an
+# exported PUNCHLIST_TOKEN: asking to act as someone and silently acting as someone
+# else is the one outcome worth refusing.
+AS_ACTOR=""
+if [ "${1:-}" = "--as" ]; then
+  [ $# -ge 2 ] || { echo "pl: --as needs an actor name" >&2; exit 2; }
+  AS_ACTOR="$2"; shift 2
+fi
+if [ -n "$AS_ACTOR" ]; then
+  SRV_ENV=""
+  for d in "${PUNCHLIST_DATA:-}" "${XDG_DATA_HOME:-$HOME/.local/share}/punchlist" "$HOME/.local/share/punchlist"; do
+    [ -n "$d" ] && [ -r "$d/.env" ] && { SRV_ENV="$d/.env"; break; }
+  done
+  [ -n "$SRV_ENV" ] || { echo "pl: --as needs the server's data/.env (set PUNCHLIST_DATA); is the server on this machine?" >&2; exit 1; }
+  if [ "$AS_ACTOR" = "admin" ]; then
+    AS_ACTOR=$(sed -n 's/^PUNCHLIST_ADMIN=//p' "$SRV_ENV" | head -n1 | tr -d ' "'"'"'')
+    [ -n "$AS_ACTOR" ] || { echo "pl: --as admin — no PUNCHLIST_ADMIN in $SRV_ENV" >&2; exit 1; }
+  fi
+  PUNCHLIST_TOKEN=$(sed -n 's/^PUNCHLIST_TOKENS=//p' "$SRV_ENV" | head -n1 | tr ',' '\n' \
+    | sed -n "s/^[[:space:]]*$AS_ACTOR://p" | head -n1 | tr -d ' "'"'"'')
+  if [ -z "$PUNCHLIST_TOKEN" ]; then
+    echo "pl: --as $AS_ACTOR — no such actor in $SRV_ENV (known: $(sed -n 's/^PUNCHLIST_TOKENS=//p' "$SRV_ENV" | head -n1 | tr ',' '\n' | cut -d: -f1 | tr '\n' ' '))" >&2
+    exit 1
+  fi
+fi
 if [ -z "${PUNCHLIST_TOKEN:-}" ] && [ -n "${PUNCHLIST_ENV_FILE:-}" ] && [ -r "$PUNCHLIST_ENV_FILE" ]; then
   PUNCHLIST_TOKEN=$(read_env_token "$PUNCHLIST_ENV_FILE")
 fi

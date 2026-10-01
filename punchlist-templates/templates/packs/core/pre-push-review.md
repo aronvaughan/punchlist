@@ -7,8 +7,10 @@ inputs:
     exemplar: "punchlist — 9 unpushed commits + 1 uncommitted change on top of origin/master"
   - name: base
     exemplar: "origin/master — the ref this push will update"
+  - name: scope
+    exemplar: "punchlist at ~/code/punchlist · origin (private), public (PUBLIC) · pushes in scope: origin/master (private); nothing to public"
 output: markdown
-tags: [git, review, prepush, release]
+tags: [git, review, prepush, release, lands]
 ---
 ## Purpose
 
@@ -21,12 +23,31 @@ the summary and worked example are hand-written judgement.
 
 ## Output shape
 
-The published page (favicon 🔍) contains, in order:
+The published page (favicon 🔍) contains the sections below, in order. Its `## Scope`
+section renders this slot:
+
+<!-- slot:scope required source=git -->
+Which repo this is, where it lands, and which pushes approving it authorizes. Every line
+comes from a command, never from memory:
+- **Repo:** the repository name and its local path.
+- **Remotes:** every `git remote -v` entry, as name · URL · visibility. Read visibility from
+  the host, for example with `gh repo view <owner/name> --json visibility`. When the host
+  gives no answer, write `unknown`. Never guess.
+- **Lands on:** the remote branch the push updates, and any tag or release it cuts.
+- **Pushes in scope:** the exact pushes this approval authorizes, for example
+  `origin/master (private)` or `public/master + tag v1.1.0 (PUBLIC)`.
+  Then list the pushes it does not authorize, by remote and branch. A push to a public
+  remote is written `PUBLIC` in capitals and shown in a warning colour, so a reader
+  cannot miss it.
+<!-- /slot -->
 
 ```markdown
 # <Repo> Pre-push Review   (title of the page)
 
 Metrics: <N> commits (+ uncommitted), <F> files, +<ins> / −<del>.
+
+## Scope
+Repo · remotes with visibility · lands on · pushes in scope (PUBLIC ones loud) and not.
 
 ## What's in this push
 - A hand-written bulleted summary: the themes, grouped — not a restatement
@@ -44,6 +65,7 @@ Finish report (what lands in the punchlist review lane):
 
 ```markdown
 - Review: <artifact link>
+- Pushes in scope: <remote/branch (+ tag)> (<visibility>); not in scope: <the rest>
 - Push would send: <N> commits + <wt>, <F> files, +<ins>/−<del> vs <base>
 - Leak scan: CLEAN ✓ (or: resolved — <note>)
 - Notable: <one line on the headline change>
@@ -54,6 +76,16 @@ Finish report (what lands in the punchlist review lane):
 # Punchlist Pre-push Review
 
 Metrics: 9 commits + 1 uncommitted, 21 files, +656 / −83 vs `origin/master`.
+
+## Scope
+
+- **Repo:** `punchlist` at `~/code/punchlist`.
+- **Remotes:** `origin` · `git@github.com:example/punchlist-internal.git` · private.
+  `public` · `git@github.com:example/punchlist.git` · **PUBLIC**. Both read from
+  `gh repo view --json visibility`.
+- **Lands on:** `origin/master`. No tag, no release.
+- **Pushes in scope:** `origin/master` (private). Not in scope: anything to `public`
+  (**PUBLIC**), tags, force-pushes. The public push is a separate review with its own scan.
 
 ## What's in this push
 

@@ -15,6 +15,7 @@ const { spawnSync } = require('child_process');
 const spine = require('./spine');
 const timersMod = require('./timers');
 const integrationMod = require('./integration');
+const depsMod = require('./deps');
 
 const REPO = path.resolve(__dirname, '..');
 const PKG_VERSION = require('../package.json').version;
@@ -62,10 +63,99 @@ function resolveConfigPath(raw, ctx) { return path.resolve(ctx.projectDir, expan
 function firstLine(s) { return String(s || '').split('\n').map((l) => l.trim()).filter(Boolean)[0] || ''; }
 function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
 
+// ---- timer freshness -------------------------------------------------------
+
+const STALE_FACTOR = 3;
+// launchd gives an ISO time (the log's mtime); systemd gives `Wed 2026-09-30 11:30:01 CDT`, which
+// Date.parse rejects for the zone abbreviation. The unit and the doctor run on one machine, so the
+// systemd form is read as local time. Anything else is unknown, and unknown never fails the check.
+function parseRunTime(v) {
+  if (!v) return null;
+  const direct = Date.parse(v);
+  if (!Number.isNaN(direct)) return direct;
+  const m = String(v).match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
+  if (!m) return null;
+  const local = Date.parse(`${m[1]}T${m[2]}`);
+  return Number.isNaN(local) ? null : local;
+}
+function human(sec) {
+  if (sec < 120) return `${sec}s`;
+  if (sec < 7200) return `${Math.round(sec / 60)}m`;
+  if (sec < 172800) return `${Math.round(sec / 3600)}h`;
+  return `${Math.round(sec / 86400)}d`;
+}
+
+// ---- state field / schema drift -------------------------------------------
+//
+// `landed_out_of_band` shipped in spine.closeRun and the state schema did not name it, so the state
+// a live run wrote would not validate against its own schema (fixed in 8c2a092, spotted by eye an
+// hour later). Nothing in the cycle caught it. The `schemas` check WOULD have caught it — but only
+// once some run on some machine had actually closed with `--landed`, which is a rare path. This
+// check needs no run: it reads lib/*.js and asks whether every field assigned onto a run state
+// object is a field the schema names. It fires the moment the writer is added.
+//
+// It is a text scan, not a parse, and the list below is measured, not assumed — test/state-schema-
+// drift.test.js holds one case per line of it, so the day the scanner grows, the test that pins the
+// hole fails and this comment has to be rewritten. That is deliberate: this check exists because a
+// guard looked present and reported nothing, and a guard that misdescribes its own holes is the
+// same failure one level up.
+//
+//   COVERED — `<v>.<field> <op>= …`, where `<op>=` is `=` or any compound assignment (`+=`, `??=`,
+//   `||=`, `&&=`, `-=`, `*=`, `/=`, `%=`, `**=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `>>>=`), and `<v>`
+//   is `st`, `state`, or any identifier the same file assigns from `readState(` — declared
+//   (`const st2 = spine.readState(…)`) or bare (`cur = readState(…)`). That is the form the defect
+//   took and the form every rare-path write takes.
+//
+//   NOT COVERED — six forms, each pinned by a test:
+//     1. the object literal launchRun hands to writeState: its keys are never assigned, and some
+//        are shorthand (`cycle,`), so there is no `<v>.<field> =` to match.
+//     2. computed writes — `st[key] = v`.
+//     3. `Object.assign(st, {…})`.
+//     4. spreads — `{ ...st, field: v }`.
+//     5. state reached under any other name: a parameter (`function landRun(run) { run.x = … }`),
+//        a loop variable (`for (const s of states) s.x = …`), a destructuring target.
+//     6. anything outside lib/*.js, and nested keys under `steps.*` (the schema leaves those open).
+//   Of these, (1) is the mild one: every run exercises launchRun, so a stray key there is rejected
+//   by the `schemas` check on the first run any project launches. (5) is the sharp one — rename the
+//   variable and this check goes quiet, with no signal that it did.
+//
+//   FALSE POSITIVES — a field named in a comment or a string in the `<v>.<field> =` shape is counted
+//   as a write, and can even be the FIRST location the failure prints. Loud and wrong in the safe
+//   direction; a silent miss is not, which is why there is no comment/string stripper here. A
+//   hand-rolled one was tried and swallowed real code (it lost `st.exit` at spine.js:715).
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`); }
+const STATE_VARS = ['st', 'state'];
+// `=` but not `==`/`===`, plus every compound assignment. `!==`, `>=` and `<=` do not match: their
+// leading character is not one of these operators, and a bare `=` cannot follow `!`, `>` or `<`.
+const ASSIGN = String.raw`\s*(?:\|\||&&|\?\?|\*\*|>>>|>>|<<|[-+*/%&|^])?=(?!=)`;
+
+// scanStateFieldWrites({libDir, schemaFile}) -> {declared, writes, undeclared, files}
+// `writes` is [{field, where:[ 'file:line', … ]}] sorted by field; `undeclared` is the subset the
+// schema does not name. Roots are injectable so a test can point it at a fixture and watch it fire.
+function scanStateFieldWrites({ libDir = path.join(REPO, 'lib'), schemaFile = path.join(REPO, 'schemas', 'state.schema.json') } = {}) {
+  const schema = JSON.parse(fs.readFileSync(schemaFile, 'utf8'));
+  const declared = Object.keys(schema.properties || {}).sort();
+  const files = fs.readdirSync(libDir).filter((f) => f.endsWith('.js')).sort();
+  const found = new Map();
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(libDir, f), 'utf8');
+    const lineAt = (i) => src.slice(0, i).split('\n').length;
+    const vars = new Set(STATE_VARS);
+    for (const m of src.matchAll(/(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\.)?readState\s*\(/g)) vars.add(m[1]);
+    const re = new RegExp(`\\b(?:${[...vars].map(escapeRe).join('|')})\\.([A-Za-z_$][\\w$]*)${ASSIGN}`, 'g');
+    for (const m of src.matchAll(re)) {
+      if (!found.has(m[1])) found.set(m[1], []);
+      found.get(m[1]).push(`${f}:${lineAt(m.index)}`);
+    }
+  }
+  const writes = [...found.keys()].sort().map((field) => ({ field, where: found.get(field) }));
+  return { declared, writes, undeclared: writes.filter((w) => !declared.includes(w.field)), files };
+}
+
 // ---- the checks ------------------------------------------------------------
 //
 // Each is `(ctx) => {state, detail, fix}`; `runDoctor` adds the id and title and catches throws.
-// ctx = {projectDir, processDir, config, configError, platform, home, exec, env, deps}.
+// ctx = {projectDir, processDir, config, configError, platform, home, exec, env, now, deps}.
 
 const CHECKS = [
   {
@@ -171,6 +261,29 @@ const CHECKS = [
     },
   },
   {
+    id: 'state-fields-declared',
+    title: 'every field assigned onto a run state in lib/ is named in the state schema',
+    // Proves a field/schema pair, not a run. It reads source, so it fires the moment a writer is
+    // added — before any run has taken the path that writes the field. See scanStateFieldWrites
+    // for what the scan does and does not see; in particular the launchRun object literal is not
+    // scanned, and nothing outside lib/*.js is.
+    run(ctx) {
+      let scan;
+      try { scan = scanStateFieldWrites(); }
+      catch (e) { return skip(`could not scan lib/ against the state schema: ${e.message}`); }
+      if (!scan.writes.length) return skip(`no state field assignments found under ${path.join(REPO, 'lib')}`);
+      if (scan.undeclared.length) {
+        const first = scan.undeclared[0];
+        const more = scan.undeclared.length > 1 ? ` (+${scan.undeclared.length - 1} more: ${scan.undeclared.slice(1).map((u) => u.field).join(', ')})` : '';
+        return fail(
+          `${plural(scan.undeclared.length, 'field', 'fields')} written into run state but not named in schemas/state.schema.json — \`${first.field}\` at ${first.where.join(', ')}${more}`,
+          `$EDITOR ${path.join(REPO, 'schemas', 'state.schema.json')}   # add properties.${first.field}`,
+        );
+      }
+      return pass(`${plural(scan.writes.length, 'field', 'fields')} assigned across ${plural(scan.files.length, 'lib file', 'lib files')}, all declared`);
+    },
+  },
+  {
     id: 'hooks-installed',
     title: 'the Claude hooks, agent and settings are installed at the shipped version',
     run(ctx) {
@@ -190,14 +303,24 @@ const CHECKS = [
   },
   {
     id: 'timers-running',
-    title: 'the watch timer is loaded AND has actually run',
+    title: 'the watch timer is loaded, has run, and ran within the last three intervals',
     run(ctx) {
       const st = ctx.deps.timerStatus(ctx.projectDir, ctx.config, { platform: ctx.platform, home: ctx.home });
       const fixCmd = `plt integration install timers --project ${ctx.projectDir} --load`;
       // `loaded` is not `running`. The reason this whole command exists: a timer reported "(loaded)"
       // for six days while runs = 0, so the detail always names the run count it read.
       if (!st.ok) return fail(`${st.reason || 'not ok'} (installed: ${!!st.installed}, loaded: ${!!st.loaded}, runs: ${st.runs === null || st.runs === undefined ? 'unknown' : st.runs}, last exit: ${st.lastExit === null || st.lastExit === undefined ? 'unknown' : st.lastExit})`, fixCmd);
-      return pass(`loaded, ${plural(st.runs, 'run', 'runs')}, last exit ${st.lastExit}`);
+      const summary = `loaded, ${plural(st.runs, 'run', 'runs')}, last exit ${st.lastExit}`;
+      // `has run` is not `is running` either. A `watch --once` that hangs keeps launchd from starting
+      // another, so the run count freezes and the last exit stays the old 0; a systemd timer reports
+      // at most one run. Only the time of the last run tells a live timer from one that stopped.
+      // Stale is more than STALE_FACTOR intervals: one missed tick (a sleeping laptop) is not a fault.
+      const every = timersMod.everySeconds((ctx.config.timers && ctx.config.timers.watch && ctx.config.timers.watch.every) || '10m');
+      const at = parseRunTime(st.lastRun);
+      if (at === null) return pass(`${summary}, last run time unknown`);
+      const ago = Math.round((ctx.now() - at) / 1000);
+      if (ago > every * STALE_FACTOR) return fail(`last ran ${human(ago)} ago, expected every ${human(every)} (${summary})`, fixCmd);
+      return pass(`${summary}, last ran ${human(Math.max(ago, 0))} ago`);
     },
   },
   {
@@ -232,6 +355,13 @@ const CHECKS = [
     },
   },
   {
+    id: 'deps',
+    title: 'every tool named in config.deps resolves on PATH',
+    // The check and the installer share one manifest (lib/deps.js), so a fail's fix is the command
+    // that installs exactly what is missing — however the tool arrives, presence is what passes.
+    run(ctx) { return depsMod.doctorCheck(ctx); },
+  },
+  {
     id: 'tracker',
     title: 'the tracker script named in config exists',
     run(ctx) {
@@ -264,7 +394,7 @@ const CHECKS = [
 
 // ---- runDoctor -------------------------------------------------------------
 
-function runDoctor(projectDir, { platform = process.platform, home = require('os').homedir(), exec = defaultExec, env = process.env, deps = {} } = {}) {
+function runDoctor(projectDir, { platform = process.platform, home = require('os').homedir(), exec = defaultExec, env = process.env, deps = {}, now = Date.now } = {}) {
   projectDir = path.resolve(projectDir);
   const processDir = fs.existsSync(path.join(projectDir, 'process', 'config'))
     ? path.join(projectDir, 'process')
@@ -283,6 +413,7 @@ function runDoctor(projectDir, { platform = process.platform, home = require('os
     home,
     exec,
     env,
+    now,
     deps: {
       statusClaude: deps.statusClaude || ((dir) => integrationMod.statusClaude(dir)),
       timerStatus: deps.timerStatus || ((dir, cfg, o) => timersMod.timerStatus(dir, cfg, o)),
@@ -348,4 +479,4 @@ function cli(args, opts = {}) {
 
 const commands = [{ name: 'doctor', usage: USAGE, handler: doctorHandler }];
 
-module.exports = { CHECKS, runDoctor, formatDoctor, doctorHandler, cli, commands, USAGE, defaultExec };
+module.exports = { CHECKS, scanStateFieldWrites, runDoctor, formatDoctor, doctorHandler, resolveProjectDir, cli, commands, USAGE, defaultExec };

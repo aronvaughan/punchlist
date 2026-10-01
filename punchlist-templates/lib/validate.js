@@ -74,6 +74,13 @@ function validateWorkflow(parsed, file, templates, opts = {}) {
 
   const expectedName = path.basename(file, '.md');
   if (!fm.name) errors.push({ line: 1, msg: 'missing `name` in frontmatter' });
+  // `kind` was never read here, so `effort`, `efort` and `banana` were equally accepted — the new
+  // kind would have been tolerated rather than declared, which is indistinguishable from a typo
+  // until something downstream behaves oddly. `workflow` runs once per CARD; `effort` runs once per
+  // effort, above the cards.
+  if (fm.kind !== undefined && !['workflow', 'effort'].includes(fm.kind)) {
+    errors.push({ line: at('kind'), msg: `\`kind\` must be workflow|effort, not \`${fm.kind}\`` });
+  }
   else if (fm.name !== expectedName) {
     errors.push({ line: at('name'), msg: `name \`${fm.name}\` does not match filename \`${expectedName}.md\`` });
   }
@@ -216,11 +223,28 @@ function validateWorkflow(parsed, file, templates, opts = {}) {
     // ---- process-spine keys (all optional; validated when present) ----
     const cfg = opts.config || {};
     const listOfNames = (v) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && x.trim());
-    // Keys this validator once checked and no runtime path ever read (plan 4 D-029). A key that
+    // Keys this validator once checked and no runtime path ever read. A key that
     // validates and does nothing reads as enforcement, so each is now an error. `on_fail` is the
     // one exception: it still validates, and is not yet executed.
-    const dead = (key) => errors.push({ line, msg: `step \`${s.id}\`: key \`${key}\` is not read by anything — see plan 4 D-029` });
+    const dead = (key) => errors.push({ line, msg: `step \`${s.id}\`: key \`${key}\` is not read by anything, so it has no effect — remove it` });
     for (const k of ['model', 'reasoning']) if (s[k] !== undefined) dead(k);
+    // `lands` / `checks_drift` declare BEHAVIOUR the spine used to infer from the step's id
+    // (lib/spine.js, NAME_FALLBACK). They must be booleans: this parser makes every scalar a
+    // string, so `lands: yes` would otherwise reach stepDeclares and throw at gate time — on a
+    // live run, far from the pack that is wrong. Caught here, `plt validate` names the file.
+    // `pane` says WHERE a step's work is visible: the brain's pane, the card's own pane, or
+    // nowhere. It is not effort-only — a workflow step's default is `card` — and it is inert when
+    // no window driver is configured, which is why an unknown value must be refused here rather
+    // than discovered by a driver that silently addresses the wrong pane.
+    if (s.pane !== undefined && s.pane !== null && !['brain', 'card', 'none'].includes(s.pane)) {
+      errors.push({ line, msg: `step \`${s.id}\`: \`pane\` must be brain|card|none, not \`${s.pane}\`` });
+    }
+    for (const k of ['lands', 'checks_drift']) {
+      if (s[k] === undefined || s[k] === null) continue;
+      if (![true, false, 'true', 'false'].includes(s[k])) {
+        errors.push({ line, msg: `step \`${s.id}\`: \`${k}\` must be true or false` });
+      }
+    }
     if (s.gate && typeof s.gate === 'object') for (const k of ['quorum', 'timeout', 'max_open_severity', 'by']) if (s.gate[k] !== undefined) dead(`gate.${k}`);
     if (s.jira && typeof s.jira === 'object' && s.jira.sprint !== undefined) dead('jira.sprint');
     for (const key of ['skills', 'agents', 'tools']) {

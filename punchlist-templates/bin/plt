@@ -336,6 +336,64 @@ function findSection(bodyLines, bodyStart, heading, { toEnd = false } = {}) {
 
 const MIN_EXEMPLAR_CHARS = 200;
 
+// The slot openers declared in a template's `## Output shape` section, in file order:
+// `<!-- slot:<name> <attr> ... -->`. Only that section declares slots, so an opener quoted
+// in a golden exemplar or a purpose note does not count. Nor does one inside a code block
+// (a ``` or ~~~ fence, or a line indented four spaces): that is an example, not a declaration.
+// Returns { slots, line }, where `line` is the section heading's line (null with no section).
+function slotOpeners(bodyLines, bodyStart) {
+  const slots = [];
+  let fence = null;
+  let head = -1;
+  for (let i = 0; i < bodyLines.length; i++) {
+    const l = bodyLines[i];
+    // CommonMark: a fence closes only on a run of its own character at least as long as the
+    // opener, with nothing after it. A shorter run or one with an info string is content.
+    const f = l.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (f) {
+      if (!fence) { fence = f[1]; continue; }
+      if (f[1][0] === fence[0] && f[1].length >= fence.length && f[2].trim() === '') { fence = null; continue; }
+    }
+    if (fence) continue;
+    const h = l.match(/^##\s+(.*?)\s*$/);
+    if (h) {
+      if (head !== -1) break;
+      if (h[1].toLowerCase() === 'output shape') head = i;
+      continue;
+    }
+    if (head === -1) continue;
+    const m = l.match(/^ {0,3}<!--\s*slot:([\w-]+)(.*?)-->/);
+    if (m) slots.push({ name: m[1], attrs: m[2].trim().split(/\s+/).filter(Boolean), line: bodyStart + i });
+  }
+  return { slots, line: head === -1 ? null : bodyStart + head };
+}
+
+// A template tagged `lands` is a page whose approval lands a change or pushes it. It declares
+// the `scope` slot once, required and with a source. The slot comes directly after `meta`, or
+// first on a page with no `meta`: the reader sees where the change goes before what it is.
+function checkScopeSlot(bodyLines, bodyStart) {
+  const { slots, line } = slotOpeners(bodyLines, bodyStart);
+  const at = slots.findIndex((s) => s.name === 'scope');
+  if (at === -1) {
+    return [{
+      line: line || bodyStart,
+      msg: 'a template tagged `lands` must declare `<!-- slot:scope required source=git -->` in `## Output shape` (repo, remotes with visibility, where it lands, pushes in scope)',
+    }];
+  }
+  const scope = slots[at];
+  const errors = [];
+  const again = slots.find((s, i) => i > at && s.name === 'scope');
+  if (again) errors.push({ line: again.line, msg: `the \`scope\` slot is declared twice (first at line ${scope.line}); keep one` });
+  if (!scope.attrs.includes('required')) errors.push({ line: scope.line, msg: 'the `scope` slot must be `required` on a template tagged `lands`' });
+  if (!scope.attrs.some((a) => /^source=\S+$/.test(a))) errors.push({ line: scope.line, msg: 'the `scope` slot must name its `source=` (it is read from a command, never written from memory)' });
+  const meta = slots.findIndex((s) => s.name === 'meta');
+  const want = meta === -1 ? 0 : meta + 1;
+  if (at !== want) {
+    errors.push({ line: scope.line, msg: meta === -1 ? 'the `scope` slot must be the first slot' : 'the `scope` slot must come directly after `meta`' });
+  }
+  return errors;
+}
+
 // The workflow validator lives in lib/validate.js; bin/plt re-exports it. `opts` (the project
 // config and the skills and agents on disk) comes from `buildOpts`, and every call site passes it.
 const { validateWorkflow, findDependencyCycle, buildOpts, resolveProcessDir } = require('../lib/validate');
@@ -365,11 +423,15 @@ function validateFile(file, templates, opts) {
     errors.push({ line: 1, msg: 'missing `kind` in frontmatter' });
     return errors;
   }
-  if (fm.kind === 'workflow') {
+  // `effort` validates as a workflow: same grammar, same step keys, same gates — it differs in
+  // WHAT it runs over (an effort rather than a card), which is a scheduling fact and not a
+  // grammatical one. Routing it here rather than adding a third validator is the point: an effort
+  // formula that drifts from the workflow grammar is a bug, not a dialect.
+  if (fm.kind === 'workflow' || fm.kind === 'effort') {
     return validateWorkflow(parseWorkflow(text), file, templates || templateNames(), opts || defaultOpts());
   }
   if (fm.kind !== 'template') {
-    errors.push({ line: at('kind'), msg: `unknown kind \`${fm.kind}\` (expected: template|workflow)` });
+    errors.push({ line: at('kind'), msg: `unknown kind \`${fm.kind}\` (expected: template|workflow|effort)` });
     return errors;
   }
 
@@ -402,6 +464,10 @@ function validateFile(file, templates, opts) {
   } else if (shape.content === '') {
     errors.push({ line: shape.line, msg: '`## Output shape` section is empty' });
   }
+
+  // `tags: lands` (or `tags: "gate, lands"`) parses as a scalar, not a list; it still counts.
+  const tags = Array.isArray(fm.tags) ? fm.tags : typeof fm.tags === 'string' ? fm.tags.split(',').map((t) => t.trim()) : [];
+  if (tags.includes('lands')) errors.push(...checkScopeSlot(bodyLines, bodyStart));
 
   const golden = findSection(bodyLines, bodyStart, 'Golden exemplar', { toEnd: true });
   if (!golden) {
@@ -834,10 +900,17 @@ function cmdList(args) {
   return 0;
 }
 
+// The builtin verbs' usage lines, written once each. An argument error prints the line, and the
+// command descriptor at the bottom of this file declares the same constant — which is where
+// `plt help` reads it from. No verb spells its arguments in two places.
+const SHOW_USAGE = 'plt show <name>';
+const RENDER_USAGE = 'plt render <workflow> | plt render --workflow <name> | plt render index|run <id>|all [--out <dir>] [--published <id|index> <url>]';
+const LAUNCH_USAGE = 'plt launch <workflow> --input k=v [--input k=v ...]';
+
 function cmdShow(args) {
   const name = args[0];
   if (!name) {
-    process.stderr.write('usage: plt show <name>\n');
+    process.stderr.write(`usage: ${SHOW_USAGE}\n`);
     return 2;
   }
   for (const file of collectFiles()) {
@@ -852,7 +925,6 @@ function cmdShow(args) {
   return 1;
 }
 
-const RENDER_USAGE = 'usage: plt render <workflow> | plt render --workflow <name> | plt render index|run <id>|all [--out <dir>] [--published <id|index> <url>]\n';
 const BOARD_TARGETS = ['index', 'run', 'all'];
 
 function cmdRender(args) {
@@ -871,7 +943,7 @@ function cmdRender(args) {
     return require('../lib/spine-cli').render(args);
   }
   if (!name) {
-    process.stderr.write(RENDER_USAGE);
+    process.stderr.write(`usage: ${RENDER_USAGE}\n`);
     return 2;
   }
   const wf = loadWorkflowByName(name);
@@ -900,7 +972,7 @@ function cmdRender(args) {
 async function cmdLaunch(args) {
   const name = args[0];
   if (!name || name.startsWith('--')) {
-    process.stderr.write('usage: plt launch <workflow> --input k=v [--input k=v ...]\n');
+    process.stderr.write(`usage: ${LAUNCH_USAGE}\n`);
     return 2;
   }
   const inputs = {};
@@ -1019,108 +1091,208 @@ function cmdRuns() {
   return 0;
 }
 
-const USAGE = `plt — punchlist-templates CLI
+// ------------------------------------------------------------------------ help
+//
+// The long help is DERIVED, never restated. A command's usage line is written ONCE, in the
+// command's own descriptor: the `usage` field of the object in a module's `commands` export —
+// this file's `commands` below, plus every `lib/*.js` the registry discovers. `plt help` asks
+// the registry for those descriptors and prints what they declare, so a flag added to a command
+// reaches the help in the same edit that adds it.
+//
+// Only the prose lives here, keyed by verb (HELP_PROSE). It describes; it never spells arguments,
+// and it names a verb only as `plt <verb>`. The rules the tests hold this text to:
+//
+//   * a line that begins `plt ` is a declared usage alternative, at any indent;
+//   * a `plt <verb>` mention names a declared command, and any subverb after it is one the
+//     command declares;
+//   * a `--flag` appears somewhere in the declarations;
+//   * `a|b` alternation belongs to a usage line — prose spells it out in words.
+//
+// So the tail note about --take-over is generated from the declarations rather than listing
+// verbs by hand: the old hand-written list said `step start|unstart|finish|block|answer` while
+// the step descriptor named only start and finish, and nothing could tell.
+//
+// The drift this replaces was real: `plt fan` grew `--unblock`, lib/fan.js's usage said so, and
+// the hand-written copy in this file did not — it listed a command the CLI refuses by name.
 
-usage:
-  plt validate [path|all] [--project <dir>]
-                                             validate templates + workflows (default: all), against the project config
-  plt index                                 regenerate templates/index.json (punchlist reads it)
-  plt list [--kind K] [--tag T] [--domain D]  list templates and workflows
-  plt show <name>                           print a template/workflow's full markdown
-  plt render <workflow>                     (re)generate the file's mermaid diagram
-  plt render --workflow <name>              the same, for a workflow named index, run or all
-  plt render index|run <id>|all [--out <dir>] [--published <id|index> <url>]
-                                             render the effort index / a run's status page from state into
-                                             process/build/ (+ publish.json: which pages changed since the
-                                             last render); --published records the page's url + artifact receipt;
-                                             prints \`next: plt publish [<target>]\` when a page is behind its last publish
-  plt publish [<index|run id>] [--out <dir>] [--project <dir>] [--json]
-                                             list the rendered pages behind their last publish and print the exact
-                                             Artifact call for each; it never publishes
-  plt publish --record <index|run id> --url <url>
-                                             record the url of an artifact that already exists (the page stays pending)
-  plt launch <workflow> --input k=v ...     compile: create the first step task(s)
-  plt advance [--run ID | --all]            advance launched runs (cron calls this)
-  plt runs                                  list run states
-  plt run launch <id> --cycle <name>        start a process-spine run from a cycle formula; a formula that
-                                             fails validation (overlay merged with its base) refuses, naming file:line
-  plt run recompile <id>        refresh unfinished steps' requirements from formula + config (validated the same way)
-  plt run discard <id> --by <owner> --reason <why> [--replaced-by <card>]
-                                             drop the card: retire the cycle, walk the discard exit, then close
-  plt run close <id> [--by who]              close a run whose close-out is done (closed_as done|discarded)
-  plt run poll <id>                         arm/disarm live-fact steps (resync on a conflict) from gh pr view; on MERGED lands the merge step (receipts, jira Done, finish)
-  plt facts [--run <id>] [--json]           collect GitHub facts for every in-flight run naming a PR (or just --run) as idempotent gh receipts + review-activity
-  plt watch [--once]                        facts -> render all -> notify (windows.notify) any run whose next command
-                                             changed since the last watch; --once is what the installed timer runs,
-                                             otherwise loops every timers.watch.every
-  plt step start <id> --run <run>           claim a run's step
-  plt step finish <id> --run <run>          finish a run's step (gate + extrapolation checked)
-  plt step block [<id>] --run <run> --question <text> [--by who]
-                                             block an in_progress/in_review step on a question (default: current step)
-  plt step answer [<id>] --run <run> --text <text> --by <person>
-                                             answer it; the step returns to where it was (default: the blocked step)
-  plt block <run> [<step>] --question <text> / plt answer <run> [<step>] --text <text> --by <person>
-                                             the same two writers, run-first
-  plt receipt --kind <k> --name <n> [--run <run>] [--step <id>] ...   record a receipt event
-  plt gate check|approve <run> <step>       check or approve a step's gate
-    step start|unstart|finish|block|answer, block, answer, receipt and gate approve take --take-over: drive a run another window
-    (state.owner_window) has not handed off; logged as a taken-over event
-  plt lint prose <file|->  [--json]         deterministic prose checks (long-sentence, banned-word,
-                                             ticket-ref, undefined-acronym; config.writing.*); exit 1 on a hit
-  plt handoff <run> --goal ... --next ...   rewrite the run's HANDOFF.md
-  plt prime [--run <run>] [--no-menu|--next|--menu-only]   print the run's prime (status + next command + menu)
-  plt banners [--run <run>]                 print the standing owner banners (ask for reviews, …)
-  plt menu parse --text "<prompt>"          parse a prompt into {id, payload} or null
-  plt menu words [--run <run>]              print the effective menu word map (config.menu.words override, else defaults)
-  plt menu json [--run <run>]               print the current run's {mode, phrases}
-  plt pin [--repo <dir>]                    compute the current pin for a repo
-  plt config [key.path] [--run <run>]       print the merged process/config as JSON, or one value by dotted path
-  plt integration install|status <name> [--project <dir>] [--load]
-                                             install the spine's <name> integration (claude: hooks, agent,
-                                             settings; timers: the launchd/systemd \`plt watch --once\` timer,
-                                             --load to also launchctl/systemctl-enable it) into a project,
-                                             or report its state
-  plt effort plan <slug> [--json]           plan the parallel wave for an effort's cards
-  plt effort launch <slug> [--parallel] [--dry-run] [--only ID,ID] [--owner who]
-                                             one worktree, run and window per card in the wave
-                                             (without --parallel, launches only the wave's first card)
-  plt digest launch --for <date> [--weekly] [--owner who]
-                                             start a DIGEST run for that date/week (no-op if already closed)
-  plt digest collect --for <date> [--weekly] [--out f]
-                                             pure rollup from every run's events -> process/digests/<date>.json
-  plt digest standup --for <date>           Preparing/Ready/Blockers as Slack bullets from the same data
-                                             run ids: DIGEST-<yyyymmdd> / DIGEST-<yyyy>W<ww> (ISO week); window is UTC midnight to midnight
-  plt sync [--since <iso>] [--json]         what moved since the last session: facts -> compare every run's
-                                             next command against process/build/sync.json; idempotent
-                                             (unchanged prints "nothing moved"); first call seeds silently
-  plt mine [--effort <slug>] [--since <iso>] [--out <file>] [--json]
-                                             deterministic, no model: aggregate re-prompt families, extrapolations,
-                                             gate re-approvals and writing-adversary fail rate -> process/suggestions.md
+const HELP_HEAD = 'plt — punchlist-templates CLI\n\nusage:\n';
 
-  plt fan <plan-file> [--ledger <path>] [--json]
-                                             print the next parallel wave of a plan's tasks (read-only)
-  plt fsck [<run>] [--all] [--fix] [--project <dir>] [--json]
-                                             check a run's state + events against the formula; --fix writes
-  plt schema list | plt schema validate <kind> <file>
-                                             validate a state/events/input/effort/config file against its schema
-  plt harvest <id> [--dry-run] [--json]     turn a suggestions.md row into a branch + diff for a human to merge
-  plt bump --target <t> --expected <text> --measure-at <date> [--id <id>]
-                                             append the change to the CHANGELOG and bump the target's version
-
+const HELP_EPILOGUE = `
 Repo root: $PUNCHLIST_TEMPLATES_DIR, else the checkout containing this script.
 Punchlist auth: $PUNCHLIST_URL + $PUNCHLIST_TOKEN (or the pl.sh env files).
 Workflows with \`owner\` steps additionally require $PUNCHLIST_OWNER.
 `;
 
+// The reading order of `plt help`. A verb missing from this list is not hidden: it prints after
+// the listed ones, in name order, so a newly declared command shows up the day it is declared.
+const HELP_ORDER = [
+  'validate', 'index', 'list', 'show', 'render', 'publish', 'launch', 'advance', 'runs',
+  'run', 'facts', 'watch', 'step', 'block', 'answer', 'receipt', 'gate', 'lint', 'handoff',
+  'prime', 'banners', 'menu', 'pin', 'config', 'deps', 'doctor', 'repo', 'integration',
+  'card', 'effort', 'digest', 'sync', 'mine', 'fan', 'fsck', 'schema', 'harvest', 'bump',
+];
+
+// One line (or a few) of prose per verb. NOT a usage line — the arguments come from the
+// descriptor. A verb with no entry prints its declared usage alone. A value may be a function,
+// called when the help is built, for prose a module owns (lib/spine-cli's digest run-id note).
+const HELP_PROSE = {
+  validate: 'validate templates + workflows (default: all), against the project config',
+  index: 'regenerate templates/index.json (punchlist reads it)',
+  list: 'list templates and workflows',
+  show: "print a template/workflow's full markdown",
+  render: "regenerate a workflow file's mermaid diagram (--workflow names a workflow called index, "
+    + "run or all), or render the effort index / a run's status page from state into process/build/ "
+    + '(+ publish.json: which pages changed since the last render); --published records the page\'s '
+    + 'url + artifact receipt; prints the `plt publish` it wants next when a page is behind its last publish',
+  publish: 'list the rendered pages behind their last publish and print the exact Artifact call for each; it '
+    + 'never publishes. --record records the url of an artifact that already exists (the page stays pending)',
+  launch: 'compile: create the first step task(s)',
+  advance: 'advance launched runs (cron calls this)',
+  runs: 'list run states',
+  run: 'drive a process-spine run. launch starts one from a cycle formula; a formula that fails validation '
+    + '(overlay merged with its base) refuses, naming file:line. recompile refreshes unfinished steps\' '
+    + 'requirements from formula + config, validated the same way. discard drops the card: retire the cycle, '
+    + 'walk the discard exit, then close. close closes a run whose close-out is done (closed_as done or '
+    + 'discarded); --landed is for work that shipped outside the cycle. poll arms and disarms live-fact steps '
+    + '(resync on a conflict) from gh pr view; on MERGED it lands the merge step (receipts, jira Done, finish)',
+  facts: 'collect GitHub facts for every in-flight run naming a PR (or just --run) as idempotent gh receipts '
+    + '+ review-activity',
+  watch: 'facts, then render all, then notify (windows.notify) any run whose next command changed since the '
+    + 'last watch; --once is what the installed timer runs, otherwise loops every timers.watch.every',
+  step: "drive a run's step: start claims it, unstart hands it back, finish checks the gate + extrapolation. "
+    + 'block puts an in_progress or in_review step on a question (default: the current step) and answer '
+    + 'returns it to where it was (default: the one blocked step)',
+  block: 'the same two writers `plt step` has for a question, run-first',
+  answer: 'the same two writers `plt step` has for a question, run-first',
+  receipt: 'record a receipt event',
+  gate: "check, approve or revoke a step's gate",
+  lint: 'deterministic prose checks (long-sentence, banned-word, ticket-ref, undefined-acronym; '
+    + 'config.writing.*); exit 1 on a hit',
+  handoff: "rewrite the run's HANDOFF.md",
+  prime: "print the run's prime (status + next command + menu)",
+  banners: 'print the standing owner banners (ask for reviews, …)',
+  menu: 'parse a prompt into {id, payload} or null; words prints the effective menu word map '
+    + '(config.menu.words override, else defaults); json prints the current run\'s {mode, phrases}',
+  pin: 'compute the current pin for a repo',
+  config: 'print the merged process/config as JSON, or one value by dotted path',
+  deps: 'the external tools this project declares (config.deps): what is present on this machine, and install '
+    + 'the ones that are not',
+  doctor: 'prove the framework is whole HERE: this machine, this project\'s config, cycles, hooks, timers and '
+    + 'denylist. Reports what it proved, never what it assumes',
+  repo: 'claim, report or release the repo-window guard on a checkout, so two windows do not write one tree',
+  integration: "install the spine's <name> integration (claude: hooks, agent, settings; timers: the launchd or "
+    + 'systemd `plt watch --once` timer, --load to also launchctl-load or systemctl-enable it) into a project, '
+    + 'or report its state',
+  card: 'rebase: after a `merge · conflict`, rebase the card\'s branch onto its base inside the card\'s own '
+    + 'worktree and re-check the merge step\'s receipts at the new pin. Refuses a dirty tree, a rebase already '
+    + 'in progress, a detached HEAD, another branch, and a card with no branch of its own (a spike card, whose '
+    + 'repo_dir is the canonical checkout). Never pushes, never updates refs it does not own, and leaves a '
+    + 'conflicted rebase in place for a human. Two conflicted rebases is a hard gate: --by names a person, and '
+    + '`agent` is not a person (lib/rebase.js). conflict records the conflict outcome: card, repo, conflicting '
+    + 'paths, next command',
+  effort: "plan the parallel wave for an effort's cards, or launch one worktree, run and window per card in "
+    + "the wave (without --parallel, launches only the wave's first card)",
+  digest: () => 'launch starts a DIGEST run for that date or week (no-op if already closed); collect is a pure '
+    + "rollup from every run's events into process/digests/<date>.json; standup prints Preparing, Ready and "
+    + 'Blockers as Slack bullets from the same data. ' + require('../lib/spine-cli').DIGEST_NOTE,
+  sync: "what moved since the last session: facts, then compare every run's next command against "
+    + 'process/build/sync.json; idempotent (unchanged prints "nothing moved"); first call seeds silently',
+  mine: 'deterministic, no model: aggregate re-prompt families, extrapolations, gate re-approvals and '
+    + 'writing-adversary fail rate into process/suggestions.md',
+  fan: "print the next parallel wave of a plan's tasks (read-only)",
+  fsck: "check a run's state + events against the formula; --fix writes",
+  schema: 'validate a state/events/input/effort/config file against its schema',
+  harvest: 'turn a suggestions.md row into a branch + diff for a human to merge',
+  bump: "append the change to the CHANGELOG and bump the target's version",
+};
+
+const HELP_USAGE_INDENT = '  ';    // a declared usage alternative starts here
+const HELP_WRAP_INDENT = '     ';  // its continuation, deeper than the usage and shallower than prose
+const HELP_PROSE_INDENT = '      ';
+const HELP_WIDTH = 96;
+
+// Greedy wrap, so a description is written as one string here and not pre-broken into lines, and
+// so a long declaration folds instead of running off the terminal.
+function wrapText(text, width, first, cont) {
+  const out = [];
+  let line = first;
+  for (const word of String(text).split(/\s+/).filter(Boolean)) {
+    if (line.trim() && line.length + 1 + word.length > width) { out.push(line); line = cont + word; }
+    else line = line.trim() ? `${line} ${word}` : line + word;
+  }
+  if (line.trim()) out.push(line);
+  return out;
+}
+
+// A declaration separates whole alternatives with ` | ` before another `plt `; a bare `|` inside
+// one alternative (`[--run ID | --all]`, `check|approve|revoke`) is part of that line.
+function usageAlternatives(usage) {
+  return String(usage).split(/ \| (?=plt )/).map((u) => u.trim());
+}
+
+// One command's block: every alternative of its DECLARED usage, then its prose.
+function helpEntry(usage, prose) {
+  const out = [];
+  for (const alt of usageAlternatives(usage)) {
+    out.push(...wrapText(alt, HELP_WIDTH, HELP_USAGE_INDENT, HELP_WRAP_INDENT));
+  }
+  const text = typeof prose === 'function' ? prose() : prose;
+  if (text) out.push(...wrapText(text, HELP_WIDTH, HELP_PROSE_INDENT, HELP_PROSE_INDENT));
+  return out.join('\n');
+}
+
+// The --take-over note. Which verbs take the flag is NOT written here: it is read off the
+// declarations, so a verb that gains or loses --take-over changes this paragraph by itself.
+function takeOverNote(declared) {
+  const verbs = [...declared.keys()].filter((n) => String(declared.get(n).usage || '').includes('--take-over'));
+  if (verbs.length === 0) return '';
+  return '\n' + wrapText(
+    '--take-over drives a run another window (state.owner_window) has not handed off; it is logged as a '
+      + 'taken-over event. Taken by: ' + verbs.sort().map((v) => `\`plt ${v}\``).join(', ') + '.',
+    HELP_WIDTH, HELP_USAGE_INDENT, HELP_USAGE_INDENT).join('\n') + '\n';
+}
+
+// helpText(declared) -> the text `plt help` prints. Pure: everything it says comes from the
+// descriptor map it is handed, plus the prose above. `declared` is Map<name, {usage}>; a
+// descriptor with no usage falls back to the bare verb, as lib/registry does.
+function helpText(declared) {
+  const rest = [...declared.keys()].filter((n) => !HELP_ORDER.includes(n)).sort();
+  const names = [...HELP_ORDER.filter((n) => declared.has(n)), ...rest];
+  const usageOf = (n) => declared.get(n).usage || `plt ${n}`;
+  const body = names.map((n) => helpEntry(usageOf(n), HELP_PROSE[n])).join('\n');
+  return HELP_HEAD + body + '\n' + takeOverNote(declared) + HELP_EPILOGUE;
+}
+
+// buildUsage() -> the help for THIS checkout. Built on demand, never at load: a lib module may
+// require this file back (lib/spine.js does, for the parser), and discovery requires every one.
+// mergeBuiltins(declared, builtins) -> the same map, with this file's own verbs added. It applies
+// the rule lib/registry.dispatch applies when it merges the same two sources: a verb claimed twice
+// is a bug that stops the CLI. Without it the help would advertise a verb the dispatcher refuses.
+function mergeBuiltins(declared, builtins) {
+  for (const c of builtins) {
+    const seen = declared.get(c.name);
+    if (seen) throw new Error(`duplicate command "${c.name}" in ${seen.module} and <builtin>`);
+    declared.set(c.name, c);
+  }
+  return declared;
+}
+
+function buildUsage() {
+  const libDir = path.join(__dirname, '..', 'lib');
+  return helpText(mergeBuiltins(require('../lib/registry').discoverCommands(libDir), commands));
+}
+
 // The verbs bin/plt still implements itself. Every other verb lives in the module that owns
 // it — lib/registry.js scans lib/*.js for a `commands` export and dispatches on argv[0], so
-// adding a subcommand never edits this file again.
+// adding a subcommand adds no handler here and no usage line here. It still prints in `plt help`
+// with no edit at all (after the ordered verbs, usage only); giving it a place in the reading
+// order and a description is the one reason left to open this file for a verb it does not own.
 const commands = [
   { name: 'index', usage: 'plt index', handler: (argv) => cmdIndex(argv) },
   { name: 'list', usage: 'plt list [--kind K] [--tag T] [--domain D]', handler: (argv) => cmdList(argv) },
-  { name: 'show', usage: 'plt show <name>', handler: (argv) => cmdShow(argv) },
-  { name: 'render', usage: 'plt render <workflow> | plt render --workflow <name> | plt render index|run <id>|all [--out <dir>]', handler: (argv) => cmdRender(argv) },
-  { name: 'launch', usage: 'plt launch <workflow> --input k=v ...', handler: (argv) => cmdLaunch(argv) },
+  { name: 'show', usage: SHOW_USAGE, handler: (argv) => cmdShow(argv) },
+  { name: 'render', usage: RENDER_USAGE, handler: (argv) => cmdRender(argv) },
+  { name: 'launch', usage: LAUNCH_USAGE, handler: (argv) => cmdLaunch(argv) },
   { name: 'advance', usage: 'plt advance [--run ID | --all]', handler: (argv) => cmdAdvance(argv) },
   { name: 'runs', usage: 'plt runs', handler: (argv) => cmdRuns(argv) },
   { name: 'lint', usage: 'plt lint prose <file|-> [--json]', handler: (argv) => require('../lib/lint').cli(argv) },
@@ -1133,12 +1305,12 @@ async function main(argv) {
   const cmd = argv[0];
   // `plt help` asks for the usage, so it goes to stdout and exits 0. A bare `plt` is a
   // mis-invocation: the usage goes to stderr and the exit code stays 2, as it always has.
-  if (cmd === 'help' || cmd === '-h' || cmd === '--help') { process.stdout.write(USAGE); return 0; }
+  if (cmd === 'help' || cmd === '-h' || cmd === '--help') { process.stdout.write(buildUsage()); return 0; }
   // `plt --version` prints package.json's version — the shipped version doctor's `plt-resolvable`
   // check (lib/doctor.js) compares `plt` on PATH against, and what `plt integration status`/CI
   // read to prove the checkout in use. No task before this one added it.
   if (cmd === '--version' || cmd === '-v') { process.stdout.write(require('../package.json').version + '\n'); return 0; }
-  if (!cmd) { process.stderr.write(USAGE); return 2; }
+  if (!cmd) { process.stderr.write(buildUsage()); return 2; }
   return require('../lib/registry').dispatch(argv, {
     libDir: path.join(__dirname, '..', 'lib'),
     cwd: process.cwd(),
@@ -1175,6 +1347,10 @@ module.exports = {
   decide,
   main,
   commands,
+  helpText,
+  mergeBuiltins,
+  usageAlternatives,
+  HELP_PROSE,
   MIN_EXEMPLAR_CHARS,
   MERMAID_OPEN,
   MERMAID_CLOSE,

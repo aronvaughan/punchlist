@@ -135,7 +135,7 @@ steps:
     title: "Ask the team for reviews on {card}"
     needs: [open-pr]
     manual: true
-    # Banner mode (D-003, amended 2026-09-16): a reminder, not a gate. The banner shows on every prompt
+    # Banner mode: a reminder, not a gate. The banner shows on every prompt
     # and stop until the step is done; the owner's "slacked it" is recorded by the agent as a note
     # receipt and the step finishes. Nothing downstream waits on it except close-out.
     banner: "📣 SLACK FOR REVIEWS — {card} · the PR needs reviewers (first review, or a re-approval after a push).\nPaste in the team channel, plain text: the PR link {pr_url}, the card link {card_url}, one sentence on what it does or what changed.\nThen tell the agent: slacked it   (it records the note and finishes this step)"
@@ -152,6 +152,29 @@ steps:
   #   5. `plt step finish close-out --outcome done` · `plt run close {run} --by {owner}`
   # The owner is told once, at the end, with the index link. If a step in the pass fails, block
   # with the question; do not stop and wait for a prod.
+  # No `conflict` outcome here, and that is deliberate — the sibling pack build-and-commit
+  # declares `outcomes: [merged, conflict]` + `repeat_until: merged` on ITS merge step, and this one
+  # must not copy it. Three reasons, each one a way the copy would be wrong:
+  #
+  #   1. The RECEIPTS make `conflict` unsettleable, whoever runs the step. "No agent runs it" would
+  #      be the wrong reason: `settle` marks this step ready when pr-loop approves, `nextCommand`
+  #      proposes `plt step start merge`, and `stepStart` has no `land_on` guard, so an agent CAN
+  #      start it by hand. `stepFinish` is the wall. It runs `gateCheck` for every outcome but
+  #      `skipped`, and this step requires `verify.gh: [merged]` and `jira: on_done`. A conflict
+  #      cannot prove the card merged, so the finish is refused with the missing receipts.
+  #      Precisely: only `conflict` would be dead. `merged` would get a caller, because spine.landRun
+  #      falls back `land_on.outcome || repeat_until || outcomes[0] || 'done'` (lib/spine.js:1281).
+  #   2. A conflict on this cycle is already an outcome — on the `resync` step above, which arms on
+  #      GitHub's DIRTY. `spine.pollRun` re-arms a resync that already settled, so repeat conflicts
+  #      are covered without `repeat_until`.
+  #   3. This pack's own repair is `resync`: merge origin/main in, never rebase, never force-push.
+  #      A pushed branch under review cannot be rewritten. `plt card rebase <effort>/<card>`
+  #      (lib/rebase.js) rebases and never pushes, which is the commit cycle's repair.
+  #
+  # UNRESOLVED, and recorded here rather than settled: lib/render.js offers `plt card rebase` on the
+  # board for a DIRTY PULL REQUEST, an entry reachable only from this cycle. Taking it rewrites the
+  # branch locally, leaves the PR DIRTY, and leaves resync unable to fast-forward what it must push.
+  # The board and this pack disagree. Which one is wrong is not decided by this pack.
   - id: merge
     assignee: agent
     title: "Merge {card}"

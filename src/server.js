@@ -137,7 +137,7 @@ function toRequest(req) {
   return new Request(url, init);
 }
 
-// Dispatch spawn (Increment 3). The dispatcher decides WHEN; this decides HOW to
+// Dispatch spawn. The dispatcher decides WHEN; this decides HOW to
 // launch an agent's headless orchestrator. The command is operator config
 // (settings.dispatch_agents[agent].cmd) — it MUST be an absolute path to an
 // existing, reviewed script; never shell-interpolated, and the only task-derived
@@ -198,9 +198,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const answerers = parseAnswerers(tokens, process.env.PUNCHLIST_ANSWERERS);
   const app = buildApp({ db, tokens, admin, approvers, answerers, mediaDir: MEDIA_DIR,
     untrusted: parseUntrusted(process.env.PUNCHLIST_UNTRUSTED_ACTORS), bus });
-  // Event-driven dispatch (docs/2026-09-03-event-dispatch.md). Gated by
-  // settings.dispatch_enabled — a NO-OP until switched on, so this changes
-  // nothing until Increment 4 flips the flag. onChange reacts to every task
+  // Event-driven dispatch. Gated by settings.dispatch_enabled — a NO-OP
+  // until an operator switches it on. onChange reacts to every task
   // mutation; the reconcile timer is the crash/missed-event safety net.
   const dispatcher = createDispatcher({ db, spawn: realSpawn });
   bus.on('task.changed', e => { try { dispatcher.onChange(e.assignee); } catch (err) { console.error(`dispatch onChange: ${err.message}`); } });

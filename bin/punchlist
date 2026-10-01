@@ -395,8 +395,8 @@ async function installSilverbullet(argv) {
 
 // ---- expose-kb: wire the tailnet edge for the SilverBullet KB ----
 // `tailscale serve` fronts the loopback-bound SB service with tailnet
-// identity + automatic HTTPS (see docs/2026-08-31-kb-silverbullet.md,
-// "Exposure model"). This command never touches SB itself — it only renders
+// identity + automatic HTTPS. SB stays bound to loopback; this is the only
+// edge that reaches it from the tailnet. This command never touches SB itself — it only renders
 // and (optionally) runs `tailscale serve` commands. The port is derived from
 // silverbulletSpec() so it can never drift out of sync with the service that
 // install-silverbullet actually wires up.

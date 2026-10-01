@@ -1,0 +1,61 @@
+# Public defaults for the spine. No client words. Every org overrides in config/<org>.yaml.
+gates:
+  # `effort-reviewed` closes an EFFORT's gate, not a card's, and incrementing gate_epoch is
+  # what bounds the brain's autonomous authority — so the signal has to be declared here or
+  # the effort cycle cannot be loaded at all (validate refuses an undeclared human signal).
+  human_signals: [artifact-approved, reply-approved, run-discarded, effort-reviewed]
+models:
+  allowed: [fable, opus, sonnet, haiku]
+  default_model: opus
+  reasoning_levels: [low, medium, high, max]
+review:
+  panel_agents: []
+  # What a failing reviewer does: hard = the step is held (a missing receipt); banner = recorded, shown as a warning.
+  panel_mode: hard
+  writing_mode: banner
+  # The effort cycle's roll-up gate (workflows/packs/core/effort.md).
+  effort_agents: []
+  effort_mode: hard
+writing:
+  banned: []
+  known_acronyms: []
+jira:
+  kind: none
+estimation:
+  unit: ideal_days
+worktree:
+  canonical: ""
+  repo: ""
+  root: code/branches
+  branch: "feat/{card}-{slug}"
+  path: "{root}/{card}-{slug}/{repo}"
+  base: origin/main
+  setup: []
+# External tools this project needs on PATH. `plt doctor` fails when one is missing;
+# `plt deps install` installs it. Ids are the keys of lib/deps.js DEPS.
+deps: []
+# windows.* — how a card gets a terminal window. Empty means no window. `command` runs once per
+# launched card. It may print JSON with root_pane.pane_id and tab.tab_id (and root_pane.label).
+# `open` then runs with {pane_id}/{tab_id}. `notify` runs when `plt watch` sees a run's next command change.
+# command/open variables: {card} {effort} {slug} {Summary} {path} {branch} {base} {cycle} {umbrella}
+# {process_dir} {repo} {root} {templates}. Of these, {path} {branch} {base} {umbrella} {process_dir}
+# {repo} {root} {templates} arrive shell-quoted, so leave them bare.
+# notify variables: {run} {text} {next} {pane_id} {tab_id} {label} {templates}.
+# {templates} is this checkout, filled in by plt, so these lines carry no local path.
+# The herdr driver:
+#   command: "bash {templates}/scripts/herdr/herdr-window.sh open --effort {effort} --card {card} --cwd {path} --workspace-cwd {umbrella}"
+#   open:    "bash {templates}/scripts/herdr/herdr-window.sh seed --pane {pane_id} --run {card} --cwd {path} --process-dir {process_dir}"
+#   notify:  "bash {templates}/scripts/herdr/herdr-window.sh notify --text {text} --next {next}"
+windows:
+  command: ""
+  open: ""
+  notify: ""
+timers:
+  watch:
+    every: "10m"
+  label: ""
+links:
+  pr_repo: "example-org/greenhouse"
+  card: "https://tracker.example/{card}"
+actors:
+  github_logins: []

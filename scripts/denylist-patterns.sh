@@ -38,8 +38,24 @@ terms_alternation() {
   '
 }
 
-# PRIVATE_ALLOW: private-plane root paths. The pre-commit/CI scan (denylist-scan.sh) accepts them
-# and scans their content; publish.sh never accepts them and drops them from the release squash,
-# so they stay in the private repo. The CI workflows live here: GitHub reads them only at the repo
-# root, and the denylist job needs the private terms secret and the root scripts.
-PRIVATE_ALLOW='^\.github/workflows/[^/]+\.ya?ml$'
+# PRIVATE_ALLOW: private-plane paths. The pre-commit and CI scan (denylist-scan.sh) accepts them and
+# scans their content. publish.sh drops them from each public snapshot, so they stay in the private
+# repo.
+#   .github/workflows/                      the CI workflows. GitHub reads them only at the repo
+#                                           root, and the denylist job needs the private terms
+#                                           secret and the root scripts.
+#   punchlist-templates/process/            this project's own spine: its config, cycle overlays,
+#                                           efforts and runs.
+#   punchlist-templates/docs/plans/         internal plans.
+#   docs/<date>-*.md and                    every dated document: designs, plans, PRDs and
+#   punchlist-templates/docs/<date>-*.md    ADRs. The undated docs (docs/macos-setup.md,
+#                                           docs/screenshots/, docs/releases/) stay public.
+PRIVATE_ALLOW='^\.github/workflows/[^/]+\.ya?ml$|^punchlist-templates/process/|^punchlist-templates/docs/plans/|^(punchlist-templates/)?docs/[0-9]{4}-[0-9]{2}-[0-9]{2}-[^/]*\.md$'
+
+# PRIVATE_EXCEPT: paths under a PRIVATE_ALLOW path that are published all the same. An empty
+# pattern would match every path, so publish.sh reads an empty one as "no exceptions".
+#   punchlist-templates/process/config/defaults.yaml   the generic spine defaults. The spine
+#                                                       reads it as the base of this project's config
+#                                                       (loadConfig in lib/spine.js). It stays public
+#                                                       because it is the only copy that ships.
+PRIVATE_EXCEPT='^punchlist-templates/process/config/defaults\.yaml$'

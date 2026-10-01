@@ -1,6 +1,4 @@
-// dispatch.js — event-driven agent dispatch. Design:
-// docs/2026-09-03-event-dispatch.md (Revision 2); plan:
-// docs/2026-09-05-event-dispatch-plan.md.
+// dispatch.js — event-driven agent dispatch.
 //
 // Pure + injectable: given a `db`, a `spawn(cmd, agent) -> child`, and `now()`,
 // it decides when to wake an agent's headless orchestrator. Gated by
@@ -35,7 +33,7 @@ export function createDispatcher({ db, spawn, now = () => Date.now() }) {
     return { enabled, debounceMs, agents };
   }
 
-  // Q3 predicate — reuse the exact `queue`-view filter so dispatch and an
+  // Claimable predicate — reuse the exact `queue`-view filter so dispatch and an
   // agent's own queue can never disagree. `status='active'` already excludes
   // blocked (needs-input), in_progress (claimed), review, done, archived.
   const count = (view, assignee) => {

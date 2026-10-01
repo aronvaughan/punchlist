@@ -1,6 +1,6 @@
 // dispatch.test.js — the event-driven dispatch brain (src/dispatch.js), tested
 // in isolation over an in-memory DB with an injected fake spawn. No live server,
-// no real processes. See docs/2026-09-05-event-dispatch-plan.md, Increment 1.
+// no real processes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
